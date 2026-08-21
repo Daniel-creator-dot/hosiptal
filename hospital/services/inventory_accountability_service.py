@@ -97,6 +97,20 @@ class InventoryAccountabilityService:
             )
         except Exception as gl_exc:
             logger.warning('Inventory receipt GL (store item): %s', gl_exc)
+
+        try:
+            supplier = getattr(inventory_item, 'preferred_supplier', None)
+            if supplier:
+                from hospital.models_supplier_payables import post_inventory_item_supplier_payable
+                post_inventory_item_supplier_payable(
+                    inventory_item=inventory_item,
+                    quantity=quantity,
+                    unit_cost=unit_cost,
+                    supplier=supplier,
+                    user=getattr(staff, 'user', None),
+                )
+        except Exception as pay_exc:
+            logger.warning('Inventory receipt supplier payable (store item): %s', pay_exc)
         
         return inv_transaction
     
@@ -109,11 +123,13 @@ class InventoryAccountabilityService:
         department_name='',
         reference_number='',
         notes='',
-        reason=''
+        reason='',
+        recipient_name='',
+        issued_to_staff=None,
     ):
         """
-        Issue items from inventory to department
-        Creates transaction record and reduces stock
+        Issue items from store inventory to a department / staff member.
+        Creates transaction record and reduces quantity_on_hand (true consumption).
         """
         if quantity <= 0:
             raise ValidationError("Quantity must be positive")
@@ -123,6 +139,21 @@ class InventoryAccountabilityService:
                 f"Insufficient stock. Available: {inventory_item.quantity_on_hand}, "
                 f"Required: {quantity}"
             )
+
+        recipient = (recipient_name or '').strip()
+        if issued_to_staff is not None:
+            recipient = (
+                recipient
+                or str(issued_to_staff)
+                or getattr(getattr(issued_to_staff, 'user', None), 'get_full_name', lambda: '')()
+                or ''
+            )
+        department_name = (department_name or '').strip()
+        to_label = department_name or recipient or 'staff'
+        if recipient and department_name:
+            to_label = f'{recipient} ({department_name})'
+        elif recipient:
+            to_label = recipient
         
         # Record quantity before
         quantity_before = inventory_item.quantity_on_hand
@@ -136,6 +167,10 @@ class InventoryAccountabilityService:
         # Get unit cost
         unit_cost = inventory_item.unit_cost or Decimal('0.00')
         total_value = quantity * unit_cost
+
+        note_parts = [f'Issued to: {to_label}.']
+        if (notes or '').strip():
+            note_parts.append((notes or '').strip())
         
         # Create transaction record
         inv_transaction = InventoryTransaction.objects.create(
@@ -150,15 +185,15 @@ class InventoryAccountabilityService:
             total_value=total_value,
             performed_by=staff,
             reference_number=reference_number,
-            notes=f"Issued to department: {department_name}. {notes}",
-            reason=reason or f"Issue to {department_name}",
+            notes=' '.join(note_parts),
+            reason=reason or f'Issue to {to_label}',
             from_location=inventory_item.store.name,
-            to_location=department_name,
+            to_location=to_label[:200],
         )
         
         logger.info(
             f"✅ Issued {quantity} units of {inventory_item.item_name} "
-            f"to {department_name}. Transaction: {inv_transaction.transaction_number}"
+            f"to {to_label}. Transaction: {inv_transaction.transaction_number}"
         )
 
         try:
@@ -293,6 +328,27 @@ class InventoryAccountabilityService:
             f"from {from_item.store.name} to {to_store.name}. "
             f"Transactions: {transfer_out.transaction_number}, {transfer_in.transaction_number}"
         )
+
+        try:
+            from hospital.services.inventory_account_mapping import (
+                resolve_inventory_category_from_item,
+                uses_closing_inventory_posting,
+            )
+            from hospital.services.inventory_gl_service import post_inventory_cogs_gl
+            category_key = resolve_inventory_category_from_item(from_item)
+            if uses_closing_inventory_posting(category_key) and total_value > 0:
+                post_inventory_cogs_gl(
+                    category_key=category_key,
+                    amount=total_value,
+                    reference=f'COGS-XFER-{transfer_out.pk}',
+                    description=(
+                        f'Medical supplies transfer: {from_item.item_name} ×{quantity} '
+                        f'({from_item.store.name} → {to_store.name})'
+                    ),
+                    user=getattr(staff, 'user', None),
+                )
+        except Exception as gl_exc:
+            logger.warning('Inventory COGS GL (store transfer): %s', gl_exc)
         
         return transfer_out, transfer_in
     
@@ -412,6 +468,29 @@ class InventoryAccountabilityService:
             f"✅ Adjusted stock of {inventory_item.item_name} by {adjustment_quantity}. "
             f"Transaction: {inv_transaction.transaction_number}"
         )
+
+        if adjustment_quantity < 0:
+            try:
+                from hospital.services.inventory_account_mapping import (
+                    resolve_inventory_category_from_item,
+                    uses_closing_inventory_posting,
+                )
+                from hospital.services.inventory_gl_service import post_inventory_cogs_gl
+
+                category_key = resolve_inventory_category_from_item(inventory_item)
+                if uses_closing_inventory_posting(category_key) and total_value > 0:
+                    post_inventory_cogs_gl(
+                        category_key=category_key,
+                        amount=total_value,
+                        reference=f'COGS-ADJ-{inv_transaction.pk}',
+                        description=(
+                            f'Stock adjustment COGS: {inventory_item.item_name} '
+                            f'×{abs(adjustment_quantity)}'
+                        ),
+                        user=getattr(staff, 'user', None),
+                    )
+            except Exception as gl_exc:
+                logger.warning('Inventory COGS GL (stock adjustment): %s', gl_exc)
         
         return inv_transaction
     

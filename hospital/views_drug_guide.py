@@ -17,7 +17,13 @@ def drug_classification_guide(request):
     """
     # Get encounter_id from query parameter if present (for prescription linking)
     encounter_id = request.GET.get('encounter_id', None)
-    
+    nhis_payer = None
+    if encounter_id:
+        from hospital.models import Encounter
+        from hospital.services.nhis_drug_formulary import payer_from_encounter
+        enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+        nhis_payer = payer_from_encounter(enc) if enc else None
+
     # Build comprehensive drug classification structure
     drug_classification = {
         'PAIN_MANAGEMENT': {
@@ -1053,10 +1059,15 @@ def drug_classification_guide(request):
     stock_dict = {item['drug_id']: (item['total_stock'] or 0) for item in stock_totals}
     
     # Query 2: Get ALL active drugs ONCE - much faster than querying per category
-    all_active_drugs = list(Drug.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).exclude(category='').select_related().only(
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    all_active_drugs = list(restrict_drug_queryset_for_payer(
+        Drug.objects.filter(
+            is_active=True,
+            is_deleted=False
+        ).exclude(category=''),
+        nhis_payer,
+    ).only(
         'id', 'name', 'generic_name', 'strength', 'form', 'unit_price', 'category'
     ))
     
@@ -1196,12 +1207,24 @@ def drugs_by_category(request, category_code):
     """
     from hospital.models import Drug, PharmacyStock
     from django.db.models import Sum
-    
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    encounter_id = request.GET.get('encounter_id')
+    nhis_payer = None
+    if encounter_id:
+        from hospital.models import Encounter
+        from hospital.services.nhis_drug_formulary import payer_from_encounter
+        enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+        nhis_payer = payer_from_encounter(enc) if enc else None
+
     # Get drugs in this category
-    drugs = Drug.objects.filter(
-        category=category_code,
-        is_active=True,
-        is_deleted=False
+    drugs = restrict_drug_queryset_for_payer(
+        Drug.objects.filter(
+            category=category_code,
+            is_active=True,
+            is_deleted=False
+        ),
+        nhis_payer,
     ).order_by('name')
     
     # OPTIMIZATION: Get all stock totals in ONE query
@@ -1235,9 +1258,6 @@ def drugs_by_category(request, category_code):
     
     # Get category display name
     category_display = dict(Drug.CATEGORIES).get(category_code, category_code)
-    
-    # Get encounter_id if provided (for prescription)
-    encounter_id = request.GET.get('encounter_id')
     
     context = {
         'drugs': drugs_list,
@@ -1296,12 +1316,24 @@ def api_drugs_by_category(request, category_code):
     """
     from hospital.models import Drug, PharmacyStock
     from django.db.models import Sum
-    
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    encounter_id = request.GET.get('encounter_id')
+    nhis_payer = None
+    if encounter_id:
+        from hospital.models import Encounter
+        from hospital.services.nhis_drug_formulary import payer_from_encounter
+        enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+        nhis_payer = payer_from_encounter(enc) if enc else None
+
     # Get drugs in this category
-    drugs = Drug.objects.filter(
-        category=category_code,
-        is_active=True,
-        is_deleted=False
+    drugs = restrict_drug_queryset_for_payer(
+        Drug.objects.filter(
+            category=category_code,
+            is_active=True,
+            is_deleted=False
+        ),
+        nhis_payer,
     ).order_by('name')[:50]  # Limit to 50
     
     # OPTIMIZATION: Get all stock totals in ONE query
@@ -1343,10 +1375,13 @@ def api_drugs_by_category(request, category_code):
     }
     alternatives_codes = category_mapping.get(category_code, [])
     if alternatives_codes:
-        alt_drugs = Drug.objects.filter(
-            category__in=alternatives_codes,
-            is_active=True,
-            is_deleted=False
+        alt_drugs = restrict_drug_queryset_for_payer(
+            Drug.objects.filter(
+                category__in=alternatives_codes,
+                is_active=True,
+                is_deleted=False
+            ),
+            nhis_payer,
         )[:5]
         
         # OPTIMIZATION: Get stock for alternatives in one query

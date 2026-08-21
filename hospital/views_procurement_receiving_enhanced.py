@@ -37,10 +37,10 @@ def receive_procurement_modern(request, pk):
         is_deleted=False
     )
     
-    if proc_request.status not in ['ordered', 'payment_processed']:
+    if proc_request.status not in ['ordered', 'payment_processed', 'accounts_approved']:
         messages.error(
             request,
-            'Request must be ordered or payment processed before receiving.'
+            'Request must be approved or ordered before receiving.'
         )
         return redirect('hospital:procurement_requests_list')
     
@@ -68,6 +68,12 @@ def receive_procurement_modern(request, pk):
                 last_target_store = None
                 
                 from hospital.services.inventory_accountability_service import InventoryAccountabilityService
+                from hospital.services.inventory_account_mapping import (
+                    ensure_inventory_item_category,
+                    get_default_inventory_category,
+                    procurement_item_is_lab_reagent,
+                    resolve_procurement_target_store,
+                )
                 
                 for item_id, received_qty in zip(item_ids, received_quantities):
                     try:
@@ -98,30 +104,20 @@ def receive_procurement_modern(request, pk):
                                 continue
                         
                         # Determine target store based on item type
-                        if item.drug or (proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'pharmacy'):
-                            # Pharmacy items go to Drug Store (DRUGS)
-                            target_store = Store.objects.filter(code='DRUGS', is_deleted=False).first()
-                            if not target_store:
-                                target_store = Store.objects.filter(store_type='pharmacy', is_deleted=False).first()
-                        elif proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'lab':
-                            # Lab items go to Lab Store (LAB)
-                            target_store = Store.objects.filter(code='LAB', is_deleted=False).first()
-                            if not target_store:
-                                target_store = Store.objects.filter(store_type='lab', is_deleted=False).first()
-                        else:
-                            # Other items go to Main Store (MAIN)
-                            target_store = Store.objects.filter(code='MAIN', is_deleted=False).first()
-                            if not target_store:
-                                target_store = Store.objects.filter(store_type='main', is_deleted=False).first()
+                        target_store = resolve_procurement_target_store(
+                            proc_request, item, staff=staff
+                        )
                         
                         if not target_store:
-                            # Fallback: create main store if doesn't exist
-                            target_store = Store.objects.create(
-                                name='Main Store',
-                                code='MAIN',
-                                store_type='main',
-                                manager=staff
-                            )
+                            messages.error(request, 'Could not resolve target store for receiving.')
+                            return redirect('hospital:receive_procurement_modern', pk=pk)
+
+                        is_lab_reagent = procurement_item_is_lab_reagent(item)
+                        default_category = get_default_inventory_category(
+                            store=target_store,
+                            drug=item.drug,
+                            is_lab_reagent=is_lab_reagent,
+                        )
                         
                         # Get or create inventory item
                         inventory_item, created = InventoryItem.objects.get_or_create(
@@ -132,6 +128,7 @@ def receive_procurement_modern(request, pk):
                                 'item_name': item.item_name,
                                 'description': item.description,
                                 'drug': item.drug,
+                                'category': default_category,
                                 'quantity_on_hand': 0,
                                 'unit_cost': item.estimated_unit_price,
                                 'unit_of_measure': item.unit_of_measure,
@@ -139,6 +136,12 @@ def receive_procurement_modern(request, pk):
                                 'reorder_quantity': item.quantity,
                                 'preferred_supplier': item.preferred_supplier,
                             }
+                        )
+                        ensure_inventory_item_category(
+                            inventory_item,
+                            store=target_store,
+                            drug=item.drug,
+                            is_lab_reagent=is_lab_reagent,
                         )
                         
                         # Use accountability service to receive from supplier

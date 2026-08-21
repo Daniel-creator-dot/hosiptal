@@ -2,16 +2,19 @@
 Automatic Bed Billing Service
 
 Billing logic:
-- DETENTION: Stay < 12 hours → detention fee (GHS 120) + doctor care + nursing care + consumables (1 day equivalent each)
-- ADMISSION: Stay >= 12 hours → count by **nights** = calendar-style 24-hour periods (rounded up), not 12-hour half-day units
-  - Accommodation: GHS 150 per night (regular), GHS 300 per night (VIP)
-  - Doctor care, nursing care, consumables: same per-night count × their rates
+- DETENTION: Stay < 12 hours → detention fee (tariff GHS 120 + 10% Sustainability and Insurance = 132)
+  plus doctor care, nursing care, and consumables (1 day equivalent each, also +10%)
+- ADMISSION: Stay >= 12 hours → count by **nights** = calendar-style 24-hour periods (rounded up)
+  - Accommodation: regular 165/night (tariff 150 + 10%); VIP LX 480/night (listed billed rate)
+  - Doctor care, nursing care, consumables: same per-night count × their billed rates
 """
 from django.db import transaction
 from django.utils import timezone
 from decimal import Decimal
 import logging
 import math
+
+from hospital.utils_billing import with_service_sustainability
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +25,15 @@ ACCOM_SERVICE_CODES = ['DETENTION', 'ADM-ACCOM', 'ADM-DOCTOR-CARE', 'ADM-NURSING
 class BedBillingService:
     """Service for automatic bed billing with detention vs admission logic."""
 
-    # Pricing (GHS) – per **night** for admission (stay >= 12h); night = 24-hour billing unit (ceil of stay length)
-    DETENTION_RATE = Decimal('120.00')           # Stay < 12 hours (flat)
-    ADMISSION_NIGHTLY_RATE = Decimal('150.00')   # Stay >= 12 hours, regular ward (per night)
-    VIP_ADMISSION_NIGHTLY_RATE = Decimal('300.00')  # VIP ward (per night)
-    DOCTOR_CARE_PER_NIGHT = Decimal('80.00')
-    NURSING_CARE_PER_NIGHT = Decimal('70.00')
-    CONSUMABLES_PER_NIGHT = Decimal('50.00')
+    # Pricing (GHS) – per **night** for admission (stay >= 12h); night = 24-hour billing unit (ceil of stay length).
+    # Regular / care rates include 10% Sustainability and Insurance (GL 4115): tariff × 1.10.
+    # VIP LX accommodation is the listed night price charged on the bill (GHS 480).
+    DETENTION_RATE = with_service_sustainability(Decimal('120.00'))           # 132.00
+    ADMISSION_NIGHTLY_RATE = with_service_sustainability(Decimal('150.00'))   # 165.00
+    VIP_ADMISSION_NIGHTLY_RATE = Decimal('480.00')  # VIP LX nightly billed rate
+    DOCTOR_CARE_PER_NIGHT = with_service_sustainability(Decimal('80.00'))     # 88.00
+    NURSING_CARE_PER_NIGHT = with_service_sustainability(Decimal('70.00'))    # 77.00
+    CONSUMABLES_PER_NIGHT = with_service_sustainability(Decimal('50.00'))     # 55.00
 
     DETENTION_THRESHOLD_HOURS = 12
     # Backwards-compatible aliases (same values)
@@ -40,19 +45,22 @@ class BedBillingService:
 
     @staticmethod
     def _ward_is_vip(ward):
-        """VIP accommodation if ward name contains 'vip' (case-insensitive)."""
-        return bool(ward and 'vip' in (ward.name or '').lower())
+        """VIP / VIP LX accommodation if ward name or code contains 'vip' (case-insensitive)."""
+        if not ward:
+            return False
+        blob = f"{getattr(ward, 'name', '') or ''} {getattr(ward, 'code', '') or ''}".lower()
+        return 'vip' in blob
 
     @staticmethod
     def _is_vip_ward(admission):
-        """Check if ward is VIP (name contains 'vip')."""
+        """Check if current ward is VIP / VIP LX."""
         if admission and admission.ward:
             return BedBillingService._ward_is_vip(admission.ward)
         return False
 
     @staticmethod
     def _get_admission_daily_rate(admission):
-        """Return accommodation nightly rate: 150 regular, 300 VIP."""
+        """Return accommodation nightly rate: 165 regular, 480 VIP LX."""
         return (
             BedBillingService.VIP_ADMISSION_NIGHTLY_RATE
             if BedBillingService._is_vip_ward(admission)
@@ -576,12 +584,12 @@ class BedBillingService:
         line.save(update_fields=['description', 'modified'])
 
     @staticmethod
-    def update_bed_charges_on_discharge(admission):
+    def sync_accommodation_charges_to_invoice(admission, *, reason='sync'):
         """
-        Finalize accommodation charges on discharge.
-        Applies detention (120) or full admission (accommodation + doctor + nursing care).
+        Replace provisional / stale accommodation lines with current detention or admission package.
+        Used on discharge and when VIP / ward rates change for patients still admitted.
         """
-        from hospital.models import Invoice, InvoiceLine
+        from hospital.models import Invoice
 
         try:
             with transaction.atomic():
@@ -616,7 +624,7 @@ class BedBillingService:
                         status='draft',
                     )
 
-                removed = BedBillingService._clear_accommodation_lines(invoice, admission)
+                BedBillingService._clear_accommodation_lines(invoice, admission)
                 BedBillingService._add_accommodation_lines(invoice, admission, charge_breakdown)
 
                 invoice.update_totals()
@@ -630,9 +638,11 @@ class BedBillingService:
                 post_save.send(sender=Invoice, instance=invoice, created=False)
 
                 logger.info(
-                    f"✅ Accommodation charges finalized on discharge: {patient.full_name} - "
-                    f"{'Detention' if charge_breakdown['is_detention'] else 'Admission'} "
-                    f"GHS {charge_breakdown['total_charge']}"
+                    "✅ Accommodation charges %s: %s - %s GHS %s",
+                    reason,
+                    patient.full_name,
+                    'Detention' if charge_breakdown['is_detention'] else 'Admission',
+                    charge_breakdown['total_charge'],
                 )
 
                 return {
@@ -646,12 +656,43 @@ class BedBillingService:
                 }
 
         except Exception as e:
-            logger.error(f"Error updating bed charges on discharge: {str(e)}", exc_info=True)
+            logger.error(
+                "Error syncing bed charges (%s): %s", reason, str(e), exc_info=True
+            )
             return {
                 'success': False,
                 'error': str(e),
                 'message': str(e),
             }
+
+    @staticmethod
+    def update_bed_charges_on_discharge(admission):
+        """
+        Finalize accommodation charges on discharge.
+        Applies detention or full admission (accommodation + doctor + nursing care).
+        """
+        return BedBillingService.sync_accommodation_charges_to_invoice(
+            admission, reason='discharge'
+        )
+
+    @staticmethod
+    def sync_open_vip_accommodation_bills():
+        """Reprice open VIP / VIP LX admissions onto their encounter invoices."""
+        from hospital.models import Admission
+
+        results = []
+        qs = (
+            Admission.objects.filter(status='admitted', is_deleted=False, discharge_date__isnull=True)
+            .select_related('ward', 'bed', 'encounter__patient')
+        )
+        for admission in qs:
+            if not BedBillingService._is_vip_ward(admission):
+                continue
+            result = BedBillingService.sync_accommodation_charges_to_invoice(
+                admission, reason='vip_rate_sync'
+            )
+            results.append((admission, result))
+        return results
 
     @staticmethod
     def get_bed_charges_summary(admission):

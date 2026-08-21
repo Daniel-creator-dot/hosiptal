@@ -74,6 +74,32 @@ def get_patient_outstanding(patient, include_deposit_breakdown=False):
         if (inv_total - inv_balance) > 0:
             total_paid = inv_total - inv_balance
 
+    # Invoice credit refunds reduce net paid; deposit withdrawals (REFUND-*) do not —
+    # those only reduce PatientDeposit.available_balance.
+    try:
+        from ..models_accounting import Transaction
+        from django.db.models import Q
+        credit_refunds = (
+            Transaction.objects.filter(
+                patient_id__in=scope_ids,
+                transaction_type='refund_issued',
+                is_deleted=False,
+            )
+            .exclude(reference_number__startswith='REFUND-')
+            .exclude(
+                Q(notes__icontains='Deposit withdrawal')
+                | Q(notes__icontains='Refund for deposit')
+            )
+            .aggregate(s=Sum('amount'))['s']
+            or Decimal('0.00')
+        )
+        total_paid = max(
+            Decimal('0.00'),
+            (total_paid or Decimal('0.00')) - credit_refunds,
+        )
+    except Exception:
+        pass
+
     # Can be negative when total_paid > total_billed (patient has credit)
     total_outstanding = (total_billed or Decimal('0.00')) - (total_paid or Decimal('0.00'))
     credit_balance = max(Decimal('0.00'), (total_paid or Decimal('0.00')) - (total_billed or Decimal('0.00')))
@@ -215,6 +241,36 @@ def get_patient_outstanding_bulk(patient_ids):
             )
             if (inv_total - inv_balance) > 0:
                 by_patient[pid]['total_paid'] = inv_total - inv_balance
+
+    # Subtract invoice credit refunds (not deposit withdrawals REFUND-*)
+    try:
+        from ..models_accounting import Transaction
+        from django.db.models import Q
+        credit_refund_rows = (
+            Transaction.objects.filter(
+                patient_id__in=patient_ids,
+                transaction_type='refund_issued',
+                is_deleted=False,
+            )
+            .exclude(reference_number__startswith='REFUND-')
+            .exclude(
+                Q(notes__icontains='Deposit withdrawal')
+                | Q(notes__icontains='Refund for deposit')
+            )
+            .values('patient_id')
+            .annotate(total=Sum('amount'))
+        )
+        for r in credit_refund_rows:
+            pid = r['patient_id']
+            if pid not in by_patient:
+                continue
+            refunded = r['total'] or Decimal('0.00')
+            by_patient[pid]['total_paid'] = max(
+                Decimal('0.00'),
+                (by_patient[pid].get('total_paid') or Decimal('0.00')) - refunded,
+            )
+    except Exception:
+        pass
 
     # deposit_balance per patient (need to call existing helper per patient or aggregate)
     from ..models import Patient

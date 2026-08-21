@@ -15,6 +15,8 @@ TRADE_RECEIVABLES_CODE = '1200'
 PRIMECARE_REVENUE_ACCOUNTS = {
     'registration': ('4100', 'Registration Revenue'),
     'consultation': ('4110', 'Consultation Revenue'),
+    'sustainability': ('4115', 'Sustainability and Insurance'),
+    'sustainability_insurance': ('4115', 'Sustainability and Insurance'),
     'lab': ('4120', 'Laboratory Revenue'),
     'lab_test': ('4120', 'Laboratory Revenue'),
     'lab_result': ('4120', 'Laboratory Revenue'),

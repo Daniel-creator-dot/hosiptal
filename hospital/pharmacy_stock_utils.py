@@ -400,6 +400,28 @@ def add_or_increase_pharmacy_stock(
                     qty,
                     existing.quantity_on_hand,
                 )
+                if unit_cost_dec > _ZERO:
+                    try:
+                        from hospital.services.inventory_gl_service import post_inventory_receipt_gl
+                        from django.utils import timezone as tz
+
+                        ts = tz.now().strftime('%Y%m%d%H%M%S%f')
+                        post_inventory_receipt_gl(
+                            category_key='pharmacy',
+                            amount=_quantize_money(Decimal(qty) * unit_cost_dec),
+                            reference=f'STOCK-RCV-{existing.pk}-INC-{ts}',
+                            description=(
+                                f'Pharmacy stock increase: {getattr(drug, "name", drug)} '
+                                f'qty +{qty} batch {existing.batch_number}'
+                            ),
+                            user=created_by,
+                        )
+                    except Exception as gl_exc:
+                        logger.warning(
+                            'Pharmacy stock increase GL failed for %s: %s',
+                            existing.pk,
+                            gl_exc,
+                        )
                 return existing
 
             stock = PharmacyStock.objects.create(
@@ -482,3 +504,63 @@ def drug_is_sold_per_tablet(drug) -> bool:
     """True when drug dosage form indicates individual tablet unit-of-sale."""
     form = (getattr(drug, 'form', None) or '').strip().lower()
     return form.startswith('tab') or 'tablet' in form
+
+
+OUT_OF_STOCK_PRESCRIBE_MESSAGE = 'Out of stock — see pharmacist for alternative'
+
+
+def pharmacy_stock_qty_map_for_drugs(drug_ids):
+    """
+    Map drug_id -> available on-hand quantity for prescribe/search UI.
+    Sums all PharmacyStock batches (including shortfall negatives). When PharmacyStock
+    total is exactly 0, falls back to Main Pharmacy InventoryItem quantity.
+    """
+    if not drug_ids:
+        return {}
+    ids = list({d for d in drug_ids if d})
+    stock_map = {did: 0 for did in ids}
+    try:
+        from .models import PharmacyStock
+
+        for row in (
+            PharmacyStock.objects.filter(drug_id__in=ids, is_deleted=False)
+            .values('drug_id')
+            .annotate(total=Sum('quantity_on_hand'))
+        ):
+            stock_map[row['drug_id']] = int(row['total'] or 0)
+    except Exception:
+        logger.exception('pharmacy_stock_qty_map_for_drugs: PharmacyStock sum failed')
+
+    # Fallback only when no PharmacyStock contribution (0) — not when shortfall is negative
+    zero_ids = [did for did, qty in stock_map.items() if qty == 0]
+    if zero_ids:
+        try:
+            from .models_procurement import Store, InventoryItem
+
+            pharmacy_store = Store.get_pharmacy_store_for_prescriptions()
+            if pharmacy_store:
+                for item in InventoryItem.objects.filter(
+                    store=pharmacy_store,
+                    drug_id__in=zero_ids,
+                    is_deleted=False,
+                    is_active=True,
+                ).values('drug_id', 'quantity_on_hand'):
+                    did = item['drug_id']
+                    if did and stock_map.get(did, 0) == 0:
+                        stock_map[did] = int(item['quantity_on_hand'] or 0)
+        except Exception:
+            logger.exception('pharmacy_stock_qty_map_for_drugs: InventoryItem fallback failed')
+    return stock_map
+
+
+def get_drug_available_stock_qty(drug):
+    """Available qty for a single drug (same rules as autocomplete / prescribe gate)."""
+    if not drug:
+        return 0
+    drug_id = getattr(drug, 'pk', None) or getattr(drug, 'id', None) or drug
+    return int(pharmacy_stock_qty_map_for_drugs([drug_id]).get(drug_id, 0) or 0)
+
+
+def drug_is_available_to_prescribe(drug):
+    """True when doctors may prescribe this drug (positive on-hand stock)."""
+    return get_drug_available_stock_qty(drug) > 0

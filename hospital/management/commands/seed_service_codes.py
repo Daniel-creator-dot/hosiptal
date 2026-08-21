@@ -28,6 +28,10 @@ class Command(BaseCommand):
             {'code': 'REG-FILE', 'description': 'Medical Records Retrieval', 'category': 'Administration', 'price': Decimal('5.00')},
             {'code': 'REG-CERT', 'description': 'Medical Certificate', 'category': 'Administration', 'price': Decimal('20.00')},
             {'code': 'REG-SICK', 'description': 'Sick Leave Certificate', 'category': 'Administration', 'price': Decimal('15.00')},
+            {'code': 'RPT-SCHOOL', 'description': 'Medical Report (School)', 'category': 'Administration', 'price': Decimal('400.00')},
+            {'code': 'RPT-GP', 'description': 'Medical Report (GP)', 'category': 'Administration', 'price': Decimal('600.00')},
+            {'code': 'RPT-EXT', 'description': 'Medical Report (Extensive)', 'category': 'Administration', 'price': Decimal('800.00')},
+            {'code': 'RPT-INTL', 'description': 'Medical Report (International)', 'category': 'Administration', 'price': Decimal('1200.00')},
             
             # Vital Signs & Monitoring
             {'code': 'VITALS', 'description': 'Vital Signs Recording', 'category': 'Monitoring', 'price': Decimal('5.00')},
@@ -84,7 +88,7 @@ class Command(BaseCommand):
             {'code': 'DENT-SCALE', 'description': 'Scaling & Polishing', 'category': 'Dental', 'price': Decimal('80.00')},
             
             # Maternity Services
-            {'code': 'MAT-ANC', 'description': 'Antenatal Care Visit', 'category': 'Maternity', 'price': Decimal('50.00')},
+            {'code': 'MAT-ANC', 'description': 'Antenatal Care Visit', 'category': 'Maternity', 'price': Decimal('243.00')},
             {'code': 'MAT-DELIVER', 'description': 'Delivery Fee', 'category': 'Maternity', 'price': Decimal('2800.00')},
             {'code': 'MAT-MIDWIFE', 'description': 'Midwife Care', 'category': 'Maternity', 'price': Decimal('300.00')},
             {'code': 'MAT-CSECT', 'description': 'Caesarean Section', 'category': 'Maternity', 'price': Decimal('1500.00')},
@@ -106,7 +110,7 @@ class Command(BaseCommand):
             {'code': 'HEAR-TEST', 'description': 'Hearing Test', 'category': 'Diagnostic', 'price': Decimal('50.00')},
             # Physiotherapy – cash patient prices
             {'code': 'PHYSIO', 'description': 'Physiotherapy (First Time)', 'category': 'Therapy', 'price': Decimal('250.00')},
-            {'code': 'PHYSIO-SUB', 'description': 'Physiotherapy (Subsequent)', 'category': 'Therapy', 'price': Decimal('150.00')},
+            {'code': 'PHYSIO-SUB', 'description': 'Physiotherapy (Subsequent)', 'category': 'Therapy', 'price': Decimal('158.00')},
             {'code': 'NUTRITION', 'description': 'Nutrition Consultation', 'category': 'Consultation', 'price': Decimal('50.00')},
         ]
         

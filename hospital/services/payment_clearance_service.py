@@ -103,11 +103,18 @@ class PaymentClearanceService:
 
     @staticmethod
     def _link_pharmacy_dispensing(payment_receipt):
+        from decimal import Decimal
+
         from hospital.models_payment_verification import (
             PharmacyDispensing,
             PaymentVerification,
         )
         from hospital.models import InvoiceLine
+        from hospital.utils_invoice_line import (
+            invoice_amount_already_applied,
+            invoice_pharmacy_lines_are_settled,
+            invoice_pharmacy_lines_total,
+        )
 
         encounter = payment_receipt.invoice.encounter if payment_receipt.invoice else None
         qs = PharmacyDispensing.objects.filter(
@@ -119,16 +126,49 @@ class PaymentClearanceService:
             qs = qs.filter(prescription__order__encounter=encounter)
 
         details = payment_receipt.service_details if isinstance(payment_receipt.service_details, dict) else {}
-        rx_ids = details.get('prescription_ids')
+        rx_ids = details.get('prescription_ids') or [
+            p.get('prescription_id')
+            for p in (details.get('prescriptions') or [])
+            if isinstance(p, dict) and p.get('prescription_id')
+        ]
+        service_type = (payment_receipt.service_type or '').lower().strip()
+        inv = payment_receipt.invoice
+
+        def _pharmacy_covered_with_this_receipt():
+            """
+            Receipt post_save often runs before invoice.update_totals(), so include
+            this receipt's amount when judging pharmacy-first settlement.
+            """
+            if inv is None:
+                return service_type in {
+                    'pharmacy', 'pharmacy_prescription', 'medication', 'drug',
+                }
+            try:
+                if invoice_pharmacy_lines_are_settled(inv):
+                    return True
+            except Exception:
+                pass
+            pharmacy_total = invoice_pharmacy_lines_total(inv)
+            if pharmacy_total <= Decimal('0'):
+                return True
+            applied = invoice_amount_already_applied(inv)
+            receipt_amt = Decimal(str(payment_receipt.amount_paid or 0))
+            return (applied + receipt_amt) >= pharmacy_total
+
         if rx_ids:
-            # Explicit cashier targeting: only auto-link those prescriptions.
+            # Explicit cashier targeting: only auto-link those prescriptions,
+            # and only when the drug amount is covered (no token partial).
+            if not _pharmacy_covered_with_this_receipt():
+                return
             qs = qs.filter(prescription_id__in=rx_ids)
         else:
             # Guard against false positives:
             # combined/other/blank receipts can be created for non-pharmacy services, and should not
-            # auto-clear pharmacy queue entries unless the prescription was actually billed.
-            service_type = (payment_receipt.service_type or '').lower().strip()
+            # auto-clear pharmacy queue entries unless the prescription was actually billed AND
+            # the drug amount on that invoice is covered (pharmacy-first settlement).
             if service_type in {'combined', 'other', ''}:
+                if not _pharmacy_covered_with_this_receipt():
+                    return
                 qs = qs.filter(
                     prescription__in=InvoiceLine.objects.filter(
                         prescription__isnull=False,
@@ -137,6 +177,9 @@ class PaymentClearanceService:
                         invoice=payment_receipt.invoice,
                     ).values('prescription_id')
                 )
+            elif service_type in {'pharmacy', 'pharmacy_prescription', 'medication', 'drug'}:
+                if inv is not None and not _pharmacy_covered_with_this_receipt():
+                    return
 
         records = list(qs[:5])
         if not records:
@@ -144,6 +187,9 @@ class PaymentClearanceService:
 
         with transaction.atomic():
             for record in records:
+                # Never overwrite an existing receipt (duplicate payment guard)
+                if record.payment_receipt_id:
+                    continue
                 record.payment_receipt = payment_receipt
                 record.payment_verified_at = timezone.now()
                 record.payment_verified_by = payment_receipt.received_by

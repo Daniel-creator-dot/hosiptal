@@ -363,3 +363,112 @@ class LabTestInsuranceExclusionTests(TestCase):
 
         self.assertFalse(result.is_excluded)
         self.assertFalse(result.requires_patient_pay)
+
+
+class LabTestSelectiveInsuranceExclusionTests(TestCase):
+    def setUp(self):
+        suf = uuid.uuid4().hex[:8]
+        self.nhis_payer = Payer.objects.create(name=f'NHIS LabSel{suf}', payer_type='nhis')
+        self.other_payer = Payer.objects.create(name=f'Other LabSel{suf}', payer_type='private')
+        self.company_nhis = InsuranceCompany.objects.create(
+            name=f'NHIS LabSel{suf}',
+            code=f'NL{suf[:4]}',
+        )
+        self.company_other = InsuranceCompany.objects.create(
+            name=f'Other LabSel{suf}',
+            code=f'OL{suf[:4]}',
+        )
+        self.lab_test = LabTest.objects.create(
+            code=f'LS{suf}',
+            name=f'Selective Lab{suf}',
+            specimen_type='Blood',
+            price=Decimal('40.00'),
+        )
+
+    def test_selective_exclusion_applies_only_to_selected_company(self):
+        from hospital.services.lab_test_insurance_exclusion import sync_lab_test_insurance_exclusions
+
+        sync_lab_test_insurance_exclusions(
+            lab_test=self.lab_test,
+            exclude_all=False,
+            company_ids=[self.company_nhis.id],
+            reason='Not on NHIS panel',
+        )
+        self.lab_test.refresh_from_db()
+        self.assertFalse(self.lab_test.exclude_from_insurance)
+
+        nhis_result = InsuranceExclusionService(
+            patient=None,
+            payer=self.nhis_payer,
+            lab_test=self.lab_test,
+        ).evaluate()
+        self.assertTrue(nhis_result.requires_patient_pay)
+        self.assertEqual(nhis_result.reason, 'Not on NHIS panel')
+
+        other_result = InsuranceExclusionService(
+            patient=None,
+            payer=self.other_payer,
+            lab_test=self.lab_test,
+        ).evaluate()
+        self.assertFalse(other_result.is_excluded)
+
+    def test_catalog_exclusion_info_respects_selective_companies(self):
+        from hospital.services.lab_test_insurance_exclusion import sync_lab_test_insurance_exclusions
+
+        sync_lab_test_insurance_exclusions(
+            lab_test=self.lab_test,
+            exclude_all=False,
+            company_ids=[self.company_nhis.id],
+            reason='NHIS only',
+        )
+        nhis_info = catalog_exclusion_info(item=self.lab_test, payer=self.nhis_payer)
+        other_info = catalog_exclusion_info(item=self.lab_test, payer=self.other_payer)
+
+        self.assertTrue(nhis_info['is_insurance_excluded'])
+        self.assertEqual(nhis_info['insurance_exclusion_reason'], 'NHIS only')
+        self.assertFalse(other_info['is_insurance_excluded'])
+        self.assertTrue(other_info['exclude_from_insurance'])
+
+    def test_exclude_all_clears_selective_rules(self):
+        from hospital.services.lab_test_insurance_exclusion import sync_lab_test_insurance_exclusions
+
+        sync_lab_test_insurance_exclusions(
+            lab_test=self.lab_test,
+            exclude_all=False,
+            company_ids=[self.company_nhis.id],
+            reason='NHIS only',
+        )
+        sync_lab_test_insurance_exclusions(
+            lab_test=self.lab_test,
+            exclude_all=True,
+            company_ids=[],
+            reason='All insurers',
+        )
+        self.lab_test.refresh_from_db()
+        self.assertTrue(self.lab_test.exclude_from_insurance)
+
+        other_result = InsuranceExclusionService(
+            patient=None,
+            payer=self.other_payer,
+            lab_test=self.lab_test,
+        ).evaluate()
+        self.assertTrue(other_result.requires_patient_pay)
+
+    def test_selective_exclusion_via_service_code_resolution(self):
+        from hospital.services.lab_test_insurance_exclusion import sync_lab_test_insurance_exclusions
+
+        sync_lab_test_insurance_exclusions(
+            lab_test=self.lab_test,
+            exclude_all=False,
+            company_ids=[self.company_nhis.id],
+            reason='Panel exclusion',
+        )
+        service_code = ServiceCode.objects.get(code=f'LAB-{self.lab_test.code}')
+        result = InsuranceExclusionService(
+            patient=None,
+            payer=self.nhis_payer,
+            service_code=service_code,
+        ).evaluate()
+        self.assertTrue(result.requires_patient_pay)
+        self.assertEqual(result.reason, 'Panel exclusion')
+

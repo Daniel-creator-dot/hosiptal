@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.forms import ModelForm
 from django import forms
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from .models import Staff, Department
 from .models_lab_management import (
@@ -204,8 +204,64 @@ def lab_reagent_dashboard(request):
         'recent_transactions': recent_transactions,
         'reagents_by_category': reagents_by_category,
         'active_alerts': active_alerts,
+        'measurable_items': [r for r in all_reagents if r.stock_tracking == 'measurable'],
+        'immeasurable_items': [r for r in all_reagents if r.stock_tracking == 'immeasurable'],
     }
     return render(request, 'hospital/lab_reagent_dashboard.html', context)
+
+
+@login_required
+def issue_lab_consumables(request):
+    """EDTA / per-completed-lab settings. Stock issues are done by procurement."""
+    q = (request.GET.get('q') or request.POST.get('q') or '').strip()
+
+    if request.method == 'POST':
+        action = (request.POST.get('action') or '').strip()
+        if action == 'issue_to_staff':
+            messages.error(
+                request,
+                'Lab cannot issue stock. Procurement issues items from the store '
+                'to staff or to the laboratory.',
+            )
+            return redirect('hospital:inventory:issue_consumables')
+
+        if action == 'save_visit_settings' and _user_can_manage_lab_equipment(request.user):
+            reagent = get_object_or_404(
+                LabReagent, pk=request.POST.get('reagent_id'), is_deleted=False
+            )
+            reagent.deduct_per_lab_visit = request.POST.get('deduct_per_lab_visit') == 'on'
+            try:
+                qty = Decimal(request.POST.get('qty_per_lab_visit') or '1')
+                reagent.qty_per_lab_visit = qty if qty > 0 else Decimal('1')
+            except (ValueError, TypeError, InvalidOperation):
+                reagent.qty_per_lab_visit = Decimal('1')
+            reagent.save(update_fields=['deduct_per_lab_visit', 'qty_per_lab_visit', 'modified'])
+            messages.success(
+                request,
+                f'{reagent.name}: {"deducts" if reagent.deduct_per_lab_visit else "does not deduct"} '
+                f'{reagent.qty_per_lab_visit} {reagent.unit} per completed lab.',
+            )
+            return redirect('hospital:issue_lab_consumables')
+
+    items = LabReagent.objects.filter(is_deleted=False).order_by('name')
+    if q:
+        items = items.filter(Q(name__icontains=q) | Q(item_code__icontains=q))
+    visit_items = LabReagent.objects.filter(is_deleted=False, deduct_per_lab_visit=True).order_by('name')
+    recent = (
+        ReagentTransaction.objects.filter(
+            is_deleted=False,
+            transaction_type__in=['transferred', 'used'],
+        )
+        .select_related('reagent', 'performed_by', 'performed_by__user', 'patient')
+        .order_by('-created')[:25]
+    )
+    return render(request, 'hospital/issue_lab_consumables.html', {
+        'items': items[:200],
+        'visit_items': visit_items,
+        'q': q,
+        'recent': recent,
+        'can_manage': _user_can_manage_lab_equipment(request.user),
+    })
 
 
 @login_required
@@ -325,28 +381,94 @@ def equipment_detail(request, equipment_id):
 
 @login_required
 def reagent_detail(request, reagent_id):
-    """Reagent detail view with transaction history"""
+    """Reagent detail view with transaction history, visit-tube settings, and staff issue."""
     reagent = get_object_or_404(LabReagent, pk=reagent_id, is_deleted=False)
-    
-    # Transaction history
+
+    if request.method == 'POST':
+        action = (request.POST.get('action') or '').strip()
+        staff = None
+        try:
+            staff = request.user.staff
+        except Staff.DoesNotExist:
+            staff = None
+
+        if action == 'save_visit_settings' and _user_can_manage_lab_equipment(request.user):
+            reagent.deduct_per_lab_visit = request.POST.get('deduct_per_lab_visit') == 'on'
+            try:
+                qty = Decimal(request.POST.get('qty_per_lab_visit') or '1')
+                reagent.qty_per_lab_visit = qty if qty > 0 else Decimal('1')
+            except (ValueError, TypeError, InvalidOperation):
+                reagent.qty_per_lab_visit = Decimal('1')
+            reagent.save(update_fields=['deduct_per_lab_visit', 'qty_per_lab_visit', 'modified'])
+            messages.success(
+                request,
+                f'{"Will deduct" if reagent.deduct_per_lab_visit else "Will not deduct"} '
+                f'{reagent.qty_per_lab_visit} {reagent.unit} of {reagent.name} for each completed lab.',
+            )
+            return redirect('hospital:reagent_detail', reagent_id=reagent.id)
+
+        if action in ('issue_to_staff', 'receive_pack'):
+            messages.error(
+                request,
+                'Lab cannot receive or issue stock. Procurement receives goods into store, '
+                'then issues kits to the laboratory or supplies to staff.',
+            )
+            return redirect('hospital:inventory:issue_consumables')
+
+        if action == 'save_stock_tracking' and _user_can_manage_lab_equipment(request.user):
+            tracking = (request.POST.get('stock_tracking') or 'untracked').strip().lower()
+            if tracking not in ('untracked', 'measurable', 'immeasurable'):
+                tracking = 'untracked'
+            reagent.stock_tracking = tracking
+            try:
+                box = int(request.POST.get('qty_per_box') or 0)
+                reagent.qty_per_box = box if box > 0 else None
+            except (TypeError, ValueError):
+                reagent.qty_per_box = None
+            try:
+                tpk = int(request.POST.get('tests_per_kit') or 0)
+                reagent.tests_per_kit = tpk if tpk > 0 else None
+            except (TypeError, ValueError):
+                reagent.tests_per_kit = None
+            try:
+                cqty = Decimal(request.POST.get('qty_consumed_per_test') or '1')
+                reagent.qty_consumed_per_test = cqty if cqty >= 0 else Decimal('1')
+            except (InvalidOperation, TypeError, ValueError):
+                reagent.qty_consumed_per_test = Decimal('1')
+            reagent.reagent_volume_note = (request.POST.get('reagent_volume_note') or '').strip()[:200]
+            reagent.save(
+                update_fields=[
+                    'stock_tracking',
+                    'qty_per_box',
+                    'tests_per_kit',
+                    'qty_consumed_per_test',
+                    'reagent_volume_note',
+                    'modified',
+                ]
+            )
+            messages.success(request, f'Stock tracking saved for {reagent.name}.')
+            return redirect('hospital:reagent_detail', reagent_id=reagent.id)
+
     transactions_qs = ReagentTransaction.objects.filter(
         reagent=reagent,
         is_deleted=False
     ).select_related('performed_by', 'performed_by__user').order_by('-created')
-    
-    # Transaction history for display
     transactions = transactions_qs[:50]
-    
-    # Usage statistics - use the queryset before slicing
     usage_stats = transactions_qs.filter(transaction_type='used').aggregate(
         total_used=Sum('quantity'),
         usage_count=Count('id')
     )
-    
     context = {
         'reagent': reagent,
         'transactions': transactions,
         'usage_stats': usage_stats,
+        'can_manage': _user_can_manage_lab_equipment(request.user),
+        'linked_tests': reagent.tests.filter(is_deleted=False).order_by('name'),
+        'recipient_staff': (
+            Staff.objects.filter(is_deleted=False, user__is_active=True)
+            .select_related('user')
+            .order_by('user__first_name', 'user__last_name')[:400]
+        ),
     }
     return render(request, 'hospital/reagent_detail.html', context)
 
@@ -462,6 +584,17 @@ def record_reagent_transaction(request):
             transaction_type = request.POST.get('transaction_type')
             quantity = Decimal(request.POST.get('quantity', '0'))
             
+            # SECURITY: Only procurement/stores can add or transfer stock.
+            # Lab records usage; stock enters lab books when procurement issues to laboratory.
+            from hospital.utils_roles import is_procurement_staff
+            if transaction_type in ('received', 'transferred') and not is_procurement_staff(request.user):
+                messages.error(
+                    request,
+                    'Only procurement / stores can receive or transfer reagent stock. '
+                    'Issue kits to the laboratory from the store issue page.',
+                )
+                return redirect('hospital:inventory:issue_consumables')
+
             # SECURITY: Lab techs can ONLY deduct (use) reagents, not add
             if is_lab_tech and transaction_type != 'used':
                 messages.error(request, 'Lab technicians can only record reagent usage (deductions). Adding quantities requires inventory manager approval.')
@@ -504,7 +637,7 @@ def record_reagent_transaction(request):
                 lab_result = None
             
             # Validate quantity for deductions
-            if transaction_type in ['used', 'expired']:
+            if transaction_type in ['used', 'expired', 'transferred']:
                 if quantity > reagent.quantity_on_hand:
                     messages.error(request, f'Insufficient stock. Available: {reagent.quantity_on_hand} {reagent.unit}, Requested: {quantity} {reagent.unit}')
                     return redirect('hospital:record_reagent_transaction')
@@ -531,8 +664,11 @@ def record_reagent_transaction(request):
                 reagent.quantity_on_hand -= quantity
                 reagent.total_used += quantity
                 reagent.last_used_at = timezone.now()
-            elif transaction_type == 'expired':
+            elif transaction_type in ('expired', 'transferred'):
                 reagent.quantity_on_hand -= quantity
+                if transaction_type == 'transferred':
+                    reagent.total_used += quantity
+                    reagent.last_used_at = timezone.now()
             
             reagent.save()
 

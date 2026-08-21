@@ -263,13 +263,21 @@ def create_accounting_entries_for_application(sender, instance, created, **kwarg
 
 @receiver(post_save, sender='hospital.Transaction')
 def create_accounting_entries_for_deposit_refund(sender, instance, created, **kwargs):
-    """Post Dr Customer Deposits / Cr Cash when a patient deposit refund is recorded."""
+    """Post Dr Customer Deposits / Cr Cash when a patient deposit refund/withdrawal is recorded."""
     if not created:
         return
-    if instance.transaction_type != 'refund':
+    # Legacy used type 'refund'; new withdrawals use refund_issued + REFUND- reference
+    if instance.transaction_type not in ('refund', 'refund_issued'):
         return
     ref = (instance.reference_number or '')
-    if not ref.startswith('REFUND-'):
+    notes = (instance.notes or '')
+    is_deposit_refund = ref.startswith('REFUND-') or (
+        'deposit withdrawal' in notes.casefold() or 'refund for deposit' in notes.casefold()
+    )
+    if not is_deposit_refund:
+        return
+    # Invoice credit refunds are refund_issued without REFUND- deposit refs — skip those here
+    if instance.transaction_type == 'refund_issued' and not ref.startswith('REFUND-'):
         return
 
     try:
@@ -303,7 +311,7 @@ def create_accounting_entries_for_deposit_refund(sender, instance, created, **kw
                 if hasattr(instance.transaction_date, 'date')
                 else instance.transaction_date
             ),
-            description=f"Patient deposit refund: {ref}",
+            description=f"Patient deposit withdrawal: {ref}",
             reference=ref,
             created_by=instance.processed_by,
             status='draft',
@@ -315,7 +323,7 @@ def create_accounting_entries_for_deposit_refund(sender, instance, created, **kw
             journal_entry=je,
             line_number=1,
             account=deposits_account,
-            description=f"Customer deposit refunded: {ref}",
+            description=f"Customer deposit withdrawn: {ref}",
             debit_amount=amount,
             credit_amount=Decimal('0.00'),
             patient=instance.patient,
@@ -325,7 +333,7 @@ def create_accounting_entries_for_deposit_refund(sender, instance, created, **kw
             journal_entry=je,
             line_number=2,
             account=cash_account,
-            description=f"Cash refunded: {ref}",
+            description=f"Cash paid out on deposit withdrawal: {ref}",
             debit_amount=Decimal('0.00'),
             credit_amount=amount,
             patient=instance.patient,
@@ -334,7 +342,7 @@ def create_accounting_entries_for_deposit_refund(sender, instance, created, **kw
         je.post(instance.processed_by)
 
         logger.info(
-            f"Created accounting entries for deposit refund {ref}: "
+            f"Created accounting entries for deposit withdrawal {ref}: "
             f"Customer Deposits -GHS {amount}, Cash -GHS {amount}"
         )
 

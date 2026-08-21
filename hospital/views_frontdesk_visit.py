@@ -30,6 +30,11 @@ def frontdesk_visit_create(request, patient_id):
     if request.method == 'POST':
         payer_type = request.POST.get('payer_type', '').strip()
         encounter_type = request.POST.get('encounter_type', 'outpatient')
+        consultation_track = (request.POST.get('consultation_track') or '').strip().lower()
+        if consultation_track == 'antenatal':
+            encounter_type = 'antenatal'
+        elif consultation_track == 'gynae' and encounter_type not in ('antenatal', 'gynae'):
+            encounter_type = 'gynae'
         chief_complaint = request.POST.get('chief_complaint', '').strip() or 'Visit'
         visit_reason = request.POST.get('visit_reason', 'new').strip().lower()  # 'new' or 'review'
         department_id = request.POST.get('department_id')
@@ -37,6 +42,24 @@ def frontdesk_visit_create(request, patient_id):
         insurance_company_id = request.POST.get('insurance_company', '').strip()
         insurance_plan_id = request.POST.get('insurance_plan', '').strip()
         corporate_payer_id = request.POST.get('corporate_company', '').strip()
+
+        # Auto free-return for GP only. Specialists (psych new/subsequent, etc.) stay chargeable.
+        try:
+            from hospital.utils_billing import visit_should_auto_mark_review
+            assigned_for_review = None
+            if assigned_doctor_id:
+                try:
+                    assigned_for_review = Staff.objects.filter(
+                        pk=assigned_doctor_id, profession='doctor', is_deleted=False
+                    ).first()
+                except (ValueError, TypeError):
+                    assigned_for_review = None
+            if visit_should_auto_mark_review(
+                visit_reason, patient, assigned_for_review, encounter_type
+            ):
+                visit_reason = 'review'
+        except Exception:
+            pass
         
         try:
             with transaction.atomic():
@@ -220,21 +243,26 @@ def frontdesk_visit_create(request, patient_id):
                     )
 
                 # Consultation charge after payer is set so price goes straight to cashier
-                if visit_reason == 'new':
+                from .utils_billing import visit_should_charge_consultation
+                if visit_should_charge_consultation(visit_reason, encounter_type, assigned_doctor_staff):
                     try:
-                        from .utils_billing import CONSULTATION_LINE_SERVICE_CODES, add_consultation_charge
+                        from .utils_billing import CONSULTATION_LINE_SERVICE_CODES, add_consultation_charge, normalize_consultation_type_for_gp_department
                         from .utils_doctor_pricing import DoctorPricingService
 
                         consultation_type = 'general'
                         if encounter_type == 'specialist' or encounter_type == 'gynae':
                             consultation_type = 'specialist'
                         elif encounter_type == 'antenatal':
-                            # Antenatal: add_consultation_charge uses MAT-ANC and 235 GHC
+                            # Antenatal: add_consultation_charge uses MAT-ANC and 243 GHC
                             consultation_type = 'general'
                         elif assigned_doctor_staff:
                             pricing_info = DoctorPricingService.get_doctor_pricing_info(assigned_doctor_staff)
                             if pricing_info['is_specialist']:
                                 consultation_type = 'specialist'
+
+                        consultation_type = normalize_consultation_type_for_gp_department(
+                            encounter, consultation_type, assigned_doctor_staff
+                        )
 
                         invoice = add_consultation_charge(
                             encounter,

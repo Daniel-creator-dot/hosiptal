@@ -1,7 +1,19 @@
 @echo off
 REM ========================================
-REM START DOCKER - DOUBLE CLICK THIS FILE!
+REM START DOCKER - ALWAYS FROM C:\chm
 REM ========================================
+cd /d C:\chm
+if not exist C:\chm\docker-compose.yml (
+    echo ERROR: C:\chm\docker-compose.yml not found.
+    pause
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\chm\scripts\ensure_c_chm.ps1" -Fix -Quiet
+if errorlevel 1 (
+    echo Failed to verify C:\chm Docker setup.
+    pause
+    exit /b 1
+)
 echo.
 echo ========================================
 echo   HMS DOCKER START

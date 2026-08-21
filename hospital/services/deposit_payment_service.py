@@ -57,11 +57,21 @@ def apply_deposit_to_invoice(invoice, applied_by=None, create_receipt=True):
     if not invoice:
         return (Decimal('0.00'), Decimal('0.00'))
 
+    if not invoice_is_eligible_for_deposit_apply(invoice):
+        try:
+            bal = getattr(invoice, 'balance', None) or Decimal('0.00')
+        except Exception:
+            bal = Decimal('0.00')
+        return (Decimal('0.00'), bal)
+
     # Ensure invoice has correct balance (recalculate from lines and payments)
     try:
         invoice.update_totals()
     except Exception:
         invoice.refresh_from_db()
+
+    if not invoice_is_eligible_for_deposit_apply(invoice):
+        return (Decimal('0.00'), invoice.balance or Decimal('0.00'))
 
     if invoice.balance <= 0:
         return (Decimal('0.00'), invoice.balance)
@@ -133,7 +143,8 @@ def apply_deposit_to_all_patient_invoices(patient, create_receipt=True, invoice_
 
     qs = (
         Invoice.all_objects.filter(patient_id__in=scope_ids, is_deleted=False)
-        .exclude(status='paid')
+        .exclude(status__in=('paid', 'cancelled'))
+        .filter(balance__gt=0)
         .select_related('payer')
     )
     if invoice_pks is not None:
@@ -386,6 +397,7 @@ def reverse_deposit_payments_for_invoice(invoice):
 
     Used when an accountant removes (cancels) an invoice from the bill so a duplicate
     or mistake does not leave deposit stuck on a removed invoice.
+    Also frees deposit stuck on soft-deleted cancelled invoices.
 
     Returns the total amount reversed (deposit currency).
     """
@@ -400,9 +412,10 @@ def reverse_deposit_payments_for_invoice(invoice):
     total_reversed = Decimal('0.00')
 
     with transaction.atomic():
+        # Include soft-deleted invoices so stuck deposit on deleted rows can be freed.
         inv = (
             type(invoice).all_objects.select_for_update(of=('self',))
-            .filter(pk=invoice.pk, is_deleted=False)
+            .filter(pk=invoice.pk)
             .first()
         )
         if not inv:
@@ -423,6 +436,8 @@ def reverse_deposit_payments_for_invoice(invoice):
                     )
                     dep.available_balance = (dep.available_balance or Decimal('0.00')) + amount
                     if dep.status == 'fully_used' and dep.available_balance > Decimal('0.00'):
+                        dep.status = 'active'
+                    elif getattr(dep, 'status', None) not in ('cancelled', 'refunded') and dep.available_balance > Decimal('0.00'):
                         dep.status = 'active'
                     dep.save(
                         update_fields=['used_amount', 'available_balance', 'status', 'modified']
@@ -448,10 +463,127 @@ def reverse_deposit_payments_for_invoice(invoice):
             if tid:
                 Transaction.objects.filter(pk=tid, is_deleted=False).update(is_deleted=True)
 
-        inv.calculate_totals()
-        inv.save(update_fields=['total_amount', 'balance', 'status', 'modified'])
+        # Recalc only for live invoices; soft-deleted stay deleted without reopening.
+        if not getattr(inv, 'is_deleted', False):
+            try:
+                inv.calculate_totals()
+                inv.save(update_fields=['total_amount', 'balance', 'status', 'modified'])
+            except Exception:
+                logger.exception(
+                    'calculate_totals after deposit reverse failed for %s',
+                    getattr(inv, 'invoice_number', inv.pk),
+                )
 
     return total_reversed
+
+
+def restore_deposit_from_cancelled_invoices(patient):
+    """
+    Reverse deposit applications still sitting on cancelled/deleted invoices so the
+    credit returns to the patient's available deposit and can reduce open bills.
+    """
+    from ..models import Invoice
+    from ..models_patient_deposits import DepositApplication
+    from .patient_outstanding_service import patient_billing_scope_ids
+
+    if not patient:
+        return Decimal('0.00')
+
+    try:
+        scope_ids = patient_billing_scope_ids(patient)
+    except Exception:
+        scope_ids = [getattr(patient, 'pk', None)]
+    scope_ids = [sid for sid in (scope_ids or []) if sid]
+    if not scope_ids:
+        return Decimal('0.00')
+
+    cancelled_invoice_ids = list(
+        Invoice.all_objects.filter(
+            patient_id__in=scope_ids,
+        )
+        .filter(Q(status='cancelled') | Q(is_deleted=True))
+        .values_list('pk', flat=True)
+    )
+    if not cancelled_invoice_ids:
+        return Decimal('0.00')
+
+    apps = (
+        DepositApplication.objects.filter(
+            invoice_id__in=cancelled_invoice_ids,
+            is_deleted=False,
+            deposit__patient_id__in=scope_ids,
+            deposit__is_deleted=False,
+        )
+        .select_related('invoice')
+        .order_by('created')
+    )
+    total_restored = Decimal('0.00')
+    seen_invoices = set()
+    for app in apps:
+        inv = app.invoice
+        if not inv or inv.pk in seen_invoices:
+            continue
+        seen_invoices.add(inv.pk)
+        try:
+            restored = reverse_deposit_payments_for_invoice(inv)
+            total_restored += restored or Decimal('0.00')
+        except Exception:
+            logger.exception(
+                'restore_deposit_from_cancelled_invoices failed for invoice %s',
+                getattr(inv, 'invoice_number', inv.pk),
+            )
+    if total_restored > 0:
+        logger.info(
+            'Restored GHS %s deposit from cancelled invoices for patient %s',
+            total_restored,
+            getattr(patient, 'mrn', patient.pk),
+        )
+    return total_restored
+
+
+def heal_patient_deposits_for_billing(patient, apply_restored=True, invoice_pks=None):
+    """
+    System-wide deposit heal for cashier/billing screens.
+
+    1) Free deposit stuck on cancelled/deleted invoices.
+    2) Optionally apply that restored credit to open cash invoices so amount due
+       = total billed − deposit applied.
+
+    When invoice_pks is provided, restored credit is applied only to those invoices
+    (e.g. invoices currently on Total Bill).
+
+    Returns dict: restored, applied, available.
+    """
+    from .patient_outstanding_service import patient_billing_scope_ids
+
+    restored = restore_deposit_from_cancelled_invoices(patient) or Decimal('0.00')
+    applied = Decimal('0.00')
+    if apply_restored and restored > 0:
+        applied = apply_deposit_to_all_patient_invoices(
+            patient, create_receipt=True, invoice_pks=invoice_pks
+        ) or Decimal('0.00')
+    available = get_patients_deposit_balance_display(patient_billing_scope_ids(patient)) or Decimal('0.00')
+    return {
+        'restored': restored,
+        'applied': applied,
+        'available': available,
+    }
+
+
+def invoice_is_eligible_for_deposit_apply(invoice):
+    """True if deposit may be applied to this invoice (open, payable cash/self-pay)."""
+    if not invoice or not getattr(invoice, 'pk', None):
+        return False
+    if getattr(invoice, 'is_deleted', False):
+        return False
+    if getattr(invoice, 'status', None) in ('cancelled', 'paid', 'written_off'):
+        return False
+    bal = getattr(invoice, 'balance', None) or Decimal('0.00')
+    if bal <= 0:
+        return False
+    payer = getattr(invoice, 'payer', None)
+    payer_type = getattr(payer, 'payer_type', None) if payer else None
+    return payer_type in ('cash', 'self_pay', None)
 
 
 def invoice_has_non_deposit_payment_recorded(invoice):

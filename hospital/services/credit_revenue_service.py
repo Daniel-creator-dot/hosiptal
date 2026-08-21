@@ -53,6 +53,7 @@ IRE_FIELD_TO_REV_TYPE = {
 REV_TYPE_TO_ACCOUNT_CODE = {
     'registration': '4100',
     'consultation': '4110',
+    'sustainability': '4115',
     'laboratory': '4120',
     'pharmacy': '4130',
     'surgeries': '4140',
@@ -104,10 +105,22 @@ def build_ire_revenue_breakdown(invoice):
     return result
 
 
+_IRE_SERVICE_SUSTAINABILITY_TYPES = frozenset({
+    'laboratory',
+    'pharmacy',
+    'radiology',
+    'admissions',
+})
+
+
 def prorate_ire_revenue_amounts(ire_entry, credit_amount):
     """
     Prorate IRE department amounts for the outstanding credit portion.
     Returns dict rev_type -> Decimal (e.g. consultation -> 75.00).
+
+    Drugs, lab, scans, and ward/admission billed amounts include +10% Sustainability
+    and Insurance; that portion is peeled to rev_type 'sustainability' (GL 4115).
+    IRE department totals stay at the full billed amount.
     """
     credit_amount = Decimal(str(credit_amount or 0))
     total = Decimal(str(ire_entry.total_amount or 0))
@@ -139,7 +152,33 @@ def prorate_ire_revenue_amounts(ire_entry, credit_amount):
         if share > 0:
             result[rev_type] = result.get(rev_type, D0) + share
 
-    return result
+    from hospital.utils_billing import SERVICE_SUSTAINABILITY_GL_FROM, service_sustainability_portion
+
+    peeled = {}
+    sust = D0
+    entry_date = getattr(ire_entry, 'entry_date', None)
+    apply_peel = True
+    if entry_date is not None:
+        try:
+            d = entry_date.date() if hasattr(entry_date, 'date') else entry_date
+            apply_peel = d >= SERVICE_SUSTAINABILITY_GL_FROM
+        except Exception:
+            apply_peel = True
+    if not apply_peel:
+        return {k: v for k, v in result.items() if v > 0}
+    for rev_type, share in result.items():
+        if rev_type in _IRE_SERVICE_SUSTAINABILITY_TYPES:
+            portion = service_sustainability_portion(share)
+            rest = (share - portion).quantize(Decimal('0.01'))
+            if rest > 0:
+                peeled[rev_type] = peeled.get(rev_type, D0) + rest
+            if portion > 0:
+                sust += portion
+        else:
+            peeled[rev_type] = peeled.get(rev_type, D0) + share
+    if sust > 0:
+        peeled['sustainability'] = peeled.get('sustainability', D0) + sust.quantize(Decimal('0.01'))
+    return {k: v for k, v in peeled.items() if v > 0}
 
 
 def credit_revenue_eligible_queryset(backfill_all=False):

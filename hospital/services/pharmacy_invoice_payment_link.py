@@ -1,7 +1,11 @@
 """
-Link PharmacyDispensing when an encounter invoice is fully settled (cashier, deposit,
-allocations, combined payment). Receipt FK is optional — deposit-only and summary flows
-often leave no receipt on the invoice, but the queue must still move to Ready to Dispense.
+Link PharmacyDispensing when pharmacy charges on an encounter invoice are settled
+(cashier, deposit, allocations, combined / total-bill payment).
+
+Pharmacy can clear when the *drug* amount is paid even if consult/lab on the same
+invoice still have a balance. Receipt FK is optional — deposit-only and summary
+flows often leave no receipt on the invoice, but the queue must still move to
+Ready to Dispense.
 
 Also sync WalkInPharmacySale when prescribe (walk-in) invoice lines are fully settled.
 """
@@ -9,7 +13,6 @@ import logging
 import re
 from decimal import Decimal
 
-from django.db.models import Q
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -63,29 +66,64 @@ def resolve_receipt_for_invoice_payment(invoice, explicit_receipt=None):
         )
 
 
-def get_prescription_ids_on_settled_pharmacy_invoices():
+def get_prescription_ids_on_settled_pharmacy_invoices(prescription_ids=None):
     """
-    Prescriptions with a non-waived line on an invoice that is financially settled.
-    Uses Invoice.all_objects so visibility rules do not hide paid invoices.
+    Prescriptions with a non-waived line on an invoice where pharmacy charges are
+    settled (full invoice paid, or pharmacy-first amount covered).
+
+    Scoped to pending pharmacy rows (or an explicit prescription id list) so opening
+    the dispense modal / queue does not scan every invoice in the hospital.
     """
     from ..models import Invoice, InvoiceLine
+    from ..models_payment_verification import PharmacyDispensing
+    from ..utils_invoice_line import invoice_pharmacy_lines_are_settled
 
-    settled_invoice_ids = Invoice.all_objects.filter(
-        is_deleted=False,
-    ).filter(
-        Q(status='paid')
-        | Q(
-            balance__lte=Decimal('0'),
-            total_amount__gt=Decimal('0'),
+    if prescription_ids is None:
+        prescription_ids = list(
+            PharmacyDispensing.objects.filter(
+                dispensing_status='pending_payment',
+                is_deleted=False,
+            )
+            .order_by('-modified')
+            .values_list('prescription_id', flat=True)[:500]
         )
-    ).exclude(status__in=['cancelled', 'draft']).values_list('id', flat=True)
+    else:
+        prescription_ids = list(prescription_ids)
+
+    if not prescription_ids:
+        return set()
+
+    invoice_ids = list(
+        InvoiceLine.objects.filter(
+            prescription_id__in=prescription_ids,
+            is_deleted=False,
+            waived_at__isnull=True,
+        )
+        .values_list('invoice_id', flat=True)
+        .distinct()
+    )
+    if not invoice_ids:
+        return set()
+
+    settled_invoice_ids = set()
+    for inv in Invoice.all_objects.filter(pk__in=invoice_ids, is_deleted=False).iterator(chunk_size=50):
+        try:
+            if invoice_pharmacy_lines_are_settled(inv):
+                settled_invoice_ids.add(inv.pk)
+        except Exception:
+            logger.exception(
+                'pharmacy settlement check failed for invoice %s', getattr(inv, 'pk', None)
+            )
+
+    if not settled_invoice_ids:
+        return set()
 
     return set(
         InvoiceLine.objects.filter(
-            prescription_id__isnull=False,
+            prescription_id__in=prescription_ids,
+            invoice_id__in=settled_invoice_ids,
             is_deleted=False,
             waived_at__isnull=True,
-            invoice_id__in=settled_invoice_ids,
         ).values_list('prescription_id', flat=True).distinct()
     )
 
@@ -93,7 +131,7 @@ def get_prescription_ids_on_settled_pharmacy_invoices():
 def reconcile_pending_pharmacy_dispensing_with_invoices():
     """
     Safety net (e.g. legacy data or missed hooks): pending_payment → ready_to_dispense
-    when the prescription's invoice is already settled. Returns rows updated.
+    when the prescription's pharmacy charges are already settled. Returns rows updated.
     """
     from ..models_payment_verification import PharmacyDispensing
 
@@ -118,8 +156,10 @@ def link_pharmacy_dispensing_when_invoice_paid(
     refresh_invoice=True,
 ):
     """
-    When invoice balance is fully settled, move matching PharmacyDispensing rows to
-    ready_to_dispense. Attaches receipt when one exists; settlement still applies without it.
+    When pharmacy charges on the invoice are settled (full invoice paid, or enough
+    payment to cover drug lines), move matching PharmacyDispensing rows to
+    ready_to_dispense. Attaches receipt when one exists and the row has none yet
+    (never overwrites an existing receipt — avoids duplicate payment links).
 
     If refresh_invoice=True, reloads from DB and recalculates totals (does not call
     update_totals(), to avoid re-entrancy with Invoice.update_totals).
@@ -128,6 +168,7 @@ def link_pharmacy_dispensing_when_invoice_paid(
     """
     from ..models import InvoiceLine
     from ..models_payment_verification import PharmacyDispensing
+    from ..utils_invoice_line import invoice_pharmacy_lines_are_settled
 
     if not invoice or not getattr(invoice, 'pk', None):
         return 0
@@ -137,13 +178,12 @@ def link_pharmacy_dispensing_when_invoice_paid(
         invoice.calculate_totals()
         invoice.save(update_fields=['total_amount', 'balance', 'status'])
 
-    bal = invoice.balance or Decimal('0')
-    tot = invoice.total_amount or Decimal('0')
-    if bal > Decimal('0') or tot <= Decimal('0'):
-        return 0
     if getattr(invoice, 'status', None) == 'cancelled':
         return 0
     if getattr(invoice, 'is_deleted', False):
+        return 0
+
+    if not invoice_pharmacy_lines_are_settled(invoice):
         return 0
 
     resolved_receipt = resolve_receipt_for_invoice_payment(invoice, receipt)
@@ -169,8 +209,12 @@ def link_pharmacy_dispensing_when_invoice_paid(
         if disp.dispensing_status == 'cancelled':
             continue
 
-        # Already cleared by Invoice.update_totals() but receipt FK missing (deposit / combined pay)
-        if disp.dispensing_status == 'ready_to_dispense':
+        # Already cleared but receipt FK missing (deposit / combined / total-bill pay)
+        if disp.dispensing_status in (
+            'ready_to_dispense',
+            'partially_dispensed',
+            'fully_dispensed',
+        ):
             if resolved_receipt is not None and not disp.payment_receipt_id:
                 disp.payment_receipt = resolved_receipt
                 save_fields = ['payment_receipt', 'modified']
@@ -187,7 +231,7 @@ def link_pharmacy_dispensing_when_invoice_paid(
         disp.dispensing_status = 'ready_to_dispense'
         disp.payment_verified_at = timezone.now()
         save_fields = ['dispensing_status', 'payment_verified_at', 'modified']
-        if resolved_receipt is not None:
+        if resolved_receipt is not None and not disp.payment_receipt_id:
             disp.payment_receipt = resolved_receipt
             save_fields.append('payment_receipt')
         if verified_by_user is not None:

@@ -51,6 +51,34 @@ def create_order(request, encounter_id):
                 if not test_ids:
                     messages.error(request, 'Please select at least one lab test.')
                     return redirect('hospital:create_order', encounter_id=encounter_id)
+
+                from .consultation_status import (
+                    LAB_DIAGNOSIS_REQUIRED_MSG,
+                    require_diagnosis_for_lab_order,
+                )
+                from .lab_order_diagnosis import encounter_diagnosis_summary
+                ok_dx, dx_msg = require_diagnosis_for_lab_order(
+                    encounter,
+                    doctor=doctor,
+                    diagnosis_name=(request.POST.get('diagnosis_name') or request.POST.get('lab_diagnosis') or '').strip(),
+                    icd10_code=(request.POST.get('icd10_code') or '').strip(),
+                )
+                if not ok_dx:
+                    messages.error(request, dx_msg or LAB_DIAGNOSIS_REQUIRED_MSG)
+                    return redirect('hospital:create_order', encounter_id=encounter_id)
+
+                from hospital.insurance_lab_limit import (
+                    annotate_insurance_extra_labs,
+                    extra_reason_and_diagnosis_from_request,
+                    require_insurance_lab_limit_from_request,
+                )
+                ok_lim, lim_msg = require_insurance_lab_limit_from_request(
+                    request, encounter, len(test_ids)
+                )
+                if not ok_lim:
+                    messages.error(request, lim_msg)
+                    return redirect('hospital:create_order', encounter_id=encounter_id)
+                extra_reason, extra_diagnosis = extra_reason_and_diagnosis_from_request(request)
                 
                 # Create lab order
                 lab_order = Order.objects.create(
@@ -59,6 +87,7 @@ def create_order(request, encounter_id):
                     status='pending',
                     priority=priority,
                     notes=notes,
+                    clinical_indication=encounter_diagnosis_summary(encounter),
                     requested_by=doctor
                 )
                 
@@ -88,6 +117,7 @@ def create_order(request, encounter_id):
                             f'Test {test.name} requires reagents that are low stock or expired: {", ".join([r.name for r in unavailable_reagents])}'
                         )
                 
+                annotate_insurance_extra_labs(lab_order, encounter, extra_reason, extra_diagnosis)
                 messages.success(request, f'Lab order created with {tests.count()} test(s).')
                 return redirect('hospital:encounter_detail', pk=encounter_id)
             

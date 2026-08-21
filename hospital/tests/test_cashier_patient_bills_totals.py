@@ -170,3 +170,72 @@ class CashierPatientBillsViewTotalsTests(TestCase):
         self.assertEqual(row['total'], inv_open.balance)
         self.assertEqual(row['initial_total'], inv_open.balance)
         self.assertEqual(row['deposit_applied_to_bill'], Decimal('0.00'))
+
+
+class CashierTotalBillDepositDisplayTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username=f'cashier_tb_{uuid.uuid4().hex[:8]}',
+            password='test-pass-123',
+            is_superuser=True,
+        )
+        self.payer = Payer.objects.create(name='Cash TB Dep', payer_type='cash')
+        suffix = uuid.uuid4().hex[:8]
+        self.patient = Patient.objects.create(
+            first_name='TotBill',
+            last_name=f'DepZ{suffix}',
+            mrn=f'PMC-TB-{suffix}',
+        )
+
+    def test_total_bill_shows_deposit_sum_and_bill_outstanding(self):
+        from hospital.models_patient_deposits import PatientDeposit
+
+        sc = ServiceCode.objects.create(
+            code=f'TBD-{uuid.uuid4().hex[:8]}',
+            description='Open line',
+            category='test',
+        )
+        inv = Invoice.objects.create(
+            patient=self.patient,
+            encounter=None,
+            payer=self.payer,
+            status='issued',
+        )
+        InvoiceLine.objects.create(
+            invoice=inv,
+            service_code=sc,
+            description='Due',
+            quantity=Decimal('1'),
+            unit_price=Decimal('150.00'),
+            line_total=Decimal('150.00'),
+        )
+        inv.update_totals()
+        inv.refresh_from_db()
+
+        PatientDeposit.objects.create(
+            patient=self.patient,
+            deposit_amount=Decimal('500.00'),
+            available_balance=Decimal('500.00'),
+            payment_method='cash',
+            received_by=self.user,
+            status='active',
+        )
+
+        user_logged_in.disconnect(track_successful_login, dispatch_uid=None)
+        try:
+            self.client.force_login(self.user)
+            url = reverse('hospital:cashier_patient_total_bill', args=[self.patient.id])
+            response = self.client.get(url)
+        finally:
+            user_logged_in.connect(track_successful_login)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['bill_outstanding'], inv.balance)
+        self.assertEqual(response.context['patient_deposits_recorded_sum'], Decimal('500.00'))
+        self.assertGreaterEqual(response.context['patient_deposit_balance'], Decimal('500.00'))
+        content = response.content.decode('utf-8', errors='ignore')
+        self.assertIn('Total deposit made', content)
+        self.assertIn('500.00', content)
+        # Process Payment button must show this bill total, not patient-wide account outstanding
+        self.assertIn(f'Process Payment (GHS {inv.balance:.2f})', content)

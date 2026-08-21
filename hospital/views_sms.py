@@ -165,33 +165,23 @@ def send_sms(request):
     default_message = ''
     if message_type == 'lab_result' and recipient:
         default_message = (
-            f"Dear {recipient.first_name},\n\n"
-            f"Your lab test results are ready.\n"
-            f"Please visit the hospital or check your patient portal.\n\n"
-            f"Thank you.\n"
-            f"PrimeCare Hospital"
+            f"Hi {recipient.first_name}, lab results ready. "
+            f"Visit hospital or portal. -PrimeCare"
         )
     elif message_type == 'payment_reminder' and recipient:
         invoice = Invoice.objects.filter(patient=recipient, is_deleted=False).order_by('-issued_at').first()
         if invoice:
             default_message = (
-                f"Dear {recipient.first_name},\n\n"
-                f"You have an outstanding balance on invoice {invoice.invoice_number}.\n"
-                f"Please go to the Cashier to settle your bill — the correct amount is available there.\n\n"
-                f"Thank you.\n"
-                f"PrimeCare Hospital"
+                f"Hi {recipient.first_name}, bill pending ({invoice.invoice_number}). "
+                f"Pay at Cashier. -PrimeCare"
             )
     elif message_type == 'appointment_reminder' and recipient:
         appointment = Appointment.objects.filter(patient=recipient, is_deleted=False).order_by('-appointment_date').first()
         if appointment:
-            date_str = appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')
+            date_str = appointment.appointment_date.strftime('%d/%m/%Y %I:%M%p')
             default_message = (
-                f"Dear {recipient.first_name},\n\n"
-                f"Your appointment with Dr. {appointment.provider.user.get_full_name()}\n"
-                f"is scheduled for {date_str}.\n\n"
-                f"Please arrive 15 minutes early.\n\n"
-                f"Reply STOP to opt out.\n"
-                f"PrimeCare Hospital"
+                f"Hi {recipient.first_name}, appt with Dr {appointment.provider.user.get_full_name()} "
+                f"on {date_str}. Arrive 15 min early. -PrimeCare"
             )
     
     context = {

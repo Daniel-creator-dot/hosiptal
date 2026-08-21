@@ -16,7 +16,10 @@ from django.shortcuts import redirect
 from django.utils import timezone
 
 from .consultation_batch import set_skip_prescription_encounter_note
-from .consultation_status import encounter_has_diagnosis
+from .consultation_status import (
+    LAB_DIAGNOSIS_REQUIRED_MSG,
+    require_diagnosis_for_lab_order,
+)
 from .lab_order_diagnosis import encounter_diagnosis_summary
 from .models import Drug, LabResult, LabTest, Order, Prescription
 from .services.auto_billing_service import AutoBillingService
@@ -38,9 +41,8 @@ def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, e
     """
     In-app bell notification for pharmacy when a doctor adds/changes medication.
 
-    Active consultations are marked temporary so pharmacy knows not to serve/dispense
-    until the doctor completes the visit. Completed/continued consultations are marked
-    as updated so pharmacy reviews the final/current drug list.
+    Insurance OPD visits still in progress are marked temporary. Cash, corporate,
+    completed visits, and drug changes notify pharmacy to review and serve now.
     """
     if not encounter or not medication_order or not events:
         return
@@ -48,11 +50,21 @@ def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, e
         from django.contrib.auth.models import Group, User
         from django.db.models import Q
         from .models import Notification, Staff
+        from .services.auto_billing_service import AutoBillingService
 
         consultation_completed = bool(
             getattr(encounter, 'status', None) == 'completed'
             or getattr(encounter, 'ended_at', None)
         )
+        hold_for_insurance = False
+        try:
+            hold_for_insurance = (
+                AutoBillingService._encounter_requires_consultation_complete_for_pharmacy(
+                    encounter
+                )
+            )
+        except Exception:
+            hold_for_insurance = False
         patient = getattr(encounter, 'patient', None)
         patient_name = getattr(patient, 'full_name', '') or 'patient'
         patient_mrn = getattr(patient, 'mrn', '') or ''
@@ -74,8 +86,8 @@ def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, e
             parts.append(f'and {len(events) - 5} more')
         summary = '; '.join(parts)
         has_start_dose = any(len(ev) > 2 and ev[2] for ev in events)
-        if consultation_completed:
-            title = 'Prescription Updated'
+        if consultation_completed or changed or not hold_for_insurance:
+            title = 'Prescription Updated' if (changed or consultation_completed) else 'New Medication'
             message = (
                 f'Drugs have been updated: prescription {summary} for {patient_name}'
                 f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
@@ -86,13 +98,13 @@ def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, e
             message = (
                 f'Stat/start dose {summary} for {patient_name}'
                 f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
-                'Prepare and dispense the stat dose now. Other medications on this visit '
+                'Prepare and dispense the stat dose now. Other insurance medications on this visit '
                 'remain held until the doctor completes the consultation.'
             )
         else:
             title = 'Temporary Prescription Added'
             message = (
-                f'Temporary prescription {summary} for {patient_name}'
+                f'Temporary insurance prescription {summary} for {patient_name}'
                 f'{f" ({patient_mrn})" if patient_mrn else ""}{doctor_bit}. '
                 'Consultation is not completed yet, so do not serve or dispense until the doctor completes it.'
             )
@@ -136,7 +148,7 @@ def _notify_pharmacy_prescription_changed(encounter, medication_order, doctor, e
         logger.warning('Pharmacy prescription-change notification failed: %s', exc, exc_info=True)
 
 
-def _notify_lab_batch_pending_payment(patient, test_count: int, total_amount: Decimal) -> None:
+def _notify_lab_batch_pending_payment(patient, test_count: int, total_amount: Decimal, encounter=None) -> None:
     try:
         from hospital.services.pending_payment_notification_service import (
             SERVICE_TYPE_LAB,
@@ -149,6 +161,7 @@ def _notify_lab_batch_pending_payment(patient, test_count: int, total_amount: De
             f'{test_count} lab test(s)',
             total_amount,
             message_type='pending_payment_lab',
+            encounter=encounter,
         )
     except Exception as exc:
         logger.warning('Lab batch pending payment notify failed: %s', exc, exc_info=True)
@@ -167,10 +180,16 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
         messages.error(request, 'Please select at least one test.')
         return redirect(lab_redirect)
 
-    if not encounter_has_diagnosis(encounter):
+    ok_dx, dx_msg = require_diagnosis_for_lab_order(
+        encounter,
+        doctor=doctor,
+        diagnosis_name=(request.POST.get('diagnosis_name') or request.POST.get('lab_diagnosis') or '').strip(),
+        icd10_code=(request.POST.get('icd10_code') or '').strip(),
+    )
+    if not ok_dx:
         messages.error(
             request,
-            'Add at least one diagnosis before ordering lab tests (use the Diagnosis section on this consultation).',
+            dx_msg or LAB_DIAGNOSIS_REQUIRED_MSG,
         )
         return redirect(lab_redirect)
 
@@ -204,6 +223,17 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
         if not tests:
             messages.error(request, 'No valid tests selected.')
             return redirect(lab_redirect)
+
+        from hospital.insurance_lab_limit import (
+            annotate_insurance_extra_labs,
+            extra_reason_and_diagnosis_from_request,
+            require_insurance_lab_limit_from_request,
+        )
+        ok_lim, lim_msg = require_insurance_lab_limit_from_request(request, encounter, len(tests))
+        if not ok_lim:
+            messages.error(request, lim_msg)
+            return redirect(lab_redirect)
+        extra_reason, extra_diagnosis = extra_reason_and_diagnosis_from_request(request)
 
         reagent_warnings = []
         five_minutes_ago = timezone.now() - timedelta(minutes=5)
@@ -265,6 +295,7 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
                 )
             )
             final_count = len(results_list)
+            annotate_insurance_extra_labs(lab_order, encounter, extra_reason, extra_diagnosis)
 
             for lr in results_list:
                 res = AutoBillingService.create_lab_bill(lr, notify_patient=False)
@@ -293,8 +324,9 @@ def handle_order_lab_test_post(request, encounter, doctor, encounter_id):
                 pf = patient_for_notify
                 fc = final_count
                 ta = total_notify_amount
+                enc = encounter
                 transaction.on_commit(
-                    lambda: _notify_lab_batch_pending_payment(pf, fc, ta)
+                    lambda: _notify_lab_batch_pending_payment(pf, fc, ta, encounter=enc)
                 )
 
         if reagent_warnings:
@@ -419,6 +451,25 @@ def handle_prescribe_drug_post(request, encounter, doctor, encounter_id):
                 )
                 if not drug:
                     last_error = 'Selected drug is invalid or has been removed.'
+                    continue
+                from .services.nhis_drug_formulary import (
+                    nhis_prescribe_block_reason,
+                    payer_from_encounter,
+                )
+                nhis_block = nhis_prescribe_block_reason(
+                    drug=drug, payer=payer_from_encounter(encounter)
+                )
+                if nhis_block:
+                    last_error = nhis_block
+                    messages.warning(request, last_error)
+                    continue
+                from .pharmacy_stock_utils import (
+                    drug_is_available_to_prescribe,
+                    OUT_OF_STOCK_PRESCRIBE_MESSAGE,
+                )
+                if not drug_is_available_to_prescribe(drug):
+                    last_error = f'{drug.name}: {OUT_OF_STOCK_PRESCRIBE_MESSAGE}'
+                    messages.warning(request, last_error)
                     continue
                 thirty_minutes_ago = timezone.now() - timedelta(minutes=30)
 

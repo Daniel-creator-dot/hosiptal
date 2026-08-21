@@ -1,0 +1,78 @@
+{% extends 'hospital/base.html' %}
+
+{% block title %}{{ title }} - Admin{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3" style="max-width: 640px;">
+    <a href="{% url 'hospital:admin_payers' %}" class="btn btn-outline-secondary btn-sm mb-3">
+        <i class="bi bi-arrow-left"></i> Back to list
+    </a>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-0 pt-4 px-4">
+            <h1 class="h5 mb-1">{% if obj %}Edit name{% else %}Add company / insurance{% endif %}</h1>
+            <p class="text-muted small mb-0">
+                {% if obj %}
+                Change the display name used on bills and at front desk. Linked invoices keep this payer.
+                {% else %}
+                Corporate names appear in the company dropdown; insurance names appear for insured patients.
+                {% endif %}
+            </p>
+        </div>
+        <div class="card-body px-4 pb-4">
+            <form method="post" novalidate>
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="id_name">Name <span class="text-danger">*</span></label>
+                    <input type="text" name="name" id="id_name" class="form-control form-control-lg" required maxlength="200"
+                           value="{% if post %}{{ post.name }}{% elif obj %}{{ obj.name }}{% endif %}"
+                           placeholder="e.g. Electricity Company of Ghana">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="id_payer_type">Type <span class="text-danger">*</span></label>
+                    <select name="payer_type" id="id_payer_type" class="form-select" required>
+                        {% with sel=post.payer_type|default:default_type %}
+                        <option value="corporate" {% if sel == 'corporate' %}selected{% endif %}>Corporate company</option>
+                        <option value="private" {% if sel == 'private' %}selected{% endif %}>Private insurance</option>
+                        <option value="nhis" {% if sel == 'nhis' %}selected{% endif %}>NHIS</option>
+                        {% endwith %}
+                    </select>
+                </div>
+                {% if not obj %}
+                <div class="mb-3" id="code-wrap">
+                    <label class="form-label fw-semibold" for="id_code">Short code <span class="text-muted fw-normal">(insurance only, optional)</span></label>
+                    <input type="text" name="code" id="id_code" class="form-control" maxlength="20"
+                           value="{% if post %}{{ post.code }}{% endif %}"
+                           placeholder="e.g. GLICO, NHIS">
+                    <div class="form-text">Used on the insurance company record. Leave blank to auto-generate.</div>
+                </div>
+                {% endif %}
+                <div class="form-check mb-4">
+                    <input class="form-check-input" type="checkbox" name="is_active" value="1" id="id_is_active"
+                           {% if post %}{% if post.is_active == '1' %}checked{% endif %}{% elif obj %}{% if obj.is_active %}checked{% endif %}{% else %}checked{% endif %}>
+                    <label class="form-check-label" for="id_is_active">Active (show in front-desk dropdowns)</label>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>{% if obj %}Save changes{% else %}Add{% endif %}
+                    </button>
+                    <a href="{% url 'hospital:admin_payers' %}" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+  var sel = document.getElementById('id_payer_type');
+  var wrap = document.getElementById('code-wrap');
+  if (!sel || !wrap) return;
+  function sync() {
+    wrap.style.display = (sel.value === 'corporate') ? 'none' : '';
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

@@ -12,7 +12,8 @@
     
     // Configuration
     const AUTO_SAVE_DELAY = 3000; // 3 seconds after user stops typing (increased for safety)
-    const SYNC_INTERVAL = 10000; // Sync every 10 seconds (reduced frequency)
+    const SYNC_INTERVAL = 60000; // Sync pending saves every 60 seconds
+    const REALTIME_SYNC_INTERVAL = 120000; // Poll server for updates every 2 minutes (was 10s — caused DB load)
     const MAX_RETRIES = 2; // Reduced retries
     
     /**
@@ -566,14 +567,27 @@
         constructor() {
             this.lastSyncTime = Date.now();
             this.syncInterval = null;
+            this.authFailures = 0;
             this.init();
         }
         
         init() {
-            // Sync every 10 seconds
+            // Skip polling on login/public pages — avoids hammering the server with 58KB login redirects
+            if (document.body && document.body.dataset && document.body.dataset.userAuthenticated === 'false') {
+                return;
+            }
+            if (window.location.pathname.indexOf('/login') !== -1) {
+                return;
+            }
             this.syncInterval = setInterval(() => {
+                if (document.hidden) return;
                 this.checkForUpdates();
-            }, 10000);
+            }, REALTIME_SYNC_INTERVAL);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    this.checkForUpdates();
+                }
+            });
         }
         
         async checkForUpdates() {
@@ -589,6 +603,7 @@
                 });
                 
                 if (response.ok) {
+                    this.authFailures = 0;
                     // Check if response is actually JSON before parsing
                     const contentType = response.headers.get('content-type');
                     if (contentType && contentType.includes('application/json')) {
@@ -600,11 +615,10 @@
                                 this.handleUpdates(data);
                             }
                         } catch (parseError) {
-                            // Response is not valid JSON (likely HTML) - silently ignore
-                            // This is expected if the endpoint redirects to login or returns an error page
-                            if (!this._jsonErrorLogged) {
-                                // Don't log - this is expected behavior
-                                this._jsonErrorLogged = true;
+                            // Response is not valid JSON (likely HTML login redirect)
+                            this.authFailures += 1;
+                            if (this.authFailures >= 2) {
+                                this.stopPolling();
                             }
                         }
                     } else {
@@ -620,6 +634,11 @@
                         }
                     }
                 } else {
+                    // Stop polling after auth redirect (302/401/403) to avoid login-page spam
+                    if (response.status === 401 || response.status === 403) {
+                        this.stopPolling();
+                        return;
+                    }
                     // Response not OK (404, 500, etc.) - endpoint might not exist
                     if (response.status === 404) {
                         // Endpoint doesn't exist - disable sync checks to prevent spam
@@ -649,7 +668,6 @@
         }
         
         updateElements(updates) {
-            // Update DOM elements based on server updates
             for (const [selector, content] of Object.entries(updates)) {
                 const element = document.querySelector(selector);
                 if (element) {
@@ -657,14 +675,23 @@
                 }
             }
         }
+        
+        stopPolling() {
+            if (this.syncInterval) {
+                clearInterval(this.syncInterval);
+                this.syncInterval = null;
+            }
+        }
     }
     
-    // Initialize real-time sync
+    // Only poll when logged in (auto-save.js is loaded on all pages)
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            window.realTimeSync = new RealTimeSync();
+            if (window.location.pathname.indexOf('/login') === -1) {
+                window.realTimeSync = new RealTimeSync();
+            }
         });
-    } else {
+    } else if (window.location.pathname.indexOf('/login') === -1) {
         window.realTimeSync = new RealTimeSync();
     }
 })();

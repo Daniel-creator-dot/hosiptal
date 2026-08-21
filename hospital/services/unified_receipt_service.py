@@ -358,14 +358,17 @@ class UnifiedReceiptService:
                 qr_code_obj.save()
                 
                 # 7. Update invoice totals from lines and receipts (single source of truth)
-                # Also syncs pharmacy dispensing + prescribe sales when invoice is settled (Invoice._sync_pharmacy_after_totals_saved)
+                # Also syncs pharmacy dispensing when pharmacy portion is settled
+                # (Invoice._sync_pharmacy_after_totals_saved — including pharmacy-first)
                 invoice.update_totals()
 
                 try:
                     from hospital.services.pharmacy_invoice_payment_link import (
                         link_pharmacy_dispensing_when_invoice_paid,
                     )
-                    if invoice and (invoice.balance or Decimal('0')) <= Decimal('0'):
+                    from hospital.utils_invoice_line import invoice_pharmacy_lines_are_settled
+
+                    if invoice and invoice_pharmacy_lines_are_settled(invoice):
                         link_pharmacy_dispensing_when_invoice_paid(
                             invoice,
                             receipt=receipt,
@@ -473,6 +476,27 @@ class UnifiedReceiptService:
                     transaction_date=timezone.now(),
                     notes='Deposit applied to bill'
                 )
+                receipt_service_type = 'other'
+                service_details = {'deposit_applied': True, 'description': 'Deposit applied to bill'}
+                try:
+                    from hospital.utils_billing import CONSULTATION_LINE_SERVICE_CODES
+                    from hospital.services.receipt_revenue_allocation import (
+                        build_service_details_for_invoice,
+                    )
+                    has_consult = invoice.lines.filter(
+                        is_deleted=False,
+                        waived_at__isnull=True,
+                        service_code__code__in=CONSULTATION_LINE_SERVICE_CODES,
+                    ).exists()
+                    if has_consult:
+                        receipt_service_type = 'consultation'
+                        service_details = build_service_details_for_invoice(
+                            invoice, amount_applied, service_type='consultation'
+                        )
+                        service_details['deposit_applied'] = True
+                        service_details['description'] = 'Deposit applied to bill'
+                except Exception:
+                    pass
                 receipt = PaymentReceipt.objects.create(
                     transaction=trans,
                     invoice=invoice,
@@ -482,12 +506,12 @@ class UnifiedReceiptService:
                     received_by=received_by_user,
                     receipt_date=timezone.now(),
                     notes='Deposit applied to bill',
-                    service_type='other',
-                    service_details={'deposit_applied': True, 'description': 'Deposit applied to bill'}
+                    service_type=receipt_service_type,
+                    service_details=service_details,
                 )
                 qr_data = UnifiedReceiptService._generate_qr_data(
                     receipt=receipt,
-                    service_type='other',
+                    service_type=receipt_service_type,
                     service_details=receipt.service_details
                 )
                 qr_code_obj = ReceiptQRCode.objects.create(

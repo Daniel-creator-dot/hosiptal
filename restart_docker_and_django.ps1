@@ -7,7 +7,16 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Change to project directory
-Set-Location D:\chm
+Set-Location C:\chm
+
+# Ensure Docker always mounts C:\chm (not legacy D:\chm)
+$ensureScript = Join-Path $PSScriptRoot 'scripts\ensure_c_chm.ps1'
+if (Test-Path $ensureScript) {
+    & $ensureScript -Fix -Quiet
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
+& "$PSScriptRoot\scripts\ensure_c_chm.ps1" -Fix -Quiet
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # Step 1: Stop Docker containers
 Write-Host "Step 1: Stopping Docker containers..." -ForegroundColor Yellow

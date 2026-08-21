@@ -21,14 +21,20 @@ AUTO_CASHBOOK_ENABLED = True
 @receiver(post_save, sender=Transaction)
 def auto_create_cashbook_entry_on_payment(sender, instance, created, **kwargs):
     """
-    Automatically create cashbook entry when payment is received
+    Automatically create cashbook entry when payment is received or refund/withdrawal paid out.
     """
     if not AUTO_CASHBOOK_ENABLED or not created:
         return
-    
-    if instance.transaction_type != 'payment_received':
+
+    if instance.transaction_type == 'payment_received':
+        entry_type = 'receipt'
+        description = f"Payment received: {instance.transaction_number}"
+    elif instance.transaction_type == 'refund_issued':
+        entry_type = 'payment'
+        description = f"Refund / deposit withdrawal: {instance.transaction_number}"
+    else:
         return
-    
+
     try:
         with transaction.atomic():
             pay_code, pay_name = resolve_payment_account_meta(instance.payment_method)
@@ -40,27 +46,27 @@ def auto_create_cashbook_entry_on_payment(sender, instance, created, **kwargs):
                     'is_active': True,
                 }
             )
-            
+
             # Check if cashbook entry already exists for this transaction
             existing = Cashbook.objects.filter(
                 reference=instance.transaction_number,
                 is_deleted=False
             ).first()
-            
+
             if existing:
                 logger.info(f"Cashbook entry already exists for transaction {instance.transaction_number}")
                 return
-            
+
             # Determine payment method for cashbook
             payment_method = instance.payment_method or 'cash'
-            
+
             # Create cashbook entry
             cashbook_entry = Cashbook.objects.create(
-                entry_type='receipt',
+                entry_type=entry_type,
                 entry_date=instance.transaction_date.date() if hasattr(instance.transaction_date, 'date') else instance.transaction_date,
                 amount=instance.amount,
                 payee_or_payer=instance.patient.full_name if instance.patient else 'Unknown',
-                description=f"Payment received: {instance.transaction_number}",
+                description=description,
                 reference=instance.transaction_number,
                 payment_method=payment_method,
                 patient=instance.patient,
@@ -69,12 +75,12 @@ def auto_create_cashbook_entry_on_payment(sender, instance, created, **kwargs):
                 status='pending',
                 created_by=instance.processed_by,
             )
-            
+
             logger.info(
                 f"✅ Auto-created cashbook entry {cashbook_entry.entry_number} "
-                f"for payment {instance.transaction_number} - GHS {instance.amount}"
+                f"for {instance.transaction_type} {instance.transaction_number} - GHS {instance.amount}"
             )
-            
+
     except Exception as e:
         logger.error(f"❌ Error creating cashbook entry for transaction {instance.id}: {e}", exc_info=True)
 
@@ -114,10 +120,11 @@ def auto_create_cashbook_entry_on_receipt(sender, instance, created, **kwargs):
             if not trans:
                 return
             
+            receipt_dt = getattr(instance, 'receipt_date', None) or timezone.now()
             # Create cashbook entry
             cashbook_entry = Cashbook.objects.create(
                 entry_type='receipt',
-                entry_date=instance.received_at.date() if hasattr(instance.received_at, 'date') else timezone.now().date(),
+                entry_date=receipt_dt.date() if hasattr(receipt_dt, 'date') else timezone.now().date(),
                 amount=instance.amount_paid,
                 payee_or_payer=instance.patient.full_name if instance.patient else 'Unknown',
                 description=f"Payment receipt: {instance.id}",

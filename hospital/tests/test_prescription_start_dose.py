@@ -86,7 +86,32 @@ class PrescriptionStartDoseReleaseTests(TestCase):
         )
         self.assertTrue(AutoBillingService.is_prescription_released_to_pharmacy(rx))
 
-    def test_release_false_for_routine_on_active_opd(self):
+    def test_release_true_for_routine_cash_on_active_opd(self):
+        """Cash OPD: pharmacy can serve as soon as the doctor prescribes."""
+        rx = Prescription.objects.create(
+            order=self.order,
+            drug=self.drug,
+            quantity=5,
+            dose='1 tab',
+            route='oral',
+            frequency='bd',
+            duration='7 days',
+            prescribed_by=self.doctor,
+            is_start_dose=False,
+        )
+        self.assertTrue(AutoBillingService.is_prescription_released_to_pharmacy(rx))
+
+    def test_release_false_for_routine_insurance_on_active_opd(self):
+        """Insurance OPD: still held until Complete Consultation."""
+        from hospital.models import Payer
+
+        payer = Payer.objects.create(
+            name=f'NHIS-{uuid.uuid4().hex[:6]}',
+            payer_type='nhis',
+            is_active=True,
+        )
+        self.patient.primary_insurance = payer
+        self.patient.save(update_fields=['primary_insurance'])
         rx = Prescription.objects.create(
             order=self.order,
             drug=self.drug,
@@ -99,6 +124,29 @@ class PrescriptionStartDoseReleaseTests(TestCase):
             is_start_dose=False,
         )
         self.assertFalse(AutoBillingService.is_prescription_released_to_pharmacy(rx))
+
+    def test_release_true_for_routine_corporate_on_active_opd(self):
+        from hospital.models import Payer
+
+        payer = Payer.objects.create(
+            name=f'Corp-{uuid.uuid4().hex[:6]}',
+            payer_type='corporate',
+            is_active=True,
+        )
+        self.patient.primary_insurance = payer
+        self.patient.save(update_fields=['primary_insurance'])
+        rx = Prescription.objects.create(
+            order=self.order,
+            drug=self.drug,
+            quantity=5,
+            dose='1 tab',
+            route='oral',
+            frequency='bd',
+            duration='7 days',
+            prescribed_by=self.doctor,
+            is_start_dose=False,
+        )
+        self.assertTrue(AutoBillingService.is_prescription_released_to_pharmacy(rx))
 
     def test_prescribe_start_dose_creates_pharmacy_dispensing(self):
         client = Client()
@@ -138,7 +186,8 @@ class PrescriptionStartDoseReleaseTests(TestCase):
         )
         enrich_pending_medication_orders([self.order])
         self.assertTrue(self.order.has_start_dose)
-        self.assertTrue(self.order.consultation_pending)
+        # Cash OPD is not held for Complete Consultation
+        self.assertFalse(self.order.consultation_pending)
 
 
 class DispenseStartDoseGuardTests(TestCase):
@@ -199,7 +248,17 @@ class DispenseStartDoseGuardTests(TestCase):
         self.client = Client()
         _force_login_without_login_signals(self.client, self.pharm_user)
 
-    def test_routine_gated_but_start_dose_queues_during_active_consultation(self):
+    def test_routine_gated_for_insurance_but_start_dose_queues_during_active_consultation(self):
+        from hospital.models import Payer
+
+        payer = Payer.objects.create(
+            name=f'NHIS-{uuid.uuid4().hex[:6]}',
+            payer_type='nhis',
+            is_active=True,
+        )
+        self.patient.primary_insurance = payer
+        self.patient.save(update_fields=['primary_insurance'])
+
         routine_drug = Drug.objects.create(
             name=f'RoutineDrug{uuid.uuid4().hex[:6]}',
             strength='250mg',
@@ -237,5 +296,23 @@ class DispenseStartDoseGuardTests(TestCase):
             PharmacyDispensing.objects.filter(prescription=stat_rx, is_deleted=False).exists()
         )
         self.assertFalse(
+            PharmacyDispensing.objects.filter(prescription=routine_rx, is_deleted=False).exists()
+        )
+
+    def test_cash_routine_queues_during_active_consultation(self):
+        routine_rx = Prescription.objects.create(
+            order=self.order,
+            drug=self.drug,
+            quantity=5,
+            dose='1',
+            route='oral',
+            frequency='od',
+            duration='7 days',
+            prescribed_by=self.doctor,
+            is_start_dose=False,
+        )
+        result = AutoBillingService.create_pharmacy_dispensing_record_only(routine_rx)
+        self.assertTrue(result.get('success'))
+        self.assertTrue(
             PharmacyDispensing.objects.filter(prescription=routine_rx, is_deleted=False).exists()
         )

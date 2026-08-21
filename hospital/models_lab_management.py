@@ -170,6 +170,45 @@ class LabReagent(BaseModel):
     # Link to lab tests that use this reagent
     tests = models.ManyToManyField('LabTest', related_name='required_reagents', blank=True, 
                                    help_text="Lab tests that require this reagent")
+    deduct_per_lab_visit = models.BooleanField(
+        default=False,
+        help_text='Deduct this item for every completed lab test (e.g. EDTA tube).',
+    )
+    qty_per_lab_visit = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=1,
+        help_text='Quantity to deduct for each completed lab test when deduct_per_lab_visit is set.',
+    )
+    STOCK_TRACKING_CHOICES = [
+        ('untracked', 'Not tracked'),
+        ('measurable', 'Measurable (kit / cassette)'),
+        ('immeasurable', 'Immeasurable (chemistry reagent)'),
+    ]
+    stock_tracking = models.CharField(
+        max_length=20,
+        choices=STOCK_TRACKING_CHOICES,
+        default='untracked',
+        db_index=True,
+        help_text='Kit tests: stock in pieces. Chemistry: stock in remaining tests.',
+    )
+    qty_per_box = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Pieces per box when receiving measurable kits.',
+    )
+    tests_per_kit = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Tests yielded when receiving one chemistry kit.',
+    )
+    reagent_volume_note = models.CharField(max_length=200, blank=True)
+    qty_consumed_per_test = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=Decimal('1'),
+        help_text='Quantity deducted from this item when a linked lab test is completed. Set 0 to skip auto-deduct (e.g. FBC diluent until yield is known).',
+    )
     
     notes = models.TextField(blank=True)
     

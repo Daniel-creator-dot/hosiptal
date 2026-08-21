@@ -92,12 +92,10 @@ def auto_bill_prescription(sender, instance, created, **kwargs):
     Queue prescription for pharmacy only. Do NOT create InvoiceLine or send to cashier here.
 
     Flow:
-      OPD: doctor prescribes → prescription stays HIDDEN from pharmacy →
-           doctor clicks "Complete Consultation" → PharmacyDispensing rows are
-           released for every prescription on that encounter (see
-           AutoBillingService.release_encounter_prescriptions_to_pharmacy).
-      IPD: doctor prescribes → PharmacyDispensing is created immediately
-           (admitted patients receive ongoing meds throughout their stay).
+           OPD insurance: doctor prescribed → held until Complete Consultation →
+           PharmacyDispensing released (see AutoBillingService.release_encounter_...).
+           OPD cash/corporate: PharmacyDispensing created immediately on prescribe.
+           IPD: PharmacyDispensing created immediately.
 
     pharmacy verifies → Send to Cashier/Insurance → AutoBillingService.create_pharmacy_bill
     (InvoiceLine). create_pharmacy_bill refuses to run until a PharmacyDispensing row

@@ -24,6 +24,7 @@ from .forms_procurement import (
 )
 from .models import Drug, Staff
 from .models_supplier_payables import SupplierPayableLine
+from .utils_roles import is_it_user
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +81,17 @@ def is_pharmacy_staff(user):
 
 
 def can_edit_inventory(user):
-    """Check if user can edit inventory/stock (admin and procurement/stores staff)."""
+    """Check if user can edit inventory/stock (admin, procurement/stores, or IT staff)."""
     if not user or not user.is_authenticated:
         return False
-    return is_admin_user(user) or is_procurement_staff(user)
+    return is_admin_user(user) or is_procurement_staff(user) or is_it_user(user)
 
 
 def can_add_pharmacy_stock(user):
-    """Check if user can add pharmacy stock (admin or procurement/stores staff)."""
+    """Check if user can add pharmacy stock (admin, procurement/stores, or IT staff)."""
     if not user or not user.is_authenticated:
         return False
-    return is_admin_user(user) or is_procurement_staff(user)
+    return is_admin_user(user) or is_procurement_staff(user) or is_it_user(user)
 
 
 def can_record_pharmacy_stock_loss(user):

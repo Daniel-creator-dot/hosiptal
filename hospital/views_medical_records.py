@@ -506,7 +506,7 @@ def patient_document_file(request, document_id):
         pk=document_id,
         is_deleted=False,
     )
-    if not doc.file:
+    if not getattr(doc, 'has_stored_file', False):
         raise Http404('No file attached to this document.')
 
     staff = _get_current_staff(request)

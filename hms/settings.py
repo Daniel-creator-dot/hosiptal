@@ -661,6 +661,17 @@ SMS_SENDER_ID = config('SMS_SENDER_ID', default='Primecare')
 SMS_API_URL = config('SMS_API_URL', default='https://www.inteksms.top/api/v1/messages/send')
 SMS_WALLET_URL = config('SMS_WALLET_URL', default='https://www.inteksms.top/api/v1/balance')
 
+# AI Clinical Copilot (local Ollama; no paid API key)
+AI_CLINICAL_ASSISTANT_ENABLED = config('AI_CLINICAL_ASSISTANT_ENABLED', default=False, cast=bool)
+OLLAMA_BASE_URL = config('OLLAMA_BASE_URL', default='http://host.docker.internal:11434')
+AI_CLINICAL_ASSISTANT_MODEL = config('AI_CLINICAL_ASSISTANT_MODEL', default='qwen3:8b')
+AI_CLINICAL_ASSISTANT_TIMEOUT_SECONDS = config('AI_CLINICAL_ASSISTANT_TIMEOUT_SECONDS', default=180, cast=int)
+AI_CLINICAL_ASSISTANT_RATE_LIMIT_PER_HOUR = config('AI_CLINICAL_ASSISTANT_RATE_LIMIT_PER_HOUR', default=20, cast=int)
+AI_CLINICAL_ASSISTANT_RESULT_RETENTION_HOURS = config(
+    'AI_CLINICAL_ASSISTANT_RESULT_RETENTION_HOURS', default=24, cast=int
+)
+AI_CLINICAL_ASSISTANT_MAX_RETRIES = config('AI_CLINICAL_ASSISTANT_MAX_RETRIES', default=2, cast=int)
+
 # Site URL for SMS links (appointments, confirmations, etc.)
 # Set this to your production domain (e.g., 'https://yourdomain.com')
 # Leave empty to auto-detect from Site framework or ALLOWED_HOSTS

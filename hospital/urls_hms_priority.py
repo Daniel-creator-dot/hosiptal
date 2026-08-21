@@ -9,6 +9,7 @@ from django.views.generic import RedirectView
 
 from . import views_accountant_receivables
 from . import views_admin_cashier_services
+from . import views_admin_payers
 from . import views_accounting
 from . import views_accounting_advanced
 from . import views_billing_claims
@@ -24,6 +25,7 @@ from . import views_revenue_monitoring
 from . import views_screening
 from . import views_telemedicine
 from . import views
+from . import views_lab_management
 
 urlpatterns = [
     # Corporate & insurance receivables hub
@@ -65,11 +67,37 @@ urlpatterns = [
         views_admin_cashier_services.admin_cashier_quick_service_edit,
         name='admin_cashier_quick_service_edit',
     ),
+    # Admin: corporate companies & insurance payers (add / rename)
+    path(
+        'admin/payers/',
+        views_admin_payers.admin_payers_list,
+        name='admin_payers',
+    ),
+    path(
+        'admin/payers/add/',
+        views_admin_payers.admin_payer_add,
+        name='admin_payer_add',
+    ),
+    path(
+        'admin/payers/<uuid:pk>/edit/',
+        views_admin_payers.admin_payer_edit,
+        name='admin_payer_edit',
+    ),
+    path(
+        'insurance/companies/<uuid:pk>/edit/',
+        views_insurance_management.insurance_company_edit,
+        name='insurance_company_edit',
+    ),
     # Cashier: non-patient charge + line discount (templates reference these names)
     path(
         'cashier/non-patient-charge/',
         views_centralized_cashier.cashier_non_patient_charge,
         name='cashier_non_patient_charge',
+    ),
+    path(
+        'cashier/central/nhis-cash-pay/',
+        views_centralized_cashier.cashier_nhis_cash_pay,
+        name='cashier_nhis_cash_pay',
     ),
     path(
         'invoices/line/update-discount/',
@@ -140,6 +168,7 @@ urlpatterns = [
     ),
     # Drug formulary insurance exclusion POST + soft delete
     path('drugs/<uuid:pk>/insurance-settings/', views.drug_insurance_settings, name='drug_insurance_settings'),
+    path('drugs/import-nhis/', views.drug_formulary_import_nhis, name='drug_formulary_import_nhis'),
     path('drugs/<uuid:pk>/delete/', views.drug_delete, name='drug_delete'),
     # Front desk diagnostics & charge lookup
     path(
@@ -152,11 +181,22 @@ urlpatterns = [
         views_frontdesk_pricing.frontdesk_service_charges,
         name='frontdesk_service_charges',
     ),
-    # Trial balance closing stock sync (template uses sync_closing_stock)
+    # Short alias used by front-desk sidebar / bookmarks (canonical is cashier/central/...)
     path(
-        'accounting/sync-closing-stock/',
+        'cashier/add-manual-payment/',
+        views_centralized_cashier.cashier_add_manual_payment,
+        name='cashier_add_manual_payment_short',
+    ),
+    # Trial balance closing stock sync (template uses hospital:sync_closing_stock)
+    path(
+        'accounting/trial-balance/sync-closing-stock/',
         views_accounting_advanced.sync_closing_stock_to_gl,
         name='sync_closing_stock',
+    ),
+    path(
+        'lab/reagents/issue/',
+        views_lab_management.issue_lab_consumables,
+        name='issue_lab_consumables',
     ),
     # Legacy AR report name used by accounts_receivable.html
     path('accounting/ar/', views_accounting.accounts_receivable, name='accounts_receivable'),
@@ -198,5 +238,21 @@ urlpatterns = [
         'telemedicine/start/',
         RedirectView.as_view(pattern_name='telemedicine:schedule_consultation', permanent=False),
         name='start_consultation',
+    ),
+    # Lab report print / PDF / attachment (lab_report_print.html reverse names)
+    path(
+        'laboratory/result/<uuid:result_id>/print/',
+        views.print_lab_report,
+        name='print_lab_report',
+    ),
+    path(
+        'laboratory/result/<uuid:result_id>/pdf/',
+        views.download_lab_report_pdf,
+        name='download_lab_report_pdf',
+    ),
+    path(
+        'laboratory/result/<uuid:result_id>/attachment/',
+        views.lab_result_attachment_file,
+        name='lab_result_attachment_file',
     ),
 ]

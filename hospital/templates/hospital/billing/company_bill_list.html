@@ -11,9 +11,10 @@
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 border-0 py-3" style="background: linear-gradient(135deg, #4f46e5 0%, #6366f1 45%, #7c3aed 100%);">
             <div class="text-white">
                 <h5 class="mb-0 fw-semibold"><i class="bi bi-building-check me-2"></i>{% if request.resolver_match.url_name == 'corporate_bill_list' %}Corporate Bills{% else %}{{ title|default:"Company Bills" }}{% endif %}</h5>
-                <small class="opacity-90">Statements, receivables & open invoices — grouped by company</small>
+                <small class="opacity-90">Statements, receivables &amp; open invoices — same company names/aliases under one umbrella (e.g. ECG + Power Distribution)</small>
             </div>
             <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'hospital:admin_payers' %}" class="btn btn-sm btn-light"><i class="bi bi-buildings"></i> Add / edit companies</a>
                 <a href="{% url 'hospital:receivables_hub' %}?category=corporate" class="btn btn-sm btn-light"><i class="bi bi-journal-text"></i> Receivables hub</a>
                 <a href="{% url 'hospital:receivables_analytics' %}?category=corporate" class="btn btn-sm btn-light"><i class="bi bi-graph-up-arrow"></i> AR analytics</a>
                 <a href="{% url 'hospital:claims_bills_hub' %}" class="btn btn-sm btn-outline-light">
@@ -208,6 +209,9 @@
                             <td><span class="badge bg-secondary">Group</span></td>
                             <td>
                                 <strong>{{ group.company_name }}</strong>
+                                {% if group.merged_payer_count and group.merged_payer_count > 1 %}
+                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" title="Multiple payer spellings merged under this company">{{ group.merged_payer_count }} accounts</span>
+                                {% endif %}
                                 <div class="small text-muted fw-normal mt-1 lh-sm">
                                     {{ group.count_open_invoice_rollup|default:0 }} open invoice pack{{ group.count_open_invoice_rollup|pluralize }},
                                     {{ group.count_monthly_statement|default:0 }} monthly statement{{ group.count_monthly_statement|pluralize }},
@@ -325,6 +329,32 @@
                             </td>
                         </tr>
                         {% if statement.is_invoice_summary %}
+                            {% if group.merged_payer_count > 1 and group.first_rollup_payer_id %}
+                                {% if statement.payer_id == group.first_rollup_payer_id %}
+                            {% for inv in group.invoices_for_group %}
+                        <tr class="bill-group-child bill-gc-{{ forloop.parentloop.parentloop.counter0 }} d-none table-light">
+                            <td></td>
+                            <td class="ps-4 small font-monospace">{{ inv.invoice_number }}</td>
+                            <td class="small text-muted">—</td>
+                            <td><span class="badge rounded-pill bg-white text-secondary border small">Invoice</span></td>
+                            <td class="small">{{ inv.payer.name|default:"—" }}</td>
+                            <td class="small text-break" style="max-width: 14rem;">{% if inv.patient %}{{ inv.patient.full_name }}{% else %}—{% endif %}</td>
+                            <td class="small">{% if inv.issued_at %}{{ inv.issued_at|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                            <td class="small"><strong>GHS {{ inv.total_amount|floatformat:2|intcomma }}</strong></td>
+                            <td class="small">GHS {{ inv.amount_paid|floatformat:2|intcomma }}</td>
+                            <td class="small"><strong>GHS {{ inv.balance|floatformat:2|intcomma }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if inv.status == 'paid' %}success{% elif inv.status == 'partially_paid' %}warning text-dark{% elif inv.status == 'overdue' %}danger{% else %}secondary{% endif %} small">{{ inv.get_status_display }}</span>
+                            </td>
+                            <td>
+                                {% if group.primary_payer_id %}
+                                <a href="{% url 'hospital:corporate_bill_detail_by_payer' payer_id=group.primary_payer_id %}{{ group.detail_pack_query }}" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();" title="Pack detail">Pack</a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                            {% endfor %}
+                                {% endif %}
+                            {% else %}
                             {% for inv in group.invoices_for_group %}
                                 {% if inv.payer_id == statement.payer_id %}
                         <tr class="bill-group-child bill-gc-{{ forloop.parentloop.parentloop.counter0 }} d-none table-light">
@@ -349,6 +379,7 @@
                         </tr>
                                 {% endif %}
                             {% endfor %}
+                            {% endif %}
                         {% endif %}
                         {% endfor %}
                         {% endfor %}

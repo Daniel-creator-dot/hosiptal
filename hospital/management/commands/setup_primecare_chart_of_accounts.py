@@ -68,6 +68,7 @@ class Command(BaseCommand):
                 # ==================== REVENUE (4000-4999) ====================
                 {'code': '4100', 'name': 'Registration Revenue', 'type': 'revenue', 'parent': None},
                 {'code': '4110', 'name': 'Consultation Revenue', 'type': 'revenue', 'parent': None},
+                {'code': '4115', 'name': 'Sustainability and Insurance', 'type': 'revenue', 'parent': None},
                 {'code': '4120', 'name': 'Laboratory Revenue', 'type': 'revenue', 'parent': None},
                 {'code': '4130', 'name': 'Pharmacy Revenue', 'type': 'revenue', 'parent': None},
                 {'code': '4140', 'name': 'Surgeries Revenue', 'type': 'revenue', 'parent': None},
@@ -91,6 +92,7 @@ class Command(BaseCommand):
                 {'code': '5115', 'name': 'Purchases - Physiotherapy', 'type': 'expense', 'parent': None},
                 {'code': '5116', 'name': 'Purchases - Others', 'type': 'expense', 'parent': None},
                 {'code': '5120', 'name': 'Closing Inventory', 'type': 'expense', 'parent': None},
+                {'code': '5600', 'name': 'Purchases - Medical Supplies and Consumables', 'type': 'expense', 'parent': None},
                 
                 # Operating Expenses
                 {'code': '5200', 'name': 'Bills Rejections', 'type': 'expense', 'parent': None},

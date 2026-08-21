@@ -45,6 +45,18 @@ def reports_dashboard(request):
                 'description': 'Patient demographics and statistics'
             },
             {
+                'title': 'Patient Attendance',
+                'url': 'hospital:patient_attendance_report',
+                'icon': 'person-lines-fill',
+                'description': 'Month-to-month visits, night attendance, cash/insurance/corporate, inpatient & outpatient detail'
+            },
+            {
+                'title': 'Maternity Deliveries',
+                'url': 'hospital:maternity_procedures_report',
+                'icon': 'hospital',
+                'description': 'Monthly count of deliveries and C-sections from maternity billing'
+            },
+            {
                 'title': 'Admission Report',
                 'url': 'hospital:admission_report',
                 'icon': 'hospital',

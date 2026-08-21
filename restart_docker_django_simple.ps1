@@ -6,7 +6,9 @@ Write-Host "RESTARTING DOCKER AND DJANGO" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-Set-Location D:\chm
+Set-Location C:\chm
+& "$PSScriptRoot\scripts\ensure_c_chm.ps1" -Fix -Quiet
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # Step 1: Stop containers
 Write-Host "Stopping Docker containers..." -ForegroundColor Yellow

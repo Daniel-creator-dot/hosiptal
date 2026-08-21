@@ -267,6 +267,16 @@ def admission_review(request, encounter_id):
             try:
                 with transaction.atomic():
                     drug = Drug.objects.get(pk=drug_id, is_deleted=False)
+                    from .services.nhis_drug_formulary import (
+                        nhis_prescribe_block_reason,
+                        payer_from_encounter,
+                    )
+                    nhis_block = nhis_prescribe_block_reason(
+                        drug=drug, payer=payer_from_encounter(encounter)
+                    )
+                    if nhis_block:
+                        messages.error(request, nhis_block)
+                        return redirect('hospital:admission_review', encounter_id=encounter.pk)
                     
                     # Use existing pending medication order or create one (avoids MultipleObjectsReturned if duplicates exist)
                     med_order = Order.objects.filter(
@@ -383,6 +393,32 @@ def admission_review(request, encounter_id):
             priority = request.POST.get('priority', 'routine')
             notes = request.POST.get('notes', '')
             if test_ids:
+                from .consultation_status import (
+                    LAB_DIAGNOSIS_REQUIRED_MSG,
+                    require_diagnosis_for_lab_order,
+                )
+                from .lab_order_diagnosis import encounter_diagnosis_summary
+                ok_dx, dx_msg = require_diagnosis_for_lab_order(
+                    encounter,
+                    doctor=current_doctor,
+                    diagnosis_name=(request.POST.get('diagnosis_name') or request.POST.get('lab_diagnosis') or '').strip(),
+                    icd10_code=(request.POST.get('icd10_code') or '').strip(),
+                )
+                if not ok_dx:
+                    messages.error(request, dx_msg or LAB_DIAGNOSIS_REQUIRED_MSG)
+                    return redirect('hospital:admission_review', encounter_id=encounter.pk)
+                from hospital.insurance_lab_limit import (
+                    annotate_insurance_extra_labs,
+                    extra_reason_and_diagnosis_from_request,
+                    require_insurance_lab_limit_from_request,
+                )
+                ok_lim, lim_msg = require_insurance_lab_limit_from_request(
+                    request, encounter, len(test_ids)
+                )
+                if not ok_lim:
+                    messages.error(request, lim_msg)
+                    return redirect('hospital:admission_review', encounter_id=encounter.pk)
+                extra_reason, extra_diagnosis = extra_reason_and_diagnosis_from_request(request)
                 try:
                     with transaction.atomic():
                         tests = list(
@@ -400,6 +436,7 @@ def admission_review(request, encounter_id):
                                 status='pending',
                                 priority=priority,
                                 notes=notes or '',
+                                clinical_indication=encounter_diagnosis_summary(encounter),
                                 requested_by=current_doctor,
                                 requested_at=timezone.now(),
                             )
@@ -417,6 +454,9 @@ def admission_review(request, encounter_id):
                                     )
                                     created_lines += 1
                             if created_lines:
+                                annotate_insurance_extra_labs(
+                                    lab_order, encounter, extra_reason, extra_diagnosis
+                                )
                                 messages.success(
                                     request,
                                     f'✅ Lab order created with {created_lines} test(s).',
@@ -975,12 +1015,18 @@ def admission_review(request, encounter_id):
             Q(patient=encounter.patient, encounter=encounter, document_type='lab_report') |
             Q(lab_result__order__encounter=encounter, document_type='lab_report'),
             is_deleted=False
-        ).select_related('uploaded_by__user', 'lab_result').order_by('-created')[:20])
+        ).exclude(file='').exclude(file__isnull=True).select_related(
+            'uploaded_by__user', 'lab_result'
+        ).order_by('-created')[:20])
+        lab_pdf_docs = [d for d in lab_pdf_docs if getattr(d, 'has_stored_file', False)]
         imaging_pdf_docs = list(PatientDocument.objects.filter(
             Q(patient=encounter.patient, encounter=encounter, document_type='imaging_report') |
             Q(imaging_study__order__encounter=encounter, document_type='imaging_report'),
             is_deleted=False
-        ).select_related('uploaded_by__user', 'imaging_study').order_by('-created')[:20])
+        ).exclude(file='').exclude(file__isnull=True).select_related(
+            'uploaded_by__user', 'imaging_study'
+        ).order_by('-created')[:20])
+        imaging_pdf_docs = [d for d in imaging_pdf_docs if getattr(d, 'has_stored_file', False)]
     except Exception:
         pass
     
@@ -1058,6 +1104,10 @@ def admission_review(request, encounter_id):
 
     from django.conf import settings as django_settings
 
+    from .consultation_status import encounter_has_diagnosis
+    from .lab_order_diagnosis import encounter_diagnosis_summary
+    from .insurance_lab_limit import insurance_lab_limit_template_context
+
     context = {
         'title': f'Admission Review - {encounter.patient.full_name}',
         'encounter': encounter,
@@ -1087,6 +1137,9 @@ def admission_review(request, encounter_id):
         'days_admitted': days_admitted,
         'hours_admitted': hours_admitted,
         'poc_glucose_strip_ghs': django_settings.POC_GLUCOSE_STRIP_GHS,
+        'has_encounter_diagnosis': encounter_has_diagnosis(encounter),
+        'lab_diagnosis_prefill': encounter_diagnosis_summary(encounter),
+        **insurance_lab_limit_template_context(encounter),
     }
     return render(request, 'hospital/admission_review.html', context)
 

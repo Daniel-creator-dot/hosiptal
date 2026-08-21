@@ -51,6 +51,46 @@ def should_send_payment_notification_sms(
     if not patient:
         return False
 
+    # Visit invoice may be insurance/corporate even when patient.primary_insurance is still Cash.
+    if encounter is None:
+        try:
+            from hospital.models import Encounter
+
+            encounter = (
+                Encounter.objects.filter(
+                    patient=patient,
+                    is_deleted=False,
+                    status='active',
+                )
+                .order_by('-started_at', '-created')
+                .first()
+            )
+        except Exception:
+            encounter = None
+
+    if encounter is not None and invoice is None:
+        try:
+            from hospital.models import Invoice
+
+            inv = (
+                Invoice.all_objects.filter(
+                    encounter=encounter,
+                    is_deleted=False,
+                )
+                .exclude(status__iexact='cancelled')
+                .select_related('payer')
+                .order_by('-created')
+                .first()
+            )
+            if inv:
+                payer = getattr(inv, 'payer', None)
+                if payer and not getattr(payer, 'is_deleted', False):
+                    payer_type = (getattr(payer, 'payer_type', '') or 'cash').strip().lower()
+                    if payer_type in NON_CASH_PAYER_TYPES:
+                        return False
+        except Exception:
+            pass
+
     # Fast path: primary_insurance on patient record
     primary = getattr(patient, 'primary_insurance', None)
     if primary and not getattr(primary, 'is_deleted', False):
@@ -82,8 +122,17 @@ def should_send_payment_notification_sms(
         return False
 
 
-def notify_patient_pending_payment(patient, service_type, service_name, amount,
-                                   message_type='pending_payment', send_email=True):
+def notify_patient_pending_payment(
+    patient,
+    service_type,
+    service_name,
+    amount,
+    message_type='pending_payment',
+    send_email=True,
+    *,
+    encounter=None,
+    invoice=None,
+):
     """
     Send SMS (and optionally email) to patient about pending payment.
     Instructs patient to pay at Cashier before receiving the service.
@@ -105,9 +154,13 @@ def notify_patient_pending_payment(patient, service_type, service_name, amount,
         result['errors'].append('Patient is required')
         return result
 
-    if not should_send_payment_notification_sms(patient=patient):
+    if not should_send_payment_notification_sms(
+        patient=patient,
+        encounter=encounter,
+        invoice=invoice,
+    ):
         logger.debug(
-            "Skipping pending payment SMS for non-cash patient %s",
+            "Skipping pending payment SMS for insurance/corporate patient %s",
             getattr(patient, 'id', ''),
         )
         return result
@@ -134,25 +187,13 @@ def notify_patient_pending_payment(patient, service_type, service_name, amount,
 
     # SMS: no amounts (cashier has the correct bill). Prescription: no drug names.
     if st == SERVICE_TYPE_PRESCRIPTION:
-        sms_msg = (
-            f"{hospital_name}: You have a pending payment. "
-            f"Please go to the Cashier to pay before collecting medication."
-        )
+        sms_msg = f"{hospital_name}: Pay at Cashier before collecting meds."
     elif st == SERVICE_TYPE_LAB:
-        sms_msg = (
-            f"{hospital_name}: You have a pending lab payment. "
-            f"Please go to the Cashier to pay — amounts are confirmed at the desk."
-        )
+        sms_msg = f"{hospital_name}: Pay at Cashier for pending lab bill."
     elif st == SERVICE_TYPE_IMAGING:
-        sms_msg = (
-            f"{hospital_name}: You have a pending imaging payment. "
-            f"Please go to the Cashier to pay — amounts are confirmed at the desk."
-        )
+        sms_msg = f"{hospital_name}: Pay at Cashier for pending imaging bill."
     else:
-        sms_msg = (
-            f"{hospital_name}: You have a pending payment. "
-            f"Please go to the Cashier to pay before receiving the service."
-        )
+        sms_msg = f"{hospital_name}: Pay at Cashier before service."
 
     phone = getattr(patient, 'phone_number', None) or getattr(patient, 'phone', '')
     name = getattr(patient, 'full_name', None) or (f"{getattr(patient, 'first_name', '')} {getattr(patient, 'last_name', '')}".strip()) or 'Patient'

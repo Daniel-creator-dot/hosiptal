@@ -82,8 +82,8 @@ def pharmacy_pending_dispensing(request):
     Pharmacists use this to see what can/cannot be dispensed
     """
     # Ensure every prescription that has been *released to pharmacy* has a dispensing record.
-    # OPD prescriptions are gated on consultation completion; IPD (admitted) or completed-OPD
-    # prescriptions are backfilled here so doctors' in-progress drafts stay hidden from pharmacy.
+    # Insurance OPD is gated on consultation completion; cash/corporate OPD and IPD release
+    # immediately so pharmacy can serve as soon as the doctor prescribes.
     AutoBillingService.backfill_missing_pharmacy_dispensing(limit=100)
     
     from .models import InvoiceLine

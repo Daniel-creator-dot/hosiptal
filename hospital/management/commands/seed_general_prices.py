@@ -1,7 +1,8 @@
 """
 Seed general prices (cash, corporate, insurance) for consultation and imaging.
 Use these as the central source; billing picks from here via the pricing engine.
-- General consultation: cash 150, corporate 160 (default), insurance from config (default 150)
+- General consultation: cash 158, corporate 168 (default), insurance from config (default 158)
+  (150 consultation revenue + 8 sustainability; corporate 160 + 8)
 - Specialist consultation: cash 300, corporate/insurance from config (default 300)
 """
 from django.core.management.base import BaseCommand
@@ -17,20 +18,20 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--general-cash', type=float, default=150.0,
-            help='General consultation cash price (default: 150)',
+            '--general-cash', type=float, default=158.0,
+            help='General consultation cash price (default: 158)',
         )
         parser.add_argument(
             '--general-corp', type=float, default=None,
-            help='General consultation corporate price (default: 160)',
+            help='General consultation corporate price (default: 168)',
         )
         parser.add_argument(
             '--general-ins', type=float, default=None,
             help='General consultation insurance price (default: same as cash)',
         )
         parser.add_argument(
-            '--specialist-cash', type=float, default=300.0,
-            help='Specialist consultation cash price (default: 300)',
+            '--specialist-cash', type=float, default=308.0,
+            help='Specialist consultation cash price (default: 308 = 300 + 8 sustainability)',
         )
         parser.add_argument(
             '--specialist-corp', type=float, default=None,
@@ -45,7 +46,7 @@ class Command(BaseCommand):
         today = timezone.now().date()
         gen_cash = Decimal(str(options['general_cash']))
         gen_corp = Decimal(str(
-            options['general_corp'] if options['general_corp'] is not None else 160.0
+            options['general_corp'] if options['general_corp'] is not None else 168.0
         ))
         gen_ins = Decimal(str(options['general_ins'] or options['general_cash']))
         spec_cash = Decimal(str(options['specialist_cash']))

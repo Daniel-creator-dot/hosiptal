@@ -49,12 +49,15 @@ from .models_accounting_advanced import (
     WithholdingReceivable, Deposit, InitialRevaluation,
     AccountCategory
 )
-from .utils_roles import get_user_role
+from .utils_roles import get_user_role, user_can_approve_stock_receipt_correction
 from .decorators import role_required
 from .utils_account_linking import sync_all_accounts, link_cashbook_to_accounts
 from collections import defaultdict
 from .models import PharmacyStock, Drug
-from .models_supplier_payables import SupplierPayableLine
+from .models_supplier_payables import (
+    SupplierPayableLine,
+    SupplierStockReceiptCorrectionRequest,
+)
 from .models_missing_features import Supplier
 
 
@@ -436,7 +439,16 @@ def _supplier_total_payables_positive_only():
 
 
 @login_required
-@role_required('accountant', 'senior_account_officer')
+@role_required(
+    'accountant',
+    'senior_account_officer',
+    'it',
+    'it_staff',
+    'admin',
+    'procurement_officer',
+    'inventory_stores_manager',
+    'store_manager',
+)
 def stock_management_monitoring(request):
     """
     Stock Management & Monitoring – view all pharmacy stock added by store managers.
@@ -543,6 +555,113 @@ def stock_management_monitoring(request):
     )
     total_supplier_payables_positive = _supplier_total_payables_positive_only()
 
+    # Store inventory: Main Store / lab / general supplies + facility consumables
+    # (toilet rolls, tissues) even if they were wrongly received into a pharmacy store.
+    from .models_procurement import InventoryCategory, InventoryItem
+
+    facility_name_q = (
+        Q(item_name__icontains='toilet')
+        | Q(item_name__icontains='tissue')
+        | Q(item_name__icontains='paper roll')
+        | Q(item_name__icontains='hand towel')
+        | Q(item_name__icontains='cleaning')
+        | Q(item_name__icontains='detergent')
+        | Q(item_name__icontains='disinfectant')
+    )
+    store_stock_qs = (
+        InventoryItem.objects.filter(is_deleted=False, is_active=True)
+        .filter(
+            Q(store__store_type__in=['main', 'general', 'lab', 'ward', 'ot'])
+            | Q(category__code__in=['GEN', 'SUPPLY', 'LAB', 'FURN', 'EQUIP'])
+            | Q(drug__isnull=True)
+            | facility_name_q
+        )
+        # Hide pure pharmacy drug duplicates (keep GEN/SUPPLY/facility names visible)
+        .exclude(
+            Q(drug_id__isnull=False, store__store_type='pharmacy', category__code='PHARM')
+            & ~facility_name_q
+        )
+        .select_related('store', 'category', 'preferred_supplier')
+        .annotate(
+            line_value=F('quantity_on_hand') * F('unit_cost'),
+        )
+        .order_by('-modified', '-created')
+    )
+    inv_category_filter = (request.GET.get('inv_category') or '').strip().upper()
+    stock_view = (request.GET.get('stock_view') or 'all').strip().lower()
+    if stock_view == 'facility':
+        store_stock_qs = store_stock_qs.filter(
+            Q(category__code__in=['GEN', 'SUPPLY']) | facility_name_q
+        )
+    elif stock_view == 'stores':
+        store_stock_qs = store_stock_qs.filter(
+            store__store_type__in=['main', 'general', 'lab', 'ward', 'ot']
+        )
+    if inv_category_filter:
+        store_stock_qs = store_stock_qs.filter(category__code=inv_category_filter)
+    if query:
+        store_stock_qs = store_stock_qs.filter(
+            Q(item_name__icontains=query)
+            | Q(item_code__icontains=query)
+            | Q(description__icontains=query)
+        )
+    if location_filter:
+        store_stock_qs = store_stock_qs.filter(
+            Q(store__name__iexact=location_filter) | Q(store__code__iexact=location_filter)
+        )
+    if date_from:
+        store_stock_qs = store_stock_qs.filter(created__date__gte=date_from)
+    if date_to:
+        store_stock_qs = store_stock_qs.filter(created__date__lte=date_to)
+    if supplier_filter:
+        store_stock_qs = store_stock_qs.filter(preferred_supplier_id=supplier_filter)
+    if filter_type == 'low_stock':
+        store_stock_qs = store_stock_qs.filter(
+            quantity_on_hand__lte=F('reorder_level'),
+            reorder_level__gt=0,
+        )
+    store_stock_paginator = Paginator(store_stock_qs, 50)
+    store_stock_page = store_stock_paginator.get_page(request.GET.get('store_page'))
+
+    store_summary_qs = store_stock_qs
+    store_total_value = (
+        store_summary_qs.aggregate(
+            total=Sum(F('quantity_on_hand') * F('unit_cost'), output_field=DecimalField(max_digits=14, decimal_places=2))
+        )['total']
+        or Decimal('0.00')
+    )
+    store_item_count = store_summary_qs.count()
+    store_low_stock_count = store_summary_qs.filter(
+        quantity_on_hand__lte=F('reorder_level'),
+        reorder_level__gt=0,
+    ).count()
+    inventory_categories = list(
+        InventoryCategory.objects.filter(is_deleted=False, is_active=True)
+        .order_by('name')
+        .values_list('code', 'name')
+    )
+
+    lab_reagents = []
+    try:
+        from .models_lab_management import LabReagent
+
+        lab_qs = LabReagent.objects.filter(is_deleted=False).order_by('-created')
+        if query:
+            lab_qs = lab_qs.filter(
+                Q(name__icontains=query) | Q(item_code__icontains=query) | Q(batch_number__icontains=query)
+            )
+        if date_from:
+            lab_qs = lab_qs.filter(created__date__gte=date_from)
+        if date_to:
+            lab_qs = lab_qs.filter(created__date__lte=date_to)
+        if filter_type == 'low_stock':
+            lab_qs = lab_qs.filter(quantity_on_hand__lte=F('reorder_level'))
+        lab_reagents = list(lab_qs[:100])
+    except Exception:
+        lab_reagents = []
+
+    combined_total_value = total_value + store_total_value
+
     # All drugs as in pharmacy: same filters, grouped by drug. Newest stock first so newly added batches come up.
     stock_for_pharmacy_view = (
         stock_list.order_by('-created', 'drug__name', 'batch_number')[:500]
@@ -576,6 +695,12 @@ def stock_management_monitoring(request):
         'drug_categories': Drug.CATEGORIES,
         'expiry_threshold': expiry_threshold,
         'total_value': total_value,
+        'combined_total_value': combined_total_value,
+        'store_total_value': store_total_value,
+        'store_item_count': store_item_count,
+        'store_low_stock_count': store_low_stock_count,
+        'store_stock_list': store_stock_page,
+        'lab_reagents': lab_reagents,
         'low_stock_count': low_stock_count,
         'total_batch_count': total_batch_count,
         'total_drug_count': total_drug_count,
@@ -583,12 +708,15 @@ def stock_management_monitoring(request):
         'supplier_filter': supplier_filter,
         'supplier_choices': supplier_choices,
         'total_supplier_payables_positive': total_supplier_payables_positive,
+        'inventory_categories': inventory_categories,
+        'inv_category_filter': inv_category_filter,
+        'stock_view': stock_view,
     }
     return render(request, 'hospital/accountant/stock_management_monitoring.html', context)
 
 
 @login_required
-@role_required('accountant', 'senior_account_officer')
+@role_required('accountant', 'senior_account_officer', 'admin')
 def supplier_accounts_list(request):
     lt = SupplierPayableLine
     view_lifetime = (request.GET.get('view') or '').strip().lower() == 'lifetime'
@@ -953,8 +1081,161 @@ def supplier_accounts_list(request):
     return render(request, 'hospital/accountant/supplier_accounts_list.html', context)
 
 
+def _normalize_supplier_invoice_number(raw):
+    """Trim and collapse whitespace on supplier invoice numbers."""
+    import re
+    return re.sub(r'\s+', ' ', (raw or '').strip())
+
+
+def supplier_invoice_payment_status(supplier, invoice_number):
+    """
+    Look up a supplier invoice # on this supplier's ledger.
+
+    Status:
+      - new: not in database (allowed)
+      - unpaid / partial: exists and still open (payment allowed)
+      - paid: fully settled — do not record another payment or payable
+    """
+    inv = _normalize_supplier_invoice_number(invoice_number)
+    empty = {
+        'exists': False,
+        'status': 'missing',
+        'status_label': 'Invoice number required',
+        'can_pay': False,
+        'can_record_payable': False,
+        'invoice_number': '',
+        'payable_total': '0.00',
+        'payment_total': '0.00',
+        'outstanding': '0.00',
+        'line_count': 0,
+        'items': [],
+        'message': 'Invoice number is required.',
+    }
+    if not inv:
+        return empty
+
+    lines = list(
+        SupplierPayableLine.objects.filter(
+            supplier=supplier,
+            is_deleted=False,
+            reference__iexact=inv,
+        )
+        .select_related('pharmacy_stock', 'pharmacy_stock__drug', 'lab_reagent')
+        .order_by('created', 'id')
+    )
+    if not lines:
+        return {
+            'exists': False,
+            'status': 'new',
+            'status_label': 'Not in database',
+            'can_pay': True,
+            'can_record_payable': True,
+            'invoice_number': inv,
+            'payable_total': '0.00',
+            'payment_total': '0.00',
+            'outstanding': '0.00',
+            'line_count': 0,
+            'items': [],
+            'message': 'Invoice number not found yet — you can record it.',
+        }
+
+    payable_total = sum(
+        (line.amount or Decimal('0.00'))
+        for line in lines
+        if (line.amount or Decimal('0.00')) > 0
+    )
+    payment_total = abs(
+        sum(
+            (line.amount or Decimal('0.00'))
+            for line in lines
+            if (line.amount or Decimal('0.00')) < 0
+        )
+    )
+    outstanding = payable_total - payment_total
+
+    items = []
+    for line in lines:
+        if line.entry_type == SupplierPayableLine.ENTRY_PAYMENT:
+            continue
+        label = (line.description or '').strip() or line.get_entry_type_display()
+        if line.pharmacy_stock_id and line.pharmacy_stock:
+            drug = getattr(line.pharmacy_stock, 'drug', None)
+            drug_name = getattr(drug, 'name', None) or 'Drug'
+            batch = line.pharmacy_stock.batch_number or '—'
+            qty = line.pharmacy_stock.quantity_on_hand
+            label = f'{drug_name} · batch {batch} · qty {qty}'
+        elif line.lab_reagent_id and line.lab_reagent:
+            label = f'Lab: {line.lab_reagent.name}'
+        items.append({
+            'type': line.get_entry_type_display(),
+            'label': label,
+            'amount': f'{(line.amount or Decimal("0.00")):.2f}',
+        })
+
+    if payable_total > 0 and payment_total >= payable_total:
+        status = 'paid'
+        status_label = 'Paid'
+        can_pay = False
+        can_record_payable = False
+        message = (
+            f'Invoice {inv} is already paid '
+            f'(payable GHS {payable_total:.2f}, payments GHS {payment_total:.2f}). '
+            f'Cannot record another payment against a paid invoice.'
+        )
+    elif payment_total > 0 and payable_total <= 0:
+        status = 'paid'
+        status_label = 'Paid'
+        can_pay = False
+        can_record_payable = False
+        message = (
+            f'Invoice {inv} already has payment(s) totaling GHS {payment_total:.2f}. '
+            f'Cannot repeat a paid invoice.'
+        )
+    elif payment_total > 0 and outstanding > 0:
+        status = 'partial'
+        status_label = 'Partially paid'
+        can_pay = True
+        can_record_payable = False
+        message = (
+            f'Invoice {inv} is partially paid — outstanding GHS {outstanding:.2f} '
+            f'(payable GHS {payable_total:.2f}, paid GHS {payment_total:.2f}).'
+        )
+    else:
+        status = 'unpaid'
+        status_label = 'Not paid'
+        can_pay = True
+        can_record_payable = False
+        message = (
+            f'Invoice {inv} is on file and not paid — outstanding GHS {outstanding:.2f}.'
+        )
+
+    return {
+        'exists': True,
+        'status': status,
+        'status_label': status_label,
+        'can_pay': can_pay,
+        'can_record_payable': can_record_payable,
+        'invoice_number': inv,
+        'payable_total': f'{payable_total:.2f}',
+        'payment_total': f'{payment_total:.2f}',
+        'outstanding': f'{outstanding:.2f}',
+        'line_count': len(lines),
+        'items': items,
+        'message': message,
+    }
+
+
 @login_required
-@role_required('accountant', 'senior_account_officer')
+@role_required('accountant', 'senior_account_officer', 'admin')
+def supplier_invoice_status_api(request, supplier_id):
+    """JSON lookup: invoice # → paid / unpaid / new for this supplier."""
+    supplier = get_object_or_404(Supplier, pk=supplier_id, is_deleted=False)
+    inv = request.GET.get('invoice_number') or request.GET.get('q') or ''
+    return JsonResponse(supplier_invoice_payment_status(supplier, inv))
+
+
+@login_required
+@role_required('accountant', 'senior_account_officer', 'admin')
 def supplier_account_detail(request, supplier_id):
     supplier = get_object_or_404(Supplier, pk=supplier_id, is_deleted=False)
     lines_qs = (
@@ -962,6 +1243,7 @@ def supplier_account_detail(request, supplier_id):
         .select_related('created_by', 'pharmacy_stock', 'pharmacy_stock__drug', 'lab_reagent')
         .order_by('created', 'id')
     )
+    can_approve_corrections = user_can_approve_stock_receipt_correction(request.user)
     if request.method == 'POST':
         action = (request.POST.get('action') or '').strip()
         try:
@@ -970,18 +1252,31 @@ def supplier_account_detail(request, supplier_id):
                 amt = Decimal(raw_amt)
                 if amt <= 0:
                     raise ValueError('Amount must be greater than zero.')
+                inv = _normalize_supplier_invoice_number(
+                    request.POST.get('invoice_number') or request.POST.get('reference') or ''
+                )
+                if not inv:
+                    raise ValueError('Invoice number is required.')
+                inv_status = supplier_invoice_payment_status(supplier, inv)
+                if inv_status['exists'] and inv_status['status'] == 'paid':
+                    raise ValueError(inv_status['message'])
+                if inv_status['exists'] and not inv_status['can_record_payable']:
+                    raise ValueError(
+                        f'Invoice {inv} already exists on this supplier '
+                        f'({inv_status["status_label"]}, outstanding GHS {inv_status["outstanding"]}). '
+                        f'Record a payment against it instead of adding another payable.'
+                    )
                 desc = (request.POST.get('description') or '').strip()
-                ref = (request.POST.get('reference') or '').strip()
                 with transaction.atomic():
                     SupplierPayableLine.objects.create(
                         supplier=supplier,
                         entry_type=SupplierPayableLine.ENTRY_MANUAL_PAYABLE,
                         amount=amt,
-                        description=desc or 'Manual payable',
-                        reference=ref,
+                        description=desc or f'Manual payable — invoice {inv}',
+                        reference=inv,
                         created_by=request.user,
                     )
-                messages.success(request, 'Payable recorded.')
+                messages.success(request, f'Payable recorded for invoice {inv}.')
                 return redirect(
                     reverse('hospital:supplier_account_detail', kwargs={'supplier_id': supplier.id})
                     + '#ledger'
@@ -991,32 +1286,153 @@ def supplier_account_detail(request, supplier_id):
                 amt = Decimal(raw_amt)
                 if amt <= 0:
                     raise ValueError('Amount must be greater than zero.')
+                inv = _normalize_supplier_invoice_number(
+                    request.POST.get('invoice_number') or request.POST.get('reference') or ''
+                )
+                if not inv:
+                    raise ValueError('Invoice number is required when recording a payment.')
+                inv_status = supplier_invoice_payment_status(supplier, inv)
+                if inv_status['status'] == 'paid' or not inv_status['can_pay']:
+                    raise ValueError(
+                        inv_status['message']
+                        or f'Invoice {inv} cannot accept another payment ({inv_status["status_label"]}).'
+                    )
                 current_balance = (
                     SupplierPayableLine.objects.filter(supplier=supplier, is_deleted=False)
                     .aggregate(total=Sum('amount'))['total']
                     or Decimal('0.00')
                 )
-                if current_balance <= 0:
+                if current_balance <= 0 and inv_status['exists']:
                     raise ValueError('No outstanding balance to pay for this supplier.')
-                if amt > current_balance:
+                if current_balance > 0 and amt > current_balance:
                     raise ValueError(
                         f'Payment GHS {amt:.2f} exceeds supplier balance GHS {current_balance:.2f}.'
                     )
+                if inv_status['exists'] and inv_status['status'] in ('unpaid', 'partial'):
+                    outstanding = Decimal(inv_status['outstanding'])
+                    if outstanding > 0 and amt > outstanding:
+                        raise ValueError(
+                            f'Payment GHS {amt:.2f} exceeds outstanding for invoice {inv} '
+                            f'(GHS {outstanding:.2f}).'
+                        )
                 desc = (request.POST.get('description') or '').strip()
-                ref = (request.POST.get('reference') or '').strip()
+                payment_ref = (request.POST.get('payment_reference') or '').strip()
+                if not desc:
+                    desc = f'Payment to supplier — invoice {inv}'
+                if payment_ref:
+                    desc = f'{desc} ({payment_ref})'
                 with transaction.atomic():
                     SupplierPayableLine.objects.create(
                         supplier=supplier,
                         entry_type=SupplierPayableLine.ENTRY_PAYMENT,
                         amount=-amt,
-                        description=desc or 'Payment to supplier',
-                        reference=ref,
+                        description=desc,
+                        reference=inv,
                         created_by=request.user,
                     )
-                messages.success(request, 'Payment recorded.')
+                if inv_status['exists']:
+                    messages.success(
+                        request,
+                        f'Payment recorded for invoice {inv} '
+                        f'({inv_status["status_label"]} → payment applied).',
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f'Payment recorded for new invoice {inv} (was not yet in the database).',
+                    )
                 return redirect(
                     reverse('hospital:supplier_account_detail', kwargs={'supplier_id': supplier.id})
                     + '#ledger'
+                )
+            if action == 'correct_stock_receipt':
+                from .models_supplier_payables import submit_supplier_stock_receipt_correction
+
+                line_id = (request.POST.get('line_id') or '').strip()
+                if not line_id:
+                    raise ValueError('Select a stock receipt line to correct.')
+                line = get_object_or_404(
+                    SupplierPayableLine,
+                    pk=line_id,
+                    supplier=supplier,
+                    is_deleted=False,
+                    entry_type=SupplierPayableLine.ENTRY_STOCK_RECEIPT,
+                )
+                result = submit_supplier_stock_receipt_correction(
+                    line=line,
+                    new_quantity=request.POST.get('quantity'),
+                    new_unit_cost=request.POST.get('unit_cost'),
+                    new_amount=request.POST.get('amount'),
+                    user=request.user,
+                    reason=request.POST.get('reason') or '',
+                )
+                messages.success(
+                    request,
+                    f'Correction submitted for admin approval: GHS {result["old_amount"]:.2f} → '
+                    f'GHS {result["new_amount"]:.2f} '
+                    f'(invoice qty {result["old_qty"]} → {result["new_qty"]}). '
+                    f'Supplier account will update after approval; pharmacy stock will not change.',
+                )
+                return redirect(
+                    reverse('hospital:supplier_account_detail', kwargs={'supplier_id': supplier.id})
+                    + '#pending-corrections'
+                )
+            if action == 'approve_stock_receipt_correction':
+                from .models_supplier_payables import approve_supplier_stock_receipt_correction
+
+                if not can_approve_corrections:
+                    raise ValueError('Only an administrator can approve stock receipt corrections.')
+                req_id = (request.POST.get('request_id') or '').strip()
+                if not req_id:
+                    raise ValueError('Select a correction request to approve.')
+                corr = get_object_or_404(
+                    SupplierStockReceiptCorrectionRequest,
+                    pk=req_id,
+                    supplier=supplier,
+                    is_deleted=False,
+                )
+                result = approve_supplier_stock_receipt_correction(
+                    correction_request=corr,
+                    user=request.user,
+                    review_note=request.POST.get('review_note') or '',
+                )
+                messages.success(
+                    request,
+                    f'Correction approved: supplier account GHS {result["old_amount"]:.2f} → '
+                    f'GHS {result["new_amount"]:.2f} '
+                    f'(invoice qty {result["old_qty"]} → {result["new_qty"]}). '
+                    f'Pharmacy stock was not changed.',
+                )
+                return redirect(
+                    reverse('hospital:supplier_account_detail', kwargs={'supplier_id': supplier.id})
+                    + '#ledger'
+                )
+            if action == 'reject_stock_receipt_correction':
+                from .models_supplier_payables import reject_supplier_stock_receipt_correction
+
+                if not can_approve_corrections:
+                    raise ValueError('Only an administrator can reject stock receipt corrections.')
+                req_id = (request.POST.get('request_id') or '').strip()
+                if not req_id:
+                    raise ValueError('Select a correction request to reject.')
+                corr = get_object_or_404(
+                    SupplierStockReceiptCorrectionRequest,
+                    pk=req_id,
+                    supplier=supplier,
+                    is_deleted=False,
+                )
+                reject_supplier_stock_receipt_correction(
+                    correction_request=corr,
+                    user=request.user,
+                    review_note=request.POST.get('review_note') or '',
+                )
+                messages.info(
+                    request,
+                    'Correction request rejected. Ledger and stock were not changed.',
+                )
+                return redirect(
+                    reverse('hospital:supplier_account_detail', kwargs={'supplier_id': supplier.id})
+                    + '#pending-corrections'
                 )
             messages.error(request, 'Unknown action.')
         except (InvalidOperation, ValueError, TypeError) as e:
@@ -1059,12 +1475,30 @@ def supplier_account_detail(request, supplier_id):
             detail_chart['labels'].append(row['entry_label'])
             detail_chart['data'].append(float(tot))
 
+    pending_corrections = list(
+        SupplierStockReceiptCorrectionRequest.objects.filter(
+            supplier=supplier,
+            status=SupplierStockReceiptCorrectionRequest.STATUS_PENDING,
+            is_deleted=False,
+        )
+        .select_related('payable_line', 'requested_by', 'payable_line__pharmacy_stock__drug')
+        .order_by('-created')
+    )
+    pending_correction_line_ids = {str(c.payable_line_id) for c in pending_corrections}
+
     context = {
         'supplier': supplier,
         'ledger_rows': ledger_rows,
         'current_balance': running,
         'type_summary': type_summary,
         'detail_chart_json': json.dumps(detail_chart),
+        'invoice_status_url': reverse(
+            'hospital:supplier_invoice_status_api',
+            kwargs={'supplier_id': supplier.id},
+        ),
+        'pending_corrections': pending_corrections,
+        'pending_correction_line_ids': pending_correction_line_ids,
+        'can_approve_corrections': can_approve_corrections,
     }
     return render(request, 'hospital/accountant/supplier_account_detail.html', context)
 

@@ -240,6 +240,8 @@
                 <span class="fw-semibold text-dark">On this page:</span>
                 <a href="#admission-tpr-sheet-card" class="ms-1 link-secondary">TPR &amp; vitals chart</a>
                 <span class="text-muted">·</span>
+                <a href="#admission-glucose-rbs-card" class="link-secondary">Glucose / RBS</a>
+                <span class="text-muted">·</span>
                 <a href="#current-medications-card" class="link-secondary">Medications</a>
                 <span class="text-muted">·</span>
                 <a href="#admission-treatment-sheet-card" class="link-secondary">Treatment sheet</a>
@@ -832,6 +834,51 @@
                 </div>
             </div>
 
+            <!-- Glucose / RBS strip → cashier -->
+            <div class="card shadow-sm mb-4 border-warning" id="admission-glucose-rbs-card">
+                <div class="card-header bg-warning text-dark d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <h6 class="mb-0"><i class="bi bi-droplet-fill me-2"></i>Glucose / RBS check (bill to cashier)</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-3">
+                        Record a bedside glucose reading and bill the strip.
+                        <strong>GHS {{ poc_glucose_strip_ghs|floatformat:2 }}</strong> is added to this admission bill for cashier when RBS or FBS is selected.
+                    </p>
+                    <form method="post" action="">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="record_vitals">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-semibold" for="adm_quick_glucose">Blood glucose (mmol/L)</label>
+                                <input type="number" class="form-control" id="adm_quick_glucose" name="blood_glucose" min="0" step="0.1" autocomplete="off" placeholder="e.g. 6.2">
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label small fw-semibold d-block">Strip charge</label>
+                                <div class="d-flex flex-wrap gap-3">
+                                    <label class="d-inline-flex align-items-center gap-1 small mb-0">
+                                        <input type="radio" name="poc_glucose_strip_type" value="rbs" checked>
+                                        <span>RBS strip</span>
+                                    </label>
+                                    <label class="d-inline-flex align-items-center gap-1 small mb-0">
+                                        <input type="radio" name="poc_glucose_strip_type" value="fbs">
+                                        <span>FBS strip</span>
+                                    </label>
+                                    <label class="d-inline-flex align-items-center gap-1 small mb-0">
+                                        <input type="radio" name="poc_glucose_strip_type" value="">
+                                        <span>No charge</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <button type="submit" class="btn btn-warning w-100 fw-semibold">
+                                    <i class="bi bi-cash-coin me-1"></i>Save &amp; bill
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
             <!-- Recent Vitals Trend -->
             {% if recent_vitals|length > 1 %}
             <div class="card shadow-sm mb-4">
@@ -1301,6 +1348,24 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="order_labs">
                 <div class="modal-body">
+                    <div class="alert alert-warning py-2">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Diagnosis is required before ordering labs (laboratory needs clinical context).
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Diagnosis for this visit <span class="text-danger">*</span></label>
+                        <input type="text" name="diagnosis_name" id="admission_lab_diagnosis" class="form-control"
+                               value="{{ lab_diagnosis_prefill|default:'' }}"
+                               {% if not has_encounter_diagnosis %}required{% endif %}
+                               placeholder="e.g. Pyelonephritis, Malaria, Hypertension" autocomplete="off">
+                        <div class="form-text">
+                            {% if has_encounter_diagnosis %}
+                            Existing visit diagnosis is pre-filled. Edit if needed before ordering.
+                            {% else %}
+                            Required — enter the diagnosis for this visit so laboratory can see it.
+                            {% endif %}
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">Search & select lab tests</label>
                         <div class="position-relative">
@@ -1322,9 +1387,20 @@
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Notes (optional)</label>
-                            <input type="text" name="notes" class="form-control" placeholder="Clinical indication...">
+                            <input type="text" name="notes" class="form-control" placeholder="Special instructions for lab...">
                         </div>
                     </div>
+                    {% if insurance_lab_limited %}
+                    <div class="alert alert-info py-2">
+                        Insurance visit: <strong>{{ insurance_lab_ordered_count }}</strong> of <strong>{{ insurance_lab_limit }}</strong> lab tests used. Extra tests need a reason and diagnosis.
+                    </div>
+                    <div id="admission-extra-lab-panel" class="border rounded p-3 bg-light mb-2" style="display:none;">
+                        <label class="form-label">Reason for extra tests <span class="text-danger">*</span></label>
+                        <textarea name="extra_lab_reason" id="admission_extra_lab_reason" class="form-control mb-2" rows="2" placeholder="Why these additional tests are needed"></textarea>
+                        <label class="form-label">Diagnosis for extra tests <span class="text-danger">*</span></label>
+                        <input type="text" name="extra_lab_diagnosis" id="admission_extra_lab_diagnosis" class="form-control" value="{{ lab_diagnosis_prefill|default:'' }}">
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -2109,7 +2185,7 @@
             if (q.length < 2) return;
             admissionDrugSearchTimeout = setTimeout(function() {
                 var drugSearchUrl = '{% url "hospital:api_search_drugs" %}?q=' + encodeURIComponent(q)
-                    + '&patient_id={{ patient.id }}';
+                    + '&patient_id={{ patient.id }}&encounter_id={{ encounter.pk }}';
                 fetch(drugSearchUrl, {
                     credentials: 'same-origin',
                     headers: { 'Accept': 'application/json' },
@@ -2214,7 +2290,15 @@
     const labSelectedIds = new Set();
     let labSearchTimeout;
 
+    const insuranceLabLimited = {{ insurance_lab_limited|yesno:"true,false" }};
+    const insuranceLabLimit = {{ insurance_lab_limit|default:3 }};
+    const insuranceLabOrdered = {{ insurance_lab_ordered_count|default:0 }};
+
     function renderLabSelected() {
+        const extraPanel = document.getElementById('admission-extra-lab-panel');
+        if (extraPanel) {
+            extraPanel.style.display = (insuranceLabLimited && (insuranceLabOrdered + labSelectedIds.size) > insuranceLabLimit) ? 'block' : 'none';
+        }
         if (labSelectedIds.size === 0) {
             labSelected.innerHTML = '<small class="text-muted">Selected tests will appear here. Click a result above to add.</small>';
             return;
@@ -2240,7 +2324,7 @@
             labResults.innerHTML = '';
             if (q.length < 2) return;
             labSearchTimeout = setTimeout(function() {
-                fetch('{% url "hospital:api_autocomplete_lab_tests" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                fetch('{% url "hospital:api_autocomplete_lab_tests" %}?q=' + encodeURIComponent(q) + '&encounter_id={{ encounter.pk }}', { credentials: 'same-origin' })
                     .then(function(r) { return r.json(); })
                     .then(function(data) {
                         const results = data.results || [];
@@ -2275,10 +2359,28 @@
 
     if (labForm) {
         labForm.addEventListener('submit', function(e) {
+            var dxEl = document.getElementById('admission_lab_diagnosis');
+            var dx = (dxEl && dxEl.value || '').trim();
+            var hasExisting = {{ has_encounter_diagnosis|yesno:"true,false" }};
+            if (!dx && !hasExisting) {
+                e.preventDefault();
+                alert('Please add a diagnosis before ordering lab tests.');
+                if (dxEl) dxEl.focus();
+                return;
+            }
             if (labSelectedIds.size === 0) {
                 e.preventDefault();
                 alert('Please select at least one lab test.');
                 return;
+            }
+            if (insuranceLabLimited && (insuranceLabOrdered + labSelectedIds.size) > insuranceLabLimit) {
+                var extraReason = (document.getElementById('admission_extra_lab_reason') && document.getElementById('admission_extra_lab_reason').value || '').trim();
+                var extraDx = (document.getElementById('admission_extra_lab_diagnosis') && document.getElementById('admission_extra_lab_diagnosis').value || '').trim();
+                if (extraReason.length < 5 || extraDx.length < 2) {
+                    e.preventDefault();
+                    alert('Insurance visits allow 3 lab tests. Enter a reason and diagnosis for the additional test(s).');
+                    return;
+                }
             }
             document.querySelectorAll('#orderLabsForm input[name="test_ids"]').forEach(function(el) { el.remove(); });
             labSelectedIds.forEach(function(id) {
@@ -2333,7 +2435,7 @@
             imgResults.innerHTML = '';
             if (q.length < 2) return;
             imgSearchTimeout = setTimeout(function() {
-                fetch('{% url "hospital:api_autocomplete_imaging_studies" %}?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+                fetch('{% url "hospital:api_autocomplete_imaging_studies" %}?q=' + encodeURIComponent(q) + '&encounter_id={{ encounter.pk }}', { credentials: 'same-origin' })
                     .then(function(r) { return r.json(); })
                     .then(function(data) {
                         const results = data.results || [];

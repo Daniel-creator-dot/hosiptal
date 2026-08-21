@@ -1,0 +1,122 @@
+{% extends 'hospital/base.html' %}
+{% load static humanize %}
+
+{% block title %}NHIS Cash Pay - Cashier - HMS{% endblock %}
+{% block page_title %}NHIS cash pay{% endblock %}
+{% block page_subtitle %}Collect cash for labs, scans, and drugs that are not on the NHIS list.{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-warning text-dark d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>NHIS — patient cash</h5>
+                    <div class="d-flex gap-2">
+                        <a href="{% url 'hospital:cashier_patient_list' %}" class="btn btn-outline-dark btn-sm">Patients</a>
+                        <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-outline-dark btn-sm">Dashboard</a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        NHIS invoices can mix insurance lines and cash lines. Use <strong>Collect cash</strong>
+                        for the patient’s cash-due items (labs/scans/drugs not on the NHIS list). Do not treat
+                        the full insurance invoice balance as cash to collect.
+                    </div>
+                    <form method="get" class="mb-4">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" name="q" class="form-control form-control-lg"
+                                   placeholder="Search NHIS patient by name or MRN..."
+                                   value="{{ query|default:'' }}" autocomplete="off">
+                            <button type="submit" class="btn btn-warning">Search</button>
+                            {% if query %}
+                            <a href="{% url 'hospital:cashier_nhis_cash_pay' %}" class="btn btn-outline-secondary">Clear</a>
+                            {% endif %}
+                        </div>
+                    </form>
+
+                    <h6 class="text-muted text-uppercase small mb-3">Unpaid NHIS cash items</h6>
+                    <div class="table-responsive mb-4">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>MRN</th>
+                                    <th>Cash items</th>
+                                    <th class="text-end">Cash due (GHS)</th>
+                                    <th class="text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in pending_rows %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ row.name }}</strong>
+                                        {% if row.lines %}
+                                        <ul class="small text-muted mb-0 mt-1">
+                                            {% for line in row.lines %}
+                                            <li>{{ line.description }} — GHS {{ line.amount|floatformat:2|intcomma }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                        {% endif %}
+                                    </td>
+                                    <td><code>{{ row.mrn }}</code></td>
+                                    <td>{{ row.line_count }}</td>
+                                    <td class="text-end fw-bold">{{ row.cash_due|floatformat:2|intcomma }}</td>
+                                    <td class="text-end">
+                                        <a href="{% url 'hospital:cashier_patient_total_bill' row.patient.id %}" class="btn btn-success btn-sm">
+                                            <i class="bi bi-cash-coin me-1"></i> Collect cash
+                                        </a>
+                                        <a href="{% url 'hospital:cashier_add_services_select' row.patient.id %}" class="btn btn-outline-primary btn-sm">
+                                            <i class="bi bi-plus-circle me-1"></i> Add lab/scan
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">
+                                        {% if query %}No unpaid NHIS cash items match this search.{% else %}No unpaid NHIS cash items right now.{% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {% if search_patients %}
+                    <h6 class="text-muted text-uppercase small mb-3">NHIS patients (add a cash lab or scan)</h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>MRN</th>
+                                    <th class="text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in search_patients %}
+                                <tr>
+                                    <td><strong>{{ p.name }}</strong></td>
+                                    <td><code>{{ p.mrn }}</code></td>
+                                    <td class="text-end">
+                                        <a href="{% url 'hospital:cashier_add_services_select' p.patient.id %}" class="btn btn-primary btn-sm">
+                                            <i class="bi bi-plus-circle me-1"></i> Add lab/scan as cash
+                                        </a>
+                                        <a href="{% url 'hospital:cashier_patient_total_bill' p.patient.id %}" class="btn btn-outline-success btn-sm">
+                                            Total bill
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -15,7 +15,10 @@ from decimal import Decimal
 import json
 import logging
 
-from .models import Patient, Encounter, LabResult, LabTest, Prescription, Admission, Invoice, InvoiceLine, ServiceCode, Payer
+from .models import (
+    Patient, Encounter, LabResult, LabTest, Prescription, Admission,
+    Invoice, InvoiceLine, ServiceCode, Payer, CashierQuickService,
+)
 from .models_accounting import PaymentReceipt, Transaction
 from .models_payment_verification import LabResultRelease, PharmacyDispensing, ImagingRelease
 from .services.unified_receipt_service import (
@@ -39,12 +42,20 @@ from .utils_roles import user_has_cashier_access, user_can_add_manual_charges, u
 from .models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
 from .services.pharmacy_walkin_service import WalkInPharmacyService
 from .utils_billing import (
+    ANC_VISIT,
     CONSULTATION_LINE_SERVICE_CODES,
+    GENERAL_CONSULTATION_CASH,
+    GYNAE_SPECIAL,
+    PHYSIO_FIRST,
+    PHYSIO_SUBSEQUENT,
+    SPECIALIST_CONSULTATION,
     consultation_line_display_amount,
+    consultation_settled_encounter_ids,
     get_consultation_line_for_encounter,
     get_consultation_price_for_encounter,
     get_drug_price_for_prescription,
     local_datetime_bounds_for_date,
+    billed_lab_or_scan_catalog_price,
 )
 from .utils_invoice_line import (
     create_or_merge_invoice_line,
@@ -53,6 +64,7 @@ from .utils_invoice_line import (
     imaging_catalog_unit_price_for_line,
     accommodation_unit_price_for_line,
     walkin_sale_item_unit_price_for_line,
+    invoice_line_display_description,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +73,79 @@ logger = logging.getLogger(__name__)
 def _invoice_all_objects_by_pk(pk):
     """all_objects lookup at module scope (avoids UnboundLocalError if a view shadows Invoice)."""
     return Invoice.all_objects.filter(pk=pk).first()
+
+
+def _invoice_pks_from_pending_services(services_list):
+    """
+    Deduped invoice PKs from pending-services rows (Total Bill / combined payment shape).
+    Used so Apply deposit targets the same invoices the cashier sees on this bill.
+    """
+    pks = []
+    seen = set()
+    for s in services_list or []:
+        if not isinstance(s, dict):
+            continue
+        inv = None
+        stype = s.get('type')
+        obj = s.get('obj')
+        if stype == 'invoice' and obj is not None:
+            inv = obj
+        elif stype in ('invoice_line', 'lab', 'imaging', 'pharmacy_walkin', 'bed') and obj is not None:
+            inv = getattr(obj, 'invoice', None)
+            if inv is None and getattr(obj, 'invoice_id', None):
+                inv = _invoice_all_objects_by_pk(obj.invoice_id)
+        iid = s.get('invoice_id')
+        if inv is None and iid:
+            inv = _invoice_all_objects_by_pk(iid)
+        if inv is None:
+            continue
+        pk = getattr(inv, 'pk', None)
+        if not pk or pk in seen:
+            continue
+        seen.add(pk)
+        pks.append(pk)
+    return pks
+
+
+def _filter_pending_services_for_total_bill(services_list, request_get_or_post):
+    """Apply the same date/service filters as cashier_patient_total_bill."""
+    services = list(services_list or [])
+    today_pending = request_get_or_post.get('today_pending') == '1'
+    filter_date = None
+    filter_date_str = (request_get_or_post.get('filter_date') or '').strip()
+    if filter_date_str:
+        try:
+            from datetime import datetime
+            filter_date = datetime.strptime(filter_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            pass
+    if filter_date is None and today_pending:
+        filter_date = timezone.now().date()
+    service_filter = (request_get_or_post.get('service_filter') or '').strip().lower()
+    if filter_date is not None:
+        services = [s for s in services if _service_date_for_total_bill_filter(s) == filter_date]
+    if service_filter and service_filter != 'all':
+        services = [s for s in services if s.get('type') == service_filter]
+    return services
+
+
+def _total_bill_redirect(patient_id, request=None):
+    """Redirect back to Total Bill, preserving filter query when present."""
+    from django.urls import reverse
+    from urllib.parse import urlencode
+
+    url = reverse('hospital:cashier_patient_total_bill', kwargs={'patient_id': patient_id})
+    if request is None:
+        return redirect(url)
+    src = request.POST if request.method == 'POST' else request.GET
+    preserve = {}
+    for key in ('today_pending', 'filter_date', 'service_filter', 'payment_date_from', 'payment_date_to'):
+        val = (src.get(key) or '').strip()
+        if val:
+            preserve[key] = val
+    if preserve:
+        return redirect(f'{url}?{urlencode(preserve)}')
+    return redirect(url)
 
 
 def _resolve_invoice_payer(invoice, patient):
@@ -85,9 +170,9 @@ def _compute_current_line_unit_price(line, patient, payer):
         code_upper = code.upper()
         # Tier codes created at cashier — flexible pricing often has no row; use fixed amounts
         if code_upper == 'PHYSIO':
-            return Decimal('250.00')
+            return PHYSIO_FIRST
         if code_upper == 'PHYSIO-SUB':
-            return Decimal('150.00')
+            return PHYSIO_SUBSEQUENT
         # Laboratory: always prefer LabTest catalog price when we can resolve the test,
         # then apply payer rules (cash = catalog; insurance/corporate = engine or markup on catalog).
         try:
@@ -133,7 +218,7 @@ def _compute_current_line_unit_price(line, patient, payer):
                 rest = code[len(_img_prefix):]
                 img = ImagingCatalog.objects.filter(pk=rest, is_deleted=False).first()
                 if img and img.price is not None:
-                    return Decimal(str(img.price))
+                    return billed_lab_or_scan_catalog_price(img.price, payer, kind='imaging')
             except Exception:
                 pass
         # Keep amount already on the line (cashier-set, physio tiers, etc.)
@@ -640,7 +725,14 @@ def centralized_cashier_dashboard(request):
                 ).first()
                 
                 if catalog_item and catalog_item.price:
-                    imaging.display_price = catalog_item.price
+                    img_patient = getattr(imaging, 'patient', None)
+                    if img_patient is None:
+                        img_patient = getattr(getattr(imaging, 'order', None), 'encounter', None)
+                        img_patient = getattr(img_patient, 'patient', None)
+                    img_payer = getattr(img_patient, 'primary_insurance', None)
+                    imaging.display_price = billed_lab_or_scan_catalog_price(
+                        catalog_item.price, img_payer, kind='imaging'
+                    )
                 else:
                     imaging.display_price = Decimal('50.00')  # Default
         except Exception as e:
@@ -667,35 +759,19 @@ def centralized_cashier_dashboard(request):
                 started_at__gte=day_start, started_at__lt=day_end
             )
     consultations_query = consultations_query[:CASHIER_DASHBOARD_CAP]
-    consultation_paid_encounter_ids = set(
-        PaymentReceipt.objects.filter(
-            is_deleted=False,
-            service_type='consultation',
-            invoice__encounter_id__isnull=False
-        ).values_list('invoice__encounter_id', flat=True).distinct()
-    )
-    from django.db.models.functions import TruncDate
-    old_consultation_paid_set = set(
-        PaymentReceipt.objects.filter(
-            is_deleted=False,
-            service_type='consultation',
-            invoice__encounter_id__isnull=True
-        ).annotate(rd=TruncDate('receipt_date')).values_list('patient_id', 'rd')
+    consultations_list = list(consultations_query)
+    consultation_paid_encounter_ids = consultation_settled_encounter_ids(
+        [e.id for e in consultations_list]
     )
     pending_consultations = []
-    for e in consultations_query:
+    for e in consultations_list:
         if e.id in consultation_paid_encounter_ids:
             continue
-        _sa = e.started_at
-        if _sa and getattr(_sa, 'tzinfo', None):
-            started_date = timezone.localtime(_sa).date()
-        else:
-            started_date = _sa.date() if hasattr(_sa, 'date') else _sa
-        if old_consultation_paid_set and any(pid == e.patient_id and rdate >= started_date for (pid, rdate) in old_consultation_paid_set):
-            continue
         cp = get_consultation_price_for_encounter(e)
+        if cp is None or cp <= 0:
+            continue
         if cp == Decimal('30.00'):
-            cp = Decimal('150.00')
+            cp = GENERAL_CONSULTATION_CASH
         e.display_price = cp
         # Label for Overview so "Specialist Consultation" is visible (same as Patient Bills list)
         enc_type_lower = (e.encounter_type or '').lower()
@@ -771,9 +847,57 @@ def centralized_cashier_dashboard(request):
         'patient', 'received_by'
     ).order_by('-receipt_date')[:20]
     
-    # Statistics - use PaymentReceipt as source of truth for cash received
-    todays_revenue_total = todays_receipts_base.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
+    # Statistics - receipts + deposit intake − refunds/withdrawals (net for the day)
+    todays_revenue_total = todays_receipts_base.exclude(
+        payment_method='deposit'
+    ).aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
     todays_cash_received = todays_receipts_base.filter(payment_method='cash').aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0.00')
+    try:
+        from .models_patient_deposits import PatientDeposit
+        day_dep = (
+            PatientDeposit.objects.filter(
+                deposit_date__date=receipts_date,
+                is_deleted=False,
+            )
+            .exclude(status='cancelled')
+            .aggregate(Sum('deposit_amount'))['deposit_amount__sum']
+            or Decimal('0.00')
+        )
+        day_refunds = (
+            Transaction.objects.filter(
+                transaction_date__date=receipts_date,
+                transaction_type__in=('refund_issued', 'refund'),
+                is_deleted=False,
+            ).aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        todays_revenue_total = todays_revenue_total + day_dep - day_refunds
+        if todays_revenue_total < 0:
+            todays_revenue_total = Decimal('0.00')
+        todays_cash_refunds = (
+            Transaction.objects.filter(
+                transaction_date__date=receipts_date,
+                transaction_type__in=('refund_issued', 'refund'),
+                payment_method='cash',
+                is_deleted=False,
+            ).aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        day_cash_dep = (
+            PatientDeposit.objects.filter(
+                deposit_date__date=receipts_date,
+                payment_method='cash',
+                is_deleted=False,
+            )
+            .exclude(status='cancelled')
+            .aggregate(Sum('deposit_amount'))['deposit_amount__sum']
+            or Decimal('0.00')
+        )
+        todays_cash_received = todays_cash_received + day_cash_dep - todays_cash_refunds
+        if todays_cash_received < 0:
+            todays_cash_received = Decimal('0.00')
+    except Exception:
+        pass
     
     # Unpaid invoices (manual charges, consultation, etc)
     pending_invoices_count = Invoice.objects.filter(
@@ -874,6 +998,41 @@ def cashier_patient_total_bill(request, patient_id):
     # PHYSIO, etc.) and was wiping unit_price on invoice/print. Consultation lines that need
     # live repricing are handled elsewhere; use heal_invoice_zero_line_prices on invoice views.
 
+    # Return deposit stuck on cancelled invoices, then apply that restored credit to open
+    # invoices on this Total Bill so Balance due = Total billed − Deposit applied.
+    try:
+        from .services.deposit_payment_service import heal_patient_deposits_for_billing
+        # Ensure walk-in invoices exist before collecting apply targets
+        try:
+            for sale in WalkInPharmacySale.objects.filter(
+                patient=patient,
+                is_deleted=False,
+                payment_status__in=['pending', 'partial'],
+                waived_at__isnull=True,
+            ).order_by('-sale_date')[:15]:
+                WalkInPharmacyService.ensure_sale_invoice(sale, patient)
+        except Exception:
+            pass
+        _heal_services, _ = _get_patient_pending_services_for_payment(patient)
+        _heal_pks = _invoice_pks_from_pending_services(_heal_services)
+        heal = heal_patient_deposits_for_billing(
+            patient, apply_restored=True, invoice_pks=_heal_pks or None
+        )
+        if heal.get('applied') and heal['applied'] > 0:
+            messages.success(
+                request,
+                f'Deposit GHS {heal["applied"]:.2f} returned from cancelled invoice(s) and applied to this bill. '
+                f'Amount due is Total billed minus deposit applied.',
+            )
+        elif heal.get('restored') and heal['restored'] > 0:
+            messages.info(
+                request,
+                f'Deposit GHS {heal["restored"]:.2f} was returned from cancelled invoice(s). '
+                f'Click Apply deposit to total bill to reduce the amount due.',
+            )
+    except Exception:
+        logger.exception('Deposit restore/apply on total bill failed for patient %s', patient_id)
+
     # Heal duplicate prescribe (walk-in) invoices: same sale sometimes got two INV rows when the
     # default Invoice manager hid a draft (total_amount=0) or invoice list backfill raced.
     try:
@@ -951,10 +1110,15 @@ def cashier_patient_total_bill(request, patient_id):
     deposit_applied_to_bill = Decimal('0.00')  # Deposit already applied to invoices on this bill (so invoice shows it)
     try:
         from .models_patient_deposits import PatientDeposit
-        from .services.deposit_payment_service import get_patient_deposit_balance_display
-        patient_deposit_balance = get_patient_deposit_balance_display(patient)
+        from .services.deposit_payment_service import get_patients_deposit_balance_display
+        from .services.patient_outstanding_service import patient_billing_scope_ids
+
+        _dep_scope = patient_billing_scope_ids(patient)
+        patient_deposit_balance = get_patients_deposit_balance_display(_dep_scope)
         patient_deposits_list = list(
-            PatientDeposit.objects.filter(patient=patient, is_deleted=False).order_by('-deposit_date')
+            PatientDeposit.objects.filter(
+                patient_id__in=_dep_scope, is_deleted=False
+            ).order_by('-deposit_date')
         )
         # Deposit applied only to invoices still shown on this bill (deduped; matches Invoice.calculate_totals logic).
         deposit_applied_to_bill = deposit_amount_applied_to_invoices_for_display(invoice_objs_for_deposit)
@@ -962,13 +1126,47 @@ def cashier_patient_total_bill(request, patient_id):
         patient_deposit_balance = Decimal('0.00')
     # Face value of rows above ≈ outstanding (total) + deposit already applied to those invoices
     initial_total = total + deposit_applied_to_bill
+    # Sum of catalog/face line totals (before deposit & other payments reduce balance)
+    charges_face_total = Decimal('0.00')
+    billed_items_count = 0
+    for _svc in services:
+        _ft = _svc.get('face_total')
+        if _ft is not None:
+            try:
+                _ft_dec = Decimal(str(_ft or 0))
+            except Exception:
+                _ft_dec = Decimal('0.00')
+            if _ft_dec > 0:
+                charges_face_total += _ft_dec
+        _rows = _svc.get('breakdown') or []
+        for _row in _rows:
+            if _row.get('is_waived'):
+                continue
+            billed_items_count += 1
+        if not _rows:
+            try:
+                _amt = Decimal(str(_svc.get('face_total') or _svc.get('price') or 0))
+            except Exception:
+                _amt = Decimal('0.00')
+            if _amt > 0:
+                if _ft is None:
+                    charges_face_total += _amt
+                billed_items_count += 1
+    if charges_face_total <= 0:
+        charges_face_total = initial_total
+        if billed_items_count <= 0 and services:
+            billed_items_count = len(services)
+    # All payments posted to invoices on this bill (deposit + cash/MoMo/etc.)
+    payments_applied_to_bill = max(Decimal('0.00'), charges_face_total - total)
+    if deposit_applied_to_bill > payments_applied_to_bill:
+        payments_applied_to_bill = deposit_applied_to_bill
     from .services.patient_outstanding_service import (
         get_patient_outstanding,
         sum_payment_receipts_for_patient_in_date_range,
     )
     from urllib.parse import urlencode
 
-    outstanding_data = get_patient_outstanding(patient)
+    outstanding_data = get_patient_outstanding(patient, include_deposit_breakdown=True)
     total_paid_all_time = outstanding_data['total_paid']
 
     payment_date_from_str = request.GET.get('payment_date_from', '').strip()
@@ -1010,6 +1208,14 @@ def cashier_patient_total_bill(request, patient_id):
     patient_deposit_balance = outstanding_data['deposit_balance']
     amount_due_after_deposit = outstanding_data['amount_due_after_deposit']
     credit_balance = outstanding_data.get('credit_balance', Decimal('0.00'))
+    # Total of deposit slips on file (templates expect patient_deposits_recorded_sum)
+    patient_deposits_recorded_sum = outstanding_data.get('total_deposited') or Decimal('0.00')
+    if not patient_deposits_recorded_sum and patient_deposits_list:
+        patient_deposits_recorded_sum = sum(
+            (d.deposit_amount or Decimal('0.00'))
+            for d in patient_deposits_list
+            if getattr(d, 'status', None) not in ('cancelled', 'refunded')
+        ) or Decimal('0.00')
     show_refund_credit = credit_balance > 0 and Encounter.objects.filter(
         patient=patient, is_deleted=False, billing_closed_at__isnull=True
     ).exists()
@@ -1021,6 +1227,7 @@ def cashier_patient_total_bill(request, patient_id):
         service_counts[service_type] = service_counts.get(service_type, 0) + 1
 
     from .utils_roles import user_can_remove_invoice_from_bill, user_can_waive, user_can_apply_total_bill_discount
+    from .utils_billing import patient_bill_payer_details
     from django.urls import reverse
     from .models_settings import HospitalSettings
     try:
@@ -1031,7 +1238,7 @@ def cashier_patient_total_bill(request, patient_id):
     can_remove_invoice_from_bill = user_can_remove_invoice_from_bill(request.user)
     added_items_display = request.session.pop('cashier_added_items', None)
 
-    # Reception visit price: so cashier sees what reception set (Antenatal 235, Gynae 260, or custom)
+    # Reception visit price: so cashier sees what reception set (Antenatal 243, Gynae 268, or custom)
     reception_visit_info = None
     try:
         first_consult_line = _first_consult_line_for_reception_visit_banner(patient)
@@ -1040,9 +1247,9 @@ def cashier_patient_total_bill(request, patient_id):
             enc_type = (enc.encounter_type or '').lower()
             amount = consultation_line_display_amount(first_consult_line) or Decimal('0.00')
             if 'antenatal' in enc_type:
-                reception_visit_info = {'label': 'Antenatal', 'amount': amount, 'standard': Decimal('235.00')}
+                reception_visit_info = {'label': 'Antenatal', 'amount': amount, 'standard': Decimal('243.00')}
             elif enc_type == 'gynae':
-                reception_visit_info = {'label': 'Gynae / Special', 'amount': amount, 'standard': Decimal('260.00')}
+                reception_visit_info = {'label': 'Gynae / Special', 'amount': amount, 'standard': GYNAE_SPECIAL}
             else:
                 reception_visit_info = {'label': enc.get_encounter_type_display() or 'Consultation', 'amount': amount, 'standard': None}
     except Exception as e:
@@ -1079,6 +1286,9 @@ def cashier_patient_total_bill(request, patient_id):
         'services': services,
         'total': total,
         'initial_total': initial_total,
+        'charges_face_total': charges_face_total,
+        'billed_items_count': billed_items_count,
+        'payments_applied_to_bill': payments_applied_to_bill,
         'deposit_applied_to_bill': deposit_applied_to_bill,
         'total_outstanding': total_outstanding,
         'bill_outstanding': bill_outstanding,
@@ -1087,6 +1297,7 @@ def cashier_patient_total_bill(request, patient_id):
         'show_refund_credit': show_refund_credit,
         'patient_deposit_balance': patient_deposit_balance,
         'patient_deposits': patient_deposits_list,
+        'patient_deposits_recorded_sum': patient_deposits_recorded_sum,
         'total_paid': total_paid,
         'total_paid_all_time': total_paid_all_time,
         'payment_filter_active': payment_filter_active,
@@ -1108,9 +1319,11 @@ def cashier_patient_total_bill(request, patient_id):
         'bills_list_query': bills_list_query,
         'reception_visit_info': reception_visit_info,
         'can_apply_total_bill_discount': user_can_apply_total_bill_discount(request.user),
+        'payer_details': patient_bill_payer_details(patient),
     }
     if request.GET.get('print') == '1':
         from collections import OrderedDict
+        from .utils_invoice_line import clean_bill_line_description
         categories_order = [
             ('pharmacy_walkin', 'Pharmacy Services'),
             ('lab', 'Lab Services'),
@@ -1130,23 +1343,37 @@ def cashier_patient_total_bill(request, patient_id):
                 cat_name = type_to_category.get(stype, f'{str(stype).replace("_", " ").title()} Services')
                 if cat_name not in grouped:
                     grouped[cat_name] = []
+                due = Decimal(str(service.get('price') or 0))
                 if service.get('breakdown'):
                     for row in service['breakdown']:
                         if row.get('is_waived'):
                             continue
-                        code = f"WALKIN-{sid[:12]}" if stype == 'pharmacy_walkin' else (f"INV-{sid[:8]}" if stype in ('invoice', 'invoice_line') else f"{str(stype).upper()[:6]}-1")
+                        try:
+                            row_amt = Decimal(str(row.get('amount') or 0))
+                        except Exception:
+                            row_amt = Decimal('0.00')
+                        code = (
+                            f"WALKIN-{sid[:12]}" if stype == 'pharmacy_walkin'
+                            else (f"INV-{sid[:8]}" if stype in ('invoice', 'invoice_line') else f"{str(stype).upper()[:6]}-1")
+                        )
+                        desc = clean_bill_line_description(str(row.get('description') or '—'))
+                        is_row_paid = bool(row.get('is_paid')) or row_amt <= 0
+                        if is_row_paid:
+                            desc = f'{desc} (Paid)'
+                            row_amt = Decimal('0.00')
                         grouped[cat_name].append({
                             'code': code,
-                            'description': str(row.get('description') or '—'),
+                            'description': desc,
                             'qty': row.get('quantity', 1),
                             'unit': row.get('unit_price', 0),
-                            'total': row.get('amount', 0),
+                            'total': row_amt,
                             'date': row.get('date') or service.get('date'),
+                            'is_paid': is_row_paid,
                         })
                 else:
                     grouped[cat_name].append({
                         'code': str(stype).upper()[:8],
-                        'description': str(service.get('name', '')),
+                        'description': clean_bill_line_description(str(service.get('name', ''))),
                         'qty': 1,
                         'unit': service.get('price', 0),
                         'total': service.get('price', 0),
@@ -1157,6 +1384,8 @@ def cashier_patient_total_bill(request, patient_id):
                 continue
         charges_by_category = [{'category_name': name, 'lines': lines} for name, lines in grouped.items() if lines]
         total_invoice_items = sum(len(cat['lines']) for cat in charges_by_category)
+        # Keep charges_face_total from gross/face calculation above — do not replace with
+        # remaining line amounts (paid lines print as 0.00).
         context['hospital_settings'] = HospitalSettings.get_settings()
         context['charges_by_category'] = charges_by_category
         context['total_invoice_items'] = total_invoice_items
@@ -1290,31 +1519,97 @@ def cashier_patient_deposit_usage_json(request, patient_id, deposit_id):
 @user_passes_test(is_cashier)
 def cashier_apply_deposit_to_bill(request, patient_id):
     """
-    Apply patient's deposit balance to all unpaid invoices (bill). One-click – affects the bill as payment,
-    then generates a receipt and redirects to receipt print.
+    Apply patient's deposit balance to unpaid cash invoices on this Total Bill.
+    One-click – posts deposit as payment (receipt per invoice), then returns to Total Bill.
     """
-    from .services.deposit_payment_service import apply_deposit_to_all_patient_invoices
+    from .services.deposit_payment_service import (
+        apply_deposit_to_all_patient_invoices,
+        get_patients_deposit_balance_display,
+        heal_patient_deposits_for_billing,
+        invoice_is_eligible_for_deposit_apply,
+    )
+    from .services.patient_outstanding_service import patient_billing_scope_ids
 
     if request.method != 'POST':
-        return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
+        return _total_bill_redirect(patient_id, request)
 
     patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
     try:
-        # create_receipt=True: each invoice gets its own receipt so totals/outstanding are correct (plan §2)
-        total_applied = apply_deposit_to_all_patient_invoices(patient, create_receipt=True)
+        # Ensure walk-in / prescribe invoices exist so they can receive deposit
+        try:
+            for sale in WalkInPharmacySale.objects.filter(
+                patient=patient,
+                is_deleted=False,
+                payment_status__in=['pending', 'partial'],
+                waived_at__isnull=True,
+            ).order_by('-sale_date')[:15]:
+                WalkInPharmacyService.ensure_sale_invoice(sale, patient)
+        except Exception:
+            logger.exception(
+                'Prescribe invoice ensure before apply deposit failed for patient %s', patient_id
+            )
+
+        # Free any deposit stuck on cancelled invoices before applying
+        heal_patient_deposits_for_billing(patient, apply_restored=False)
+
+        services_list, _ = _get_patient_pending_services_for_payment(patient)
+        # Same filters as the Total Bill page the cashier was viewing (hidden fields on form)
+        services_list = _filter_pending_services_for_total_bill(services_list, request.POST)
+        invoice_pks = _invoice_pks_from_pending_services(services_list)
+
+        scope_ids = patient_billing_scope_ids(patient)
+        available_before = get_patients_deposit_balance_display(scope_ids)
+
+        if not invoice_pks:
+            messages.info(
+                request,
+                'No invoices on this bill to apply deposit to. '
+                'Add charges or open the unfiltered Total Bill, then try again.',
+            )
+            return _total_bill_redirect(patient_id, request)
+
+        eligible_pks = []
+        for pk in invoice_pks:
+            inv = _invoice_all_objects_by_pk(pk)
+            if inv and invoice_is_eligible_for_deposit_apply(inv):
+                eligible_pks.append(pk)
+
+        if not eligible_pks:
+            if available_before > 0:
+                messages.info(
+                    request,
+                    'Deposit is available, but no unpaid cash/self-pay invoices on this bill '
+                    'can receive it (insurance/corporate lines are skipped).',
+                )
+            else:
+                messages.info(request, 'No deposit was applied (no deposit balance or no unpaid cash invoices).')
+            return _total_bill_redirect(patient_id, request)
+
+        # create_receipt=True: each invoice gets its own receipt so totals/outstanding are correct
+        total_applied = apply_deposit_to_all_patient_invoices(
+            patient, create_receipt=True, invoice_pks=eligible_pks
+        )
     except Exception as e:
         logger.exception("Apply deposit to bill failed")
         messages.error(request, f'Could not apply deposit: {e}')
-        return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
+        return _total_bill_redirect(patient_id, request)
 
     if total_applied > 0:
         messages.success(
             request,
-            f'Deposit GHS {total_applied:.2f} applied to the total bill. A receipt was created for each invoice.'
+            f'Deposit GHS {total_applied:.2f} applied to this total bill. '
+            f'Balance due is reduced; a receipt was created for each invoice.',
         )
     else:
-        messages.info(request, 'No deposit was applied (no deposit balance or no unpaid cash invoices).')
-    return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
+        if available_before > 0:
+            messages.info(
+                request,
+                'No deposit was applied (invoices on this bill may already be covered, '
+                'or only non-cash payers remain).',
+            )
+        else:
+            messages.info(request, 'No deposit was applied (no deposit balance or no unpaid cash invoices).')
+    return _total_bill_redirect(patient_id, request)
 
 
 @login_required
@@ -1324,7 +1619,7 @@ def cashier_refund_credit(request, patient_id):
     Refund patient credit (overpayment). Only when encounter is not yet discharged (plan §6).
     Creates refund_issued transaction(s) so invoice balance increases (credit reduces).
     """
-    from .services.patient_outstanding_service import get_patient_outstanding
+    from .services.patient_outstanding_service import get_patient_outstanding, patient_billing_scope_ids
     from .models_accounting import Transaction
 
     patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
@@ -1336,6 +1631,12 @@ def cashier_refund_credit(request, patient_id):
     has_open_encounter = Encounter.objects.filter(
         patient=patient, is_deleted=False, billing_closed_at__isnull=True
     ).exists()
+    if not has_open_encounter:
+        # Still allow refund if any scope patient has open encounter
+        scope_ids = patient_billing_scope_ids(patient)
+        has_open_encounter = Encounter.objects.filter(
+            patient_id__in=scope_ids, is_deleted=False, billing_closed_at__isnull=True
+        ).exists()
     if not has_open_encounter:
         messages.warning(request, 'Refund credit is only available before discharge.')
         return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
@@ -1353,14 +1654,31 @@ def cashier_refund_credit(request, patient_id):
             messages.error(request, f'Invalid amount: {e}')
             return redirect('hospital:cashier_refund_credit', patient_id=patient_id)
 
-        invoices_with_credit = list(
-            Invoice.objects.filter(patient=patient, is_deleted=False)
+        scope_ids = patient_billing_scope_ids(patient)
+        # Heal stale balances then prefer invoices with credit (balance < 0)
+        invoices = list(
+            Invoice.objects.filter(patient_id__in=scope_ids, is_deleted=False)
             .exclude(status='cancelled')
-            .filter(balance__lt=0)
-            .order_by('balance')
+            .order_by('balance', '-issued_at')
         )
+        for inv in invoices:
+            try:
+                inv.update_totals()
+            except Exception:
+                pass
+
+        invoices_with_credit = [
+            inv for inv in invoices
+            if (inv.balance or Decimal('0.00')) < 0
+        ]
         if not invoices_with_credit:
-            messages.warning(request, 'No invoice with credit found. Totals may need recalc.')
+            # Fallback: allocate against most recently paid invoices so credit refund still works
+            invoices_with_credit = [
+                inv for inv in invoices
+                if (inv.total_amount or Decimal('0.00')) > 0
+            ][:5]
+        if not invoices_with_credit:
+            messages.warning(request, 'No invoice found to attach the credit refund.')
             return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
 
         remaining = amount
@@ -1369,9 +1687,10 @@ def cashier_refund_credit(request, patient_id):
             if remaining <= 0:
                 break
             inv.refresh_from_db()
-            credit_on_inv = abs(inv.balance or Decimal('0.00'))
+            credit_on_inv = abs(min(inv.balance or Decimal('0.00'), Decimal('0.00')))
             if credit_on_inv <= 0:
-                continue
+                # No negative balance — still allow attaching remaining refund to this invoice
+                credit_on_inv = remaining
             alloc = min(remaining, credit_on_inv)
             txn = Transaction.objects.create(
                 transaction_type='refund_issued',
@@ -1387,6 +1706,22 @@ def cashier_refund_credit(request, patient_id):
             created.append(txn)
             remaining -= alloc
         if created:
+            # Refresh open session so totals net out the credit refund
+            try:
+                from .models_workflow import CashierSession
+                open_session = (
+                    CashierSession.objects.filter(
+                        cashier=request.user,
+                        status='open',
+                        is_deleted=False,
+                    )
+                    .order_by('-opened_at')
+                    .first()
+                )
+                if open_session:
+                    open_session.calculate_totals()
+            except Exception:
+                pass
             messages.success(
                 request,
                 f'Refund of GHS {amount:.2f} processed. Transaction(s): {", ".join(t.transaction_number for t in created)}.'
@@ -1399,6 +1734,104 @@ def cashier_refund_credit(request, patient_id):
         'title': f'Refund credit - {patient.full_name}',
     }
     return render(request, 'hospital/cashier_refund_credit.html', context)
+
+
+@login_required
+@user_passes_test(is_cashier)
+def cashier_refund_unused_deposit(request, patient_id):
+    """
+    Withdraw unused patient deposit from the account (cashier payout).
+    FIFO across active deposits with available balance.
+    """
+    from .services.patient_outstanding_service import get_patient_outstanding, patient_billing_scope_ids
+    from .models_patient_deposits import PatientDeposit
+    from .services.deposit_payment_service import get_patients_deposit_balance_display
+
+    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    scope_ids = patient_billing_scope_ids(patient)
+    deposit_balance = get_patients_deposit_balance_display(scope_ids)
+    if not isinstance(deposit_balance, Decimal):
+        deposit_balance = Decimal(str(deposit_balance or 0))
+
+    if deposit_balance <= 0:
+        messages.info(request, 'No unused deposit balance to withdraw.')
+        return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
+
+    deposits = list(
+        PatientDeposit.objects.filter(
+            patient_id__in=scope_ids,
+            is_deleted=False,
+            status='active',
+        ).order_by('deposit_date', 'created')
+    )
+    # Heal legacy zero-available rows for display/refund
+    active_with_balance = []
+    for d in deposits:
+        avail = d.display_available_balance
+        if avail > 0:
+            if (d.available_balance or Decimal('0')) <= 0:
+                d.available_balance = avail
+                d.save(update_fields=['available_balance'])
+            active_with_balance.append(d)
+
+    if request.method == 'POST':
+        try:
+            amount_str = (request.POST.get('amount') or '').strip()
+            refund_method = request.POST.get('refund_method', 'cash')
+            notes = (request.POST.get('notes') or '').strip() or 'Deposit withdrawal (unused balance)'
+            amount = Decimal(amount_str) if amount_str else deposit_balance
+            if amount <= 0 or amount > deposit_balance:
+                messages.error(
+                    request,
+                    f'Amount must be between GHS 0.01 and GHS {deposit_balance:.2f}.',
+                )
+                return redirect('hospital:cashier_refund_unused_deposit', patient_id=patient_id)
+        except Exception as e:
+            messages.error(request, f'Invalid amount: {e}')
+            return redirect('hospital:cashier_refund_unused_deposit', patient_id=patient_id)
+
+        remaining = amount
+        created = []
+        try:
+            for deposit in active_with_balance:
+                if remaining <= 0:
+                    break
+                deposit.refresh_from_db()
+                avail = deposit.display_available_balance
+                if avail <= 0:
+                    continue
+                alloc = min(remaining, avail)
+                txn = deposit.refund(
+                    amount=alloc,
+                    refund_method=refund_method,
+                    refunded_by=request.user,
+                    notes=notes,
+                )
+                created.append(txn)
+                remaining -= alloc
+        except Exception as e:
+            logger.exception('Deposit withdrawal failed for patient %s', patient_id)
+            messages.error(request, f'Withdrawal failed: {e}')
+            return redirect('hospital:cashier_refund_unused_deposit', patient_id=patient_id)
+
+        if created:
+            paid_out = amount - remaining
+            messages.success(
+                request,
+                f'Deposit withdrawal of GHS {paid_out:.2f} paid out. '
+                f'Transaction(s): {", ".join(t.transaction_number for t in created)}.',
+            )
+        else:
+            messages.warning(request, 'No deposit balance could be withdrawn.')
+        return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
+
+    context = {
+        'patient': patient,
+        'deposit_balance': deposit_balance,
+        'deposits': active_with_balance,
+        'title': f'Withdraw unused deposit - {patient.full_name}',
+    }
+    return render(request, 'hospital/cashier_refund_unused_deposit.html', context)
 
 
 @login_required
@@ -1683,13 +2116,25 @@ def cashier_add_services_to_invoice(request, patient_id):
 
 # Addable services for cashier to select (code, label, cash_amount, insurance_amount)
 # Order: common + dental (Scaling 460) + antenatal/gynae + rest
+MEDICAL_REPORT_SERVICES = [
+    # (item_key, label, amount, billing_code)
+    ('medical_report_school', 'Medical Report (School)', Decimal('400.00'), 'RPT-SCHOOL'),
+    ('medical_report_gp', 'Medical Report (GP)', Decimal('600.00'), 'RPT-GP'),
+    ('medical_report_extensive', 'Medical Report (Extensive)', Decimal('800.00'), 'RPT-EXT'),
+    ('medical_report_international', 'Medical Report (International)', Decimal('1200.00'), 'RPT-INTL'),
+]
+
 ADDABLE_SERVICES = [
     ('registration_fee', 'Registration Fee', Decimal('50.00'), Decimal('50.00')),
     ('service_charge', 'Service Charge', Decimal('25.00'), Decimal('25.00')),
-    ('gp', 'General Consultation (GP)', Decimal('150.00'), Decimal('150.00')),
+    *[
+        (key, label, amount, amount)
+        for key, label, amount, _code in MEDICAL_REPORT_SERVICES
+    ],
+    ('gp', 'General Consultation (GP)', Decimal('158.00'), Decimal('168.00')),
     ('scaling_polishing', 'Scaling and Polishing (Dental)', Decimal('460.00'), Decimal('460.00')),
-    ('antenatal', 'Antenatal (Special Payment)', Decimal('235.00'), Decimal('235.00')),
-    ('gynae_special', 'Gynae / Special (Special Payment)', Decimal('260.00'), Decimal('260.00')),
+    ('antenatal', 'Antenatal / ANC (Special Payment)', ANC_VISIT, ANC_VISIT),
+    ('gynae_special', 'Gynae / Special (Special Payment)', GYNAE_SPECIAL, GYNAE_SPECIAL),
     ('admission', 'Admission', Decimal('150.00'), Decimal('150.00')),
     ('bed', 'Bed Fee', Decimal('150.00'), Decimal('140.00')),
     ('detainment', 'Detainment Fee', Decimal('150.00'), Decimal('140.00')),
@@ -1703,7 +2148,7 @@ ADDABLE_SERVICES = [
     ('wound_care', 'Wound Care', Decimal('40.00'), Decimal('40.00')),
     ('delivery_fee', 'Delivery Fee', Decimal('2800.00'), Decimal('2800.00')),
     ('midwife_care', 'Midwife Care', Decimal('300.00'), Decimal('300.00')),
-    ('physio', 'Physiotherapy', Decimal('250.00'), Decimal('250.00')),
+    ('physio', 'Physiotherapy', PHYSIO_FIRST, PHYSIO_FIRST),
     # Quick-add consumables and oxygen services (front desk standard amounts)
     ('consumables_50', 'Consumables (Package)', Decimal('50.00'), Decimal('50.00')),
     ('oxygen_60min', 'Oxygen (60 minutes)', Decimal('220.00'), Decimal('220.00')),
@@ -1711,6 +2156,7 @@ ADDABLE_SERVICES = [
 
 SERVICE_CODE_MAP = {
     'registration_fee': 'REG', 'service_charge': 'SVC-CHG', 'gp': 'CON001',
+    **{key: code for key, _label, _amt, code in MEDICAL_REPORT_SERVICES},
     'antenatal': 'MAT-ANC', 'gynae_special': 'CON002',
     'scaling_polishing': 'DENT-SCALE',
     'admission': 'ADM001', 'bed': 'BED001', 'detainment': 'DET001',
@@ -1724,10 +2170,90 @@ SERVICE_CODE_MAP = {
 }
 
 
+def _quick_service_amount_for_payer(qs, payer):
+    """Resolve CashierQuickService price for cash / insurance / corporate payer.
+
+    Consultation-like rows (dietician, surgical consult, psychiatric, etc.) include
+    the GHS 8 Sustainability and Insurance fee on top of the stored base amount.
+    """
+    from .utils_billing import is_consultation_like_charge, with_sustainability_fee
+
+    payer_type = (getattr(payer, 'payer_type', None) or 'cash').strip().lower()
+    cash = Decimal(str(qs.amount_cash or 0))
+    ins = qs.amount_insurance
+    corp = qs.amount_corporate
+    if payer_type == 'corporate':
+        if corp is not None:
+            amt = Decimal(str(corp))
+        elif ins is not None:
+            amt = Decimal(str(ins))
+        else:
+            amt = cash
+    elif payer_type in ('insurance', 'private', 'nhis'):
+        amt = Decimal(str(ins)) if ins is not None else cash
+    else:
+        amt = cash
+
+    if is_consultation_like_charge(code=qs.billing_code, label=qs.label):
+        amt = with_sustainability_fee(amt)
+    return amt
+
+
+def _iter_active_cashier_quick_services():
+    try:
+        return list(
+            CashierQuickService.objects.filter(is_active=True).order_by('sort_order', 'label')
+        )
+    except Exception:
+        return []
+
+
+def _custom_misc_service_code(description):
+    """
+    Dedicated ServiceCode per custom charge name so lines do not merge under CASH-MISC
+    (which overwrote qty/price and looked like a deduction) and the cashier sees the real name.
+    """
+    import re
+
+    base = re.sub(r'[^A-Za-z0-9]+', '-', (description or 'CUSTOM').upper()).strip('-')[:40] or 'CUSTOM'
+    code = f'CASH-{base}'[:80]
+    sc, _ = ServiceCode.objects.get_or_create(
+        code=code,
+        defaults={
+            'description': (description or 'Custom service')[:200],
+            'category': 'Other',
+            'is_active': True,
+        },
+    )
+    if description and (not sc.description or sc.description == 'Cashier-Added Service'):
+        sc.description = description[:200]
+        sc.save(update_fields=['description'])
+    return sc
+
+
 def _resolve_physio_charge_for_patient(patient):
     """
-    First physio charge in system is 250; subsequent charges are 150.
+    First physio charge is 250; subsequent is 158 (150 + 8 sustainability).
+    Ensures PHYSIO / PHYSIO-SUB service codes exist.
     """
+    for code, desc in (
+        ('PHYSIO', 'Physiotherapy (First Session)'),
+        ('PHYSIO-SUB', 'Physiotherapy (Subsequent Session)'),
+    ):
+        sc, _ = ServiceCode.objects.get_or_create(
+            code=code,
+            defaults={
+                'description': desc,
+                'category': 'Therapy',
+                'is_active': True,
+            },
+        )
+        if not sc.is_active or not sc.description:
+            sc.is_active = True
+            if not sc.description:
+                sc.description = desc
+            sc.save()
+
     had_prior_physio = InvoiceLine.objects.filter(
         invoice__patient=patient,
         invoice__is_deleted=False,
@@ -1739,12 +2265,12 @@ def _resolve_physio_charge_for_patient(patient):
         return {
             'service_code': 'PHYSIO-SUB',
             'label': 'Physiotherapy (Subsequent Session)',
-            'amount': Decimal('150.00'),
+            'amount': PHYSIO_SUBSEQUENT,
         }
     return {
         'service_code': 'PHYSIO',
         'label': 'Physiotherapy (First Session)',
-        'amount': Decimal('250.00'),
+        'amount': PHYSIO_FIRST,
     }
 
 
@@ -1763,7 +2289,13 @@ def cashier_search_billable_items(request):
     # Manual cashier services (existing addable services catalog)
     q_lower = query.lower()
     for code, label, cash_amt, _ins_amt in ADDABLE_SERVICES:
-        if q_lower not in label.lower() and q_lower not in code.lower():
+        haystack = f'{label} {code}'.lower()
+        # "anc" should match antenatal even though it is not a standalone word
+        if code == 'antenatal':
+            haystack += ' anc antenatal maternity'
+        if str(code).startswith('medical_report'):
+            haystack += ' medical report certificate school gp extensive international'
+        if q_lower not in haystack and q_lower not in code.lower():
             continue
         if code == 'physio':
             # Expose explicit options so cashier can choose first/subsequent directly.
@@ -1772,7 +2304,7 @@ def cashier_search_billable_items(request):
                 'item_key': 'physio_first',
                 'display_name': 'Physiotherapy (First Session)',
                 'service_code': 'PHYSIO',
-                'unit_price': str(Decimal('250.00')),
+                'unit_price': str(PHYSIO_FIRST),
                 'source': 'service',
             })
             results.append({
@@ -1780,7 +2312,7 @@ def cashier_search_billable_items(request):
                 'item_key': 'physio_subsequent',
                 'display_name': 'Physiotherapy (Subsequent Session)',
                 'service_code': 'PHYSIO-SUB',
-                'unit_price': str(Decimal('150.00')),
+                'unit_price': str(PHYSIO_SUBSEQUENT),
                 'source': 'service',
             })
             continue
@@ -1791,6 +2323,23 @@ def cashier_search_billable_items(request):
             'service_code': SERVICE_CODE_MAP.get(code, 'CASH-MISC'),
             'unit_price': str(cash_amt),
             'source': 'service',
+        })
+
+    # Admin-managed quick services (IT/admin price list)
+    for qs in _iter_active_cashier_quick_services():
+        if q_lower not in (qs.label or '').lower() and q_lower not in (qs.billing_code or '').lower():
+            # Allow searching "anc"/psych/diet by keyword even if not in label fragment match above
+            blob = f'{qs.label or ""} {qs.billing_code or ""}'.lower()
+            if q_lower not in blob:
+                continue
+        amt = _quick_service_amount_for_payer(qs, None)
+        results.append({
+            'item_type': 'manual',
+            'item_key': f'qs:{qs.id}',
+            'display_name': qs.label,
+            'service_code': qs.billing_code,
+            'unit_price': str(amt.quantize(Decimal('0.01'))),
+            'source': 'quick_service',
         })
 
     # Lab test catalog
@@ -1806,7 +2355,7 @@ def cashier_search_billable_items(request):
             'item_key': str(lab.id),
             'display_name': f"Lab - {lab.name}",
             'service_code': f"LABTEST-{lab.id}",
-            'unit_price': str(Decimal(str(lab.price or 0)).quantize(Decimal('0.01'))),
+            'unit_price': str(billed_lab_or_scan_catalog_price(lab.price, None, kind='lab')),
             'source': 'lab',
         })
 
@@ -1831,7 +2380,7 @@ def cashier_search_billable_items(request):
                 'item_key': str(study.id),
                 'display_name': f"Scan - {display_name}",
                 'service_code': f"IMGCAT-{study.id}",
-                'unit_price': str(Decimal(str(study.price or 0)).quantize(Decimal('0.01'))),
+                'unit_price': str(billed_lab_or_scan_catalog_price(study.price, None, kind='imaging')),
                 'source': 'scan',
             })
     except Exception:
@@ -1854,6 +2403,7 @@ def cashier_add_services_select(request, patient_id):
     if not payer:
         payer, _ = Payer.objects.get_or_create(name='Cash', defaults={'payer_type': 'cash', 'is_active': True})
     is_insurance = payer and getattr(payer, 'payer_type', None) in ('insurance', 'private', 'nhis', 'corporate')
+    from .services.nhis_drug_formulary import is_nhis_payer
 
     if request.method == 'POST':
         selected = request.POST.getlist('service_codes')  # legacy checkbox support
@@ -1906,16 +2456,14 @@ def cashier_add_services_select(request, patient_id):
         lines_created = 0
         added_items = []  # list of (label, amount) to show in success message
 
-        # Add custom service if both name and amount provided (create or merge to avoid duplicates)
+        # Add custom service if both name and amount provided (unique code per name so
+        # charges ADD instead of merging under CASH-MISC and looking like a deduction)
         if custom_name and custom_amount_str:
             try:
                 custom_amount = Decimal(custom_amount_str)
                 if custom_amount > 0:
-                    service_code, _ = ServiceCode.objects.get_or_create(
-                        code='CASH-MISC',
-                        defaults={'description': 'Cashier-Added Service', 'category': 'Other', 'is_active': True}
-                    )
                     desc = custom_name[:200]
+                    service_code = _custom_misc_service_code(desc)
                     _, created = create_or_merge_invoice_line(
                         invoice=invoice,
                         service_code=service_code,
@@ -1930,9 +2478,34 @@ def cashier_add_services_select(request, patient_id):
                 pass
 
         addable_by_code = {svc[0]: svc for svc in ADDABLE_SERVICES}
+        quick_by_key = {f'qs:{qs.id}': qs for qs in _iter_active_cashier_quick_services()}
 
-        # Legacy checkbox selections
+        # Legacy checkbox selections (built-in + admin quick services)
         for code in selected:
+            if code in quick_by_key:
+                qs = quick_by_key[code]
+                label = qs.label
+                amount = _quick_service_amount_for_payer(qs, payer)
+                svc_code_str = (qs.billing_code or '').strip().upper() or f'QS-{qs.id}'
+                service_code, _ = ServiceCode.objects.get_or_create(
+                    code=svc_code_str,
+                    defaults={'description': label, 'category': 'Clinical Services', 'is_active': True},
+                )
+                if not service_code.description or service_code.description == 'Cashier-Added Service':
+                    service_code.description = label
+                    service_code.save(update_fields=['description'])
+                _, created = create_or_merge_invoice_line(
+                    invoice=invoice,
+                    service_code=service_code,
+                    quantity=Decimal('1'),
+                    unit_price=amount,
+                    description=label,
+                )
+                if created:
+                    lines_created += 1
+                added_items.append((label, amount))
+                continue
+
             if code not in [s[0] for s in ADDABLE_SERVICES]:
                 continue
             svc = addable_by_code.get(code)
@@ -2021,13 +2594,31 @@ def cashier_add_services_select(request, patient_id):
             amount = client_amount if allow_amount_edit else Decimal('0.00')
 
             if item_type == 'manual':
-                if item_key in ('physio_first', 'physio_subsequent'):
+                if item_key.startswith('qs:') or item_key in quick_by_key:
+                    qs = quick_by_key.get(item_key)
+                    if qs is None and item_key.startswith('qs:'):
+                        try:
+                            qs = CashierQuickService.objects.filter(
+                                pk=item_key.split(':', 1)[1], is_active=True
+                            ).first()
+                        except Exception:
+                            qs = None
+                    if not qs:
+                        continue
+                    amount = _quick_service_amount_for_payer(qs, payer)
+                    line_label = qs.label
+                    svc_code_str = (qs.billing_code or '').strip().upper() or f'QS-{qs.id}'
+                    service_code_obj, _ = ServiceCode.objects.get_or_create(
+                        code=svc_code_str,
+                        defaults={'description': line_label, 'category': 'Clinical Services', 'is_active': True},
+                    )
+                elif item_key in ('physio_first', 'physio_subsequent'):
                     if item_key == 'physio_first':
-                        amount = Decimal('250.00')
+                        amount = PHYSIO_FIRST
                         svc_code_str = 'PHYSIO'
                         line_label = 'Physiotherapy (First Session)'
                     else:
-                        amount = Decimal('150.00')
+                        amount = PHYSIO_SUBSEQUENT
                         svc_code_str = 'PHYSIO-SUB'
                         line_label = 'Physiotherapy (Subsequent Session)'
                     service_code_obj, _ = ServiceCode.objects.get_or_create(
@@ -2045,28 +2636,29 @@ def cashier_add_services_select(request, patient_id):
                         lines_created += 1
                     added_items.append((line_label, amount))
                     continue
-                svc = addable_by_code.get(item_key)
-                if not svc:
-                    continue
-                _, default_label, cash_amt, ins_amt = svc
-                amount = ins_amt if is_insurance else cash_amt
-                svc_code_str = SERVICE_CODE_MAP.get(item_key, 'CASH-MISC')
-                line_label = default_label
-                if item_key == 'physio':
-                    physio_info = _resolve_physio_charge_for_patient(patient)
-                    amount = physio_info['amount']
-                    svc_code_str = physio_info['service_code']
-                    line_label = physio_info['label']
-                service_code_obj, _ = ServiceCode.objects.get_or_create(
-                    code=svc_code_str,
-                    defaults={'description': line_label, 'category': 'Clinical Services', 'is_active': True},
-                )
+                else:
+                    svc = addable_by_code.get(item_key)
+                    if not svc:
+                        continue
+                    _, default_label, cash_amt, ins_amt = svc
+                    amount = ins_amt if is_insurance else cash_amt
+                    svc_code_str = SERVICE_CODE_MAP.get(item_key, 'CASH-MISC')
+                    line_label = default_label
+                    if item_key == 'physio':
+                        physio_info = _resolve_physio_charge_for_patient(patient)
+                        amount = physio_info['amount']
+                        svc_code_str = physio_info['service_code']
+                        line_label = physio_info['label']
+                    service_code_obj, _ = ServiceCode.objects.get_or_create(
+                        code=svc_code_str,
+                        defaults={'description': line_label, 'category': 'Clinical Services', 'is_active': True},
+                    )
             elif item_type == 'lab':
                 try:
                     lab = LabTest.objects.get(pk=item_key, is_active=True, is_deleted=False)
                 except LabTest.DoesNotExist:
                     continue
-                amount = Decimal(str(lab.price or 0))
+                amount = billed_lab_or_scan_catalog_price(lab.price, payer, kind='lab')
                 line_label = f"Lab - {lab.name}"
                 service_code_obj, _ = ServiceCode.objects.get_or_create(
                     code=f"LABTEST-{lab.id}",
@@ -2079,7 +2671,7 @@ def cashier_add_services_select(request, patient_id):
                 except Exception:
                     continue
                 imaging_name = imaging.name or imaging.description or 'Imaging Study'
-                amount = Decimal(str(imaging.price or 0))
+                amount = billed_lab_or_scan_catalog_price(imaging.price, payer, kind='imaging')
                 line_label = f"Scan - {imaging_name}"
                 service_code_obj, _ = ServiceCode.objects.get_or_create(
                     code=f"IMGCAT-{imaging.id}",
@@ -2123,7 +2715,7 @@ def cashier_add_services_select(request, patient_id):
             messages.info(request, 'Selected services already on invoice.')
         return redirect('hospital:cashier_patient_total_bill', patient_id=patient_id)
 
-    # Build list with prices for display
+    # Build list with prices for display (built-in + admin quick services)
     services_with_prices = []
     for code, label, cash_amt, ins_amt in ADDABLE_SERVICES:
         amt = ins_amt if is_insurance else cash_amt
@@ -2133,11 +2725,34 @@ def cashier_add_services_select(request, patient_id):
             price_display = f"GHS {int(amt)}"
         services_with_prices.append({'code': code, 'label': label, 'price': amt, 'price_display': price_display})
 
+    for qs in _iter_active_cashier_quick_services():
+        amt = _quick_service_amount_for_payer(qs, payer)
+        from .utils_billing import is_consultation_like_charge, with_sustainability_fee
+        cash = Decimal(str(qs.amount_cash or 0))
+        ins = Decimal(str(qs.amount_insurance)) if qs.amount_insurance is not None else cash
+        if is_consultation_like_charge(code=qs.billing_code, label=qs.label):
+            cash = with_sustainability_fee(cash)
+            ins = with_sustainability_fee(ins)
+        if cash != ins:
+            price_display = f"GHS {cash} (Cash) / GHS {ins} (Insurance)"
+        else:
+            price_display = f"GHS {amt}"
+        services_with_prices.append({
+            'code': f'qs:{qs.id}',
+            'label': qs.label,
+            'price': amt,
+            'price_display': price_display,
+        })
+
     return render(request, 'hospital/cashier_add_services_select.html', {
         'patient': patient,
         'services': services_with_prices,
         'payer_type': 'insurance' if is_insurance else 'cash',
+        'payer_pricing_label': (payer.name if payer else 'Cash'),
+        'patient_is_nhis': is_nhis_payer(payer) if payer else False,
         'can_edit_invoice_amounts': user_can_edit_invoice_line_amounts(request.user),
+        'antenatal_hint': str(int(ANC_VISIT)),
+        'gynae_hint': str(int(GYNAE_SPECIAL)),
     })
 
 
@@ -2210,6 +2825,89 @@ def cashier_patient_list(request):
 
 
 @login_required
+@user_passes_test(is_cashier)
+@never_cache
+def cashier_nhis_cash_pay(request):
+    """Collect cash for NHIS items that are not on the NHIS list (labs, scans, drugs)."""
+    from .patient_search import patient_filter_q, normalize_query
+    from .utils_invoice_line import invoice_line_effective_total
+    from .services.nhis_drug_formulary import is_nhis_payer
+    from .utils_billing import get_patient_payer_info
+
+    query = normalize_query(request.GET.get('q') or request.GET.get('search') or '')
+
+    lines = (
+        InvoiceLine.objects.filter(
+            is_deleted=False,
+            waived_at__isnull=True,
+            patient_pay_cash=True,
+            invoice__is_deleted=False,
+            invoice__payer__payer_type='nhis',
+            invoice__status__in=['draft', 'issued', 'partially_paid', 'overdue'],
+            invoice__patient__isnull=False,
+            invoice__patient__is_deleted=False,
+        )
+        .select_related('invoice', 'invoice__patient', 'invoice__payer')
+        .order_by('-created')
+    )
+    if query:
+        lines = lines.filter(patient_filter_q(query, prefix='invoice__patient__'))
+
+    grouped = {}
+    for line in lines[:400]:
+        patient = line.invoice.patient
+        if not patient:
+            continue
+        pid = str(patient.id)
+        if pid not in grouped:
+            grouped[pid] = {
+                'patient': patient,
+                'name': patient.full_name,
+                'mrn': patient.mrn or '—',
+                'cash_due': Decimal('0.00'),
+                'line_count': 0,
+                'lines': [],
+            }
+        amt = invoice_line_effective_total(line)
+        grouped[pid]['cash_due'] += amt
+        grouped[pid]['line_count'] += 1
+        if len(grouped[pid]['lines']) < 8:
+            grouped[pid]['lines'].append({
+                'description': line.description or line.insurance_exclusion_reason or 'Cash item',
+                'amount': amt,
+            })
+
+    pending_rows = sorted(grouped.values(), key=lambda row: (row['name'] or '').lower())
+
+    search_patients = []
+    if query:
+        qs = (
+            Patient.objects.filter(is_deleted=False)
+            .filter(patient_filter_q(query))
+            .select_related('primary_insurance')[:25]
+        )
+        pending_ids = {str(row['patient'].id) for row in pending_rows}
+        for patient in qs:
+            try:
+                payer = get_patient_payer_info(patient, None).get('payer')
+            except Exception:
+                payer = getattr(patient, 'primary_insurance', None)
+            if not is_nhis_payer(payer) or str(patient.id) in pending_ids:
+                continue
+            search_patients.append({
+                'patient': patient,
+                'name': patient.full_name,
+                'mrn': patient.mrn or '—',
+            })
+
+    return render(request, 'hospital/cashier_nhis_cash_pay.html', {
+        'query': query,
+        'pending_rows': pending_rows,
+        'search_patients': search_patients,
+    })
+
+
+@login_required
 @user_passes_test(can_add_manual_charges)
 def cashier_create_billing(request):
     """
@@ -2239,16 +2937,22 @@ def cashier_patient_bills(request):
     from django.db.models import Q
     from .models_advanced import ImagingStudy
     from .models_accounting import PaymentReceipt
+    from .patient_search import patient_filter_q, patient_matches_search, normalize_query
     from datetime import datetime, time, timedelta
 
-    search = request.GET.get('search', '')
+    search = normalize_query(request.GET.get('search', ''))
     today_pending = request.GET.get('today_pending') == '1'
     service_filter = request.GET.get('service_filter', '').strip().lower()  # all, lab, pharmacy, imaging, bed, consultation, invoice, pharmacy_walkin
     today_date = timezone.now().date()
     # Date filter: optional specific date to show pending services from
     filter_date = None
     filter_date_str = request.GET.get('filter_date', '').strip()
-    if filter_date_str:
+    # Name/MRN search must span all pending bills — the date input often still has "today"
+    # from the default load, which made searches look broken.
+    if search:
+        filter_date_str = ''
+        today_pending = False
+    elif filter_date_str:
         try:
             filter_date = datetime.strptime(filter_date_str, '%Y-%m-%d').date()
         except (ValueError, TypeError):
@@ -2260,6 +2964,9 @@ def cashier_patient_bills(request):
         filter_date = today_date
     if filter_date is not None and not filter_date_str:
         filter_date_str = filter_date.isoformat()
+
+    def _service_wanted(svc_type):
+        return (not service_filter) or service_filter == 'all' or service_filter == svc_type
 
     # When filtering by date, use DB-level date range (local timezone) for much faster queries
     date_range_start = None
@@ -2275,28 +2982,54 @@ def cashier_patient_bills(request):
 
     # Get all lab results (optionally filtered by date at DB level); prefetch release_record to avoid N+1
     # Include verified OR released (has release_record) so cashier sees labs as soon as they are ready for billing
-    labs_query = LabResult.objects.filter(
-        is_deleted=False
-    ).filter(
-        Q(verified_by__isnull=False) | Q(release_record__isnull=False)
-    ).select_related('test', 'order__encounter__patient', 'release_record')
+    labs_query = LabResult.objects.none()
+    if _service_wanted('lab'):
+        labs_query = LabResult.objects.filter(
+            is_deleted=False
+        ).filter(
+            Q(verified_by__isnull=False) | Q(release_record__isnull=False)
+        ).select_related('test', 'order__encounter__patient', 'order__encounter__patient__primary_insurance', 'release_record')
 
-    if date_range_start is not None:
-        # When viewing "today", include last 24h so labs from yesterday evening / timezone edge cases still show
-        if filter_date == today_date:
-            last_24h = timezone.now() - timedelta(hours=24)
-            labs_query = labs_query.filter(created__gte=last_24h)
-        else:
-            labs_query = labs_query.filter(created__gte=date_range_start, created__lt=date_range_end)
+        if date_range_start is not None:
+            # When viewing "today", include last 24h so labs from yesterday evening / timezone edge cases still show
+            if filter_date == today_date:
+                last_24h = timezone.now() - timedelta(hours=24)
+                labs_query = labs_query.filter(created__gte=last_24h)
+            else:
+                labs_query = labs_query.filter(created__gte=date_range_start, created__lt=date_range_end)
 
-    if search:
-        labs_query = labs_query.filter(
-            Q(order__encounter__patient__first_name__icontains=search) |
-            Q(order__encounter__patient__last_name__icontains=search) |
-            Q(order__encounter__patient__mrn__icontains=search)
-        )
-    
-    for lab in labs_query:
+        if search:
+            labs_query = labs_query.filter(
+                patient_filter_q(search, prefix='order__encounter__patient__')
+            )
+
+    # Batch lab invoice-line prices (avoids N+1 per lab)
+    labs_list = list(labs_query) if _service_wanted('lab') else []
+    _lab_inv_by_key = {}
+    if labs_list:
+        enc_ids = set()
+        patient_ids_lab = set()
+        for lab in labs_list:
+            order = getattr(lab, 'order', None)
+            enc = getattr(order, 'encounter', None) if order else None
+            if enc:
+                enc_ids.add(enc.id)
+                if getattr(enc, 'patient_id', None):
+                    patient_ids_lab.add(enc.patient_id)
+        if enc_ids and patient_ids_lab:
+            for line in InvoiceLine.objects.filter(
+                invoice__patient_id__in=patient_ids_lab,
+                invoice__encounter_id__in=enc_ids,
+                invoice__is_deleted=False,
+                is_deleted=False,
+                service_code__code__startswith='LAB-',
+            ).select_related('service_code', 'invoice'):
+                code = getattr(getattr(line, 'service_code', None), 'code', None) or ''
+                key = (line.invoice.patient_id, line.invoice.encounter_id, code)
+                if key not in _lab_inv_by_key:
+                    _lab_inv_by_key[key] = line
+
+    for lab in labs_list:
         # Skip labs without order/encounter (data integrity)
         order = getattr(lab, 'order', None)
         if not order or not getattr(order, 'encounter', None):
@@ -2323,19 +3056,16 @@ def cashier_patient_bills(request):
                 'total': Decimal('0.00')
             }
         
-        price = lab.test.price if hasattr(lab.test, 'price') else Decimal('0.00')
+        price = billed_lab_or_scan_catalog_price(
+            getattr(lab.test, 'price', None),
+            getattr(patient, 'primary_insurance', None),
+            kind='lab',
+        )
         # Use invoice line amount when lab has been billed so list matches Pay page
         if order.encounter_id and lab.test:
             test_code = getattr(lab.test, 'code', None) or str(lab.test_id)
             lab_svc = f"LAB-{test_code}"
-            lab_inv_line = InvoiceLine.objects.filter(
-                service_code__code=lab_svc,
-                invoice__patient=patient,
-                invoice__encounter=order.encounter,
-                invoice__is_deleted=False,
-                is_deleted=False,
-                description__icontains=lab.test.name
-            ).first()
+            lab_inv_line = _lab_inv_by_key.get((patient.id, order.encounter_id, lab_svc))
             if lab_inv_line and (lab_inv_line.line_total or lab_inv_line.unit_price):
                 price = lab_inv_line.line_total or (lab_inv_line.unit_price * lab_inv_line.quantity)
         patients_bills[patient_id]['services'].append({
@@ -2349,25 +3079,25 @@ def cashier_patient_bills(request):
         patients_bills[patient_id]['total'] += price
 
     # Get all prescriptions (optionally filtered by date at DB level); prefetch dispensing_record and invoice_lines for price
-    rx_query = Prescription.objects.filter(
-        is_deleted=False
-    ).select_related('drug', 'order__encounter__patient', 'dispensing_record').prefetch_related(
-        Prefetch('invoice_lines', queryset=InvoiceLine.objects.filter(is_deleted=False, waived_at__isnull=True))
-    )
-
-    if date_range_start is not None:
-        if filter_date == today_date:
-            last_24h = timezone.now() - timedelta(hours=24)
-            rx_query = rx_query.filter(created__gte=last_24h)
-        else:
-            rx_query = rx_query.filter(created__gte=date_range_start, created__lt=date_range_end)
-
-    if search:
-        rx_query = rx_query.filter(
-            Q(order__encounter__patient__first_name__icontains=search) |
-            Q(order__encounter__patient__last_name__icontains=search) |
-            Q(order__encounter__patient__mrn__icontains=search)
+    rx_query = Prescription.objects.none()
+    if _service_wanted('pharmacy'):
+        rx_query = Prescription.objects.filter(
+            is_deleted=False
+        ).select_related('drug', 'order__encounter__patient', 'order__encounter__patient__primary_insurance', 'dispensing_record').prefetch_related(
+            Prefetch('invoice_lines', queryset=InvoiceLine.objects.filter(is_deleted=False, waived_at__isnull=True))
         )
+
+        if date_range_start is not None:
+            if filter_date == today_date:
+                last_24h = timezone.now() - timedelta(hours=24)
+                rx_query = rx_query.filter(created__gte=last_24h)
+            else:
+                rx_query = rx_query.filter(created__gte=date_range_start, created__lt=date_range_end)
+
+        if search:
+            rx_query = rx_query.filter(
+                patient_filter_q(search, prefix='order__encounter__patient__')
+            )
     
     for rx in rx_query:
         if not getattr(rx, 'order', None) or not getattr(rx.order, 'encounter', None):
@@ -2422,23 +3152,23 @@ def cashier_patient_bills(request):
         patients_bills[patient_id]['total'] += total
     
     # Walk-in pharmacy sales (optionally filtered by date at DB level; exclude waived)
-    walkin_query = WalkInPharmacySale.objects.filter(
-        is_deleted=False,
-        payment_status__in=['pending', 'partial'],
-        waived_at__isnull=True
-    ).select_related('patient')
+    walkin_query = WalkInPharmacySale.objects.none()
+    if _service_wanted('pharmacy_walkin'):
+        walkin_query = WalkInPharmacySale.objects.filter(
+            is_deleted=False,
+            payment_status__in=['pending', 'partial'],
+            waived_at__isnull=True
+        ).select_related('patient', 'patient__primary_insurance')
 
-    if date_range_start is not None:
-        walkin_query = walkin_query.filter(sale_date=filter_date)
+        if date_range_start is not None:
+            walkin_query = walkin_query.filter(sale_date=filter_date)
 
-    if search:
-        walkin_query = walkin_query.filter(
-            Q(customer_name__icontains=search) |
-            Q(sale_number__icontains=search) |
-            Q(patient__mrn__icontains=search) |
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search)
-        )
+        if search:
+            walkin_query = walkin_query.filter(
+                patient_filter_q(search, prefix='patient__') |
+                Q(customer_name__icontains=search) |
+                Q(sale_number__icontains=search)
+            )
     
     for sale in walkin_query:
         patient = WalkInPharmacyService.ensure_sale_patient(sale)
@@ -2466,30 +3196,31 @@ def cashier_patient_bills(request):
         patients_bills[patient_id]['total'] += amount_due
     
     # Get all imaging studies (scan/imaging done – billable at cashier) (optionally filtered by date at DB level)
-    imaging_query = ImagingStudy.objects.filter(
-        is_deleted=False,
-        status__in=IMAGING_BILLABLE_STATUSES
-    ).select_related('order__encounter__patient', 'patient')
+    imaging_query = ImagingStudy.objects.none()
+    if _service_wanted('imaging'):
+        imaging_query = ImagingStudy.objects.filter(
+            is_deleted=False,
+            status__in=IMAGING_BILLABLE_STATUSES
+        ).select_related('order__encounter__patient', 'order__encounter__patient__primary_insurance', 'patient', 'patient__primary_insurance')
 
-    if date_range_start is not None:
-        if filter_date == today_date:
-            last_24h = timezone.now() - timedelta(hours=24)
-            imaging_query = imaging_query.filter(
-                Q(performed_at__gte=last_24h) |
-                Q(performed_at__isnull=True, created__gte=last_24h)
-            )
-        else:
-            imaging_query = imaging_query.filter(
-                Q(performed_at__gte=date_range_start, performed_at__lt=date_range_end) |
-                Q(performed_at__isnull=True, created__gte=date_range_start, created__lt=date_range_end)
-            )
+        if date_range_start is not None:
+            if filter_date == today_date:
+                last_24h = timezone.now() - timedelta(hours=24)
+                imaging_query = imaging_query.filter(
+                    Q(performed_at__gte=last_24h) |
+                    Q(performed_at__isnull=True, created__gte=last_24h)
+                )
+            else:
+                imaging_query = imaging_query.filter(
+                    Q(performed_at__gte=date_range_start, performed_at__lt=date_range_end) |
+                    Q(performed_at__isnull=True, created__gte=date_range_start, created__lt=date_range_end)
+                )
 
-    if search:
-        imaging_query = imaging_query.filter(
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search) |
-            Q(patient__mrn__icontains=search)
-        )
+        if search:
+            imaging_query = imaging_query.filter(
+                patient_filter_q(search, prefix='patient__') |
+                patient_filter_q(search, prefix='order__encounter__patient__')
+            )
     # Batch "already paid" for imaging: one query instead of per-study (avoids N+1)
     imaging_list = list(imaging_query)
     imaging_paid_set = set()  # (patient_id, study_type) that have a payment receipt
@@ -2565,7 +3296,10 @@ def cashier_patient_bills(request):
                         is_deleted=False
                     ).first()
                     if catalog_item and catalog_item.price:
-                        imaging_price = catalog_item.price
+                        img_payer = getattr(patient, 'primary_insurance', None)
+                        imaging_price = billed_lab_or_scan_catalog_price(
+                            catalog_item.price, img_payer, kind='imaging'
+                        )
             except Exception:
                 pass
             
@@ -2586,46 +3320,47 @@ def cashier_patient_bills(request):
             patients_bills[patient_id]['total'] += imaging_price
     
     # Get consultations (if any pending) (optionally filtered by date at DB level)
-    consultations_query = Encounter.objects.filter(
-        is_deleted=False,
-        status='active'
-    ).select_related('patient')
+    consultations_query = Encounter.objects.none()
+    if _service_wanted('consultation') or _service_wanted('invoice'):
+        # Always load consultations when showing invoices too (to avoid duplicate consultation amounts)
+        consultations_query = Encounter.objects.filter(
+            is_deleted=False,
+            status='active'
+        ).select_related('patient', 'patient__primary_insurance')
 
-    if date_range_start is not None:
-        # When defaulting to "today", also include active encounters from last 24h so new visits show immediately
-        if filter_date == today_date:
-            last_24h = timezone.now() - timedelta(hours=24)
-            consultations_query = consultations_query.filter(
-                Q(started_at__gte=date_range_start, started_at__lt=date_range_end) |
-                Q(started_at__gte=last_24h)
-            )
-        else:
-            consultations_query = consultations_query.filter(
-                started_at__gte=date_range_start, started_at__lt=date_range_end
-            )
+        if date_range_start is not None:
+            # When defaulting to "today", also include active encounters from last 24h so new visits show immediately
+            if filter_date == today_date:
+                last_24h = timezone.now() - timedelta(hours=24)
+                consultations_query = consultations_query.filter(
+                    Q(started_at__gte=date_range_start, started_at__lt=date_range_end) |
+                    Q(started_at__gte=last_24h)
+                )
+            else:
+                consultations_query = consultations_query.filter(
+                    started_at__gte=date_range_start, started_at__lt=date_range_end
+                )
 
-    if search:
-        consultations_query = consultations_query.filter(
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search) |
-            Q(patient__mrn__icontains=search)
-        )
+        if search:
+            consultations_query = consultations_query.filter(
+                patient_filter_q(search, prefix='patient__')
+            )
     
     # Get active admissions (bed charges) (optionally filtered by date at DB level)
-    admissions_query = Admission.objects.filter(
-        is_deleted=False,
-        status='admitted'
-    ).select_related('encounter__patient', 'ward', 'bed')
+    admissions_query = Admission.objects.none()
+    if _service_wanted('bed'):
+        admissions_query = Admission.objects.filter(
+            is_deleted=False,
+            status='admitted'
+        ).select_related('encounter__patient', 'encounter__patient__primary_insurance', 'ward', 'bed')
 
-    if date_range_start is not None:
-        admissions_query = admissions_query.filter(admit_date=filter_date)
+        if date_range_start is not None:
+            admissions_query = admissions_query.filter(admit_date=filter_date)
 
-    if search:
-        admissions_query = admissions_query.filter(
-            Q(encounter__patient__first_name__icontains=search) |
-            Q(encounter__patient__last_name__icontains=search) |
-            Q(encounter__patient__mrn__icontains=search)
-        )
+        if search:
+            admissions_query = admissions_query.filter(
+                patient_filter_q(search, prefix='encounter__patient__')
+            )
     
     for admission in admissions_query:
         patient = admission.encounter.patient
@@ -2660,34 +3395,22 @@ def cashier_patient_bills(request):
     
     # Precompute which encounters are paid / will be shown as consultation (avoid duplicate consultation + invoice row)
     consultations_list = list(consultations_query)
-    consultation_paid_encounter_ids = set(
-        PaymentReceipt.objects.filter(
-            is_deleted=False,
-            service_type='consultation',
-            invoice__encounter_id__isnull=False
-        ).values_list('invoice__encounter_id', flat=True).distinct()
-    )
-    from django.db.models.functions import TruncDate
-    old_consultation_paid_set = set(
-        PaymentReceipt.objects.filter(
-            is_deleted=False,
-            service_type='consultation',
-            invoice__encounter_id__isnull=True
-        ).annotate(rd=TruncDate('receipt_date')).values_list('patient_id', 'rd')
+    consultation_paid_encounter_ids = consultation_settled_encounter_ids(
+        [e.id for e in consultations_list]
     )
     encounter_ids_shown_as_consultation = set()
     encounter_consultation_amount = {}  # encounter_id -> consultation price shown (for adjusted invoice amount)
     for e in consultations_list:
         paid = e.id in consultation_paid_encounter_ids
-        if not paid and old_consultation_paid_set:
-            sd = e.started_at.date() if hasattr(e.started_at, 'date') else e.started_at
-            paid = any(pid == e.patient_id and rdate >= sd for (pid, rdate) in old_consultation_paid_set)
         if not paid:
             encounter_ids_shown_as_consultation.add(e.id)
             # Populate now so unpaid_inv loop can subtract it and show reception-added items
             cp = get_consultation_price_for_encounter(e)
+            if cp is None or cp <= 0:
+                encounter_ids_shown_as_consultation.discard(e.id)
+                continue
             if cp == Decimal('30.00'):
-                cp = Decimal('150.00')
+                cp = GENERAL_CONSULTATION_CASH
             encounter_consultation_amount[e.id] = cp
 
     # Get patients with unpaid invoices (consumables, registration fee, manual charges, etc.)
@@ -2700,30 +3423,30 @@ def cashier_patient_bills(request):
         is_deleted=False,
         waived_at__isnull=True
     ).exclude(line_total__lte=0)
-    unpaid_inv = Invoice.objects.filter(
-        is_deleted=False,
-        status__in=('draft', 'issued', 'partially_paid', 'overdue')
-    ).filter(
-        Q(balance__gt=0) | Q(Exists(has_billable_lines))
-    ).distinct().select_related('patient').prefetch_related('lines')
-    if date_range_start is not None:
-        # When "today", include last 24h so reception-added items show immediately
-        if filter_date == today_date:
-            last_24h = timezone.now() - timedelta(hours=24)
+    unpaid_inv = Invoice.objects.none()
+    if _service_wanted('invoice') or _service_wanted('consumables'):
+        unpaid_inv = Invoice.objects.filter(
+            is_deleted=False,
+            status__in=('draft', 'issued', 'partially_paid', 'overdue')
+        ).filter(
+            Q(balance__gt=0) | Q(Exists(has_billable_lines))
+        ).distinct().select_related('patient', 'patient__primary_insurance').prefetch_related('lines')
+        if date_range_start is not None:
+            # When "today", include last 24h so reception-added items show immediately
+            if filter_date == today_date:
+                last_24h = timezone.now() - timedelta(hours=24)
+                unpaid_inv = unpaid_inv.filter(
+                    Q(modified__gte=last_24h) | Q(issued_at__gte=last_24h)
+                )
+            else:
+                unpaid_inv = unpaid_inv.filter(
+                    Q(modified__gte=date_range_start, modified__lt=date_range_end) |
+                    Q(issued_at__gte=date_range_start, issued_at__lt=date_range_end)
+                )
+        if search:
             unpaid_inv = unpaid_inv.filter(
-                Q(modified__gte=last_24h) | Q(issued_at__gte=last_24h)
+                patient_filter_q(search, prefix='patient__')
             )
-        else:
-            unpaid_inv = unpaid_inv.filter(
-                Q(modified__gte=date_range_start, modified__lt=date_range_end) |
-                Q(issued_at__gte=date_range_start, issued_at__lt=date_range_end)
-            )
-    if search:
-        unpaid_inv = unpaid_inv.filter(
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search) |
-            Q(patient__mrn__icontains=search)
-        )
     for inv in unpaid_inv:
         if getattr(inv, 'balance', None) is None or inv.balance <= 0:
             inv.update_totals()
@@ -2731,13 +3454,33 @@ def cashier_patient_bills(request):
         if balance <= 0:
             continue
         enc_id = getattr(inv, 'encounter_id', None)
-        # Show invoice with adjusted amount when we already show consultation/imaging for this encounter
-        # so reception-added items (registration, manual charge, etc.) are visible at cashier
+        # Only subtract consultation/imaging amounts that are already listed as separate
+        # cashier rows AND that actually exist as lines on THIS invoice. Using the catalog
+        # consultation price caused custom/added charges to vanish (looked like a deduction)
+        # when the invoice only had extras or a smaller consultation line.
         amount_already_shown = Decimal('0.00')
+        try:
+            inv_lines = list(inv.lines.all())
+        except Exception:
+            inv_lines = list(
+                InvoiceLine.objects.filter(
+                    invoice=inv, is_deleted=False, waived_at__isnull=True
+                ).select_related('service_code')
+            )
         if enc_id in encounter_ids_shown_as_consultation:
-            amount_already_shown += encounter_consultation_amount.get(enc_id, Decimal('0.00'))
+            for line in inv_lines:
+                if getattr(line, 'is_deleted', False) or getattr(line, 'waived_at', None):
+                    continue
+                code = (getattr(getattr(line, 'service_code', None), 'code', None) or '').strip().upper()
+                if code in ('CON001', 'CON002'):
+                    amount_already_shown += Decimal(str(line.line_total or 0))
         if enc_id in encounter_ids_shown_as_imaging:
-            amount_already_shown += encounter_imaging_amount.get(enc_id, Decimal('0.00'))
+            for line in inv_lines:
+                if getattr(line, 'is_deleted', False) or getattr(line, 'waived_at', None):
+                    continue
+                code = (getattr(getattr(line, 'service_code', None), 'code', None) or '').strip().upper()
+                if code.startswith('IMG') or code.startswith('IMGCAT'):
+                    amount_already_shown += Decimal(str(line.line_total or 0))
         amount_to_show = balance - amount_already_shown
         if amount_to_show <= 0:
             continue  # nothing extra (reception-added) to show
@@ -2762,44 +3505,41 @@ def cashier_patient_bills(request):
     # Registration fee is NOT automatic. Cashiers add it via "Add Services" when applicable.
 
     # Add consultation rows (paid sets already computed above)
-    for encounter in consultations_list:
-        already_paid = encounter.id in consultation_paid_encounter_ids
-        if not already_paid and old_consultation_paid_set:
-            started_date = encounter.started_at.date() if hasattr(encounter.started_at, 'date') else encounter.started_at
-            already_paid = any(
-                pid == encounter.patient_id and rdate >= started_date
-                for (pid, rdate) in old_consultation_paid_set
-            )
-        if not already_paid:
-            patient = encounter.patient
-            patient_id = str(patient.id)
-            
-            if patient_id not in patients_bills:
-                patients_bills[patient_id] = {
-                    'patient': patient,
-                    'services': [],
-                    'total': Decimal('0.00')
-                }
-            
-            consultation_price = get_consultation_price_for_encounter(encounter)  # 150 general / 300 specialist
-            if consultation_price == Decimal('30.00'):
-                consultation_price = Decimal('150.00')
-            encounter_consultation_amount[encounter.id] = consultation_price
-            # Label so specialist appears clearly under same structure as consultation, lab, scan
-            enc_type_lower = (encounter.encounter_type or '').lower()
-            if enc_type_lower == 'specialist':
-                consultation_label = 'Specialist Consultation'
-            else:
-                consultation_label = f"{encounter.get_encounter_type_display()} Consultation"
-            patients_bills[patient_id]['services'].append({
-                'type': 'consultation',
-                'id': str(encounter.id),
-                'name': consultation_label,
-                'price': consultation_price,
-                'date': encounter.started_at,
-                'encounter': encounter,
-            })
-            patients_bills[patient_id]['total'] += consultation_price
+    if _service_wanted('consultation'):
+        for encounter in consultations_list:
+            already_paid = encounter.id in consultation_paid_encounter_ids
+            if not already_paid:
+                patient = encounter.patient
+                patient_id = str(patient.id)
+                
+                if patient_id not in patients_bills:
+                    patients_bills[patient_id] = {
+                        'patient': patient,
+                        'services': [],
+                        'total': Decimal('0.00')
+                    }
+                
+                consultation_price = get_consultation_price_for_encounter(encounter)
+                if consultation_price is None or consultation_price <= 0:
+                    continue
+                if consultation_price == Decimal('30.00'):
+                    consultation_price = GENERAL_CONSULTATION_CASH
+                encounter_consultation_amount[encounter.id] = consultation_price
+                # Label so specialist appears clearly under same structure as consultation, lab, scan
+                enc_type_lower = (encounter.encounter_type or '').lower()
+                if enc_type_lower == 'specialist':
+                    consultation_label = 'Specialist Consultation'
+                else:
+                    consultation_label = f"{encounter.get_encounter_type_display()} Consultation"
+                patients_bills[patient_id]['services'].append({
+                    'type': 'consultation',
+                    'id': str(encounter.id),
+                    'name': consultation_label,
+                    'price': consultation_price,
+                    'date': encounter.started_at,
+                    'encounter': encounter,
+                })
+                patients_bills[patient_id]['total'] += consultation_price
 
     # Include patients who have a deposit balance but no current services (so deposit shows when searching)
     from .models_patient_deposits import PatientDeposit
@@ -2818,15 +3558,10 @@ def cashier_patient_bills(request):
             if str(pid) in patients_bills:
                 continue
             try:
-                patient = Patient.objects.get(pk=pid, is_deleted=False)
+                patient = Patient.objects.select_related('primary_insurance').get(pk=pid, is_deleted=False)
             except Patient.DoesNotExist:
                 continue
-            s = search.strip().lower()
-            fn = (getattr(patient, 'first_name', None) or '').lower()
-            ln = (getattr(patient, 'last_name', None) or '').lower()
-            mrn = (getattr(patient, 'mrn', None) or '').lower()
-            full = f'{fn} {ln}'.strip()
-            if s not in full and s not in fn and s not in ln and s not in mrn:
+            if not patient_matches_search(patient, search):
                 continue
             patients_bills[str(patient.id)] = {
                 'patient': patient,
@@ -2851,6 +3586,17 @@ def cashier_patient_bills(request):
             .annotate(total=Sum('available_balance'))
         )
         deposit_by_patient = {d['patient_id']: d['total'] for d in deposit_totals}
+        # Total deposit slips recorded (all non-cancelled/refunded) — for "Deposits on file" on the list
+        deposits_recorded_totals = (
+            PatientDeposit.objects.filter(
+                patient_id__in=patient_ids,
+                is_deleted=False,
+            )
+            .exclude(status__in=['cancelled', 'refunded'])
+            .values('patient_id')
+            .annotate(total=Sum('deposit_amount'))
+        )
+        deposits_recorded_by_patient = {d['patient_id']: d['total'] for d in deposits_recorded_totals}
         # Deposit already applied to this patient's invoices (include payment_method='deposit' and "Apply deposit to bill" receipts)
         deposit_applied_totals = (
             PaymentReceipt.objects.filter(
@@ -2884,6 +3630,7 @@ def cashier_patient_bills(request):
             p['deposit_applied_to_bill'] = deposit_applied
             p['total_paid'] = total_paid_val
             p['initial_total'] = p['total'] + deposit_applied
+            p['patient_deposits_recorded_sum'] = deposits_recorded_by_patient.get(pid) or Decimal('0.00')
             o = outstanding_by_pid.get(pid) or {}
             p['total_outstanding'] = o.get('total_outstanding', p['total'])
             p['amount_due_after_deposit'] = o.get('amount_due_after_deposit', Decimal('0.00'))
@@ -2896,6 +3643,7 @@ def cashier_patient_bills(request):
             p['deposit_applied_to_bill'] = Decimal('0.00')
             p['total_paid'] = Decimal('0.00')
             p['initial_total'] = p['total']
+            p['patient_deposits_recorded_sum'] = Decimal('0.00')
             o = outstanding_by_pid.get(p['patient'].id) or {}
             p['total_outstanding'] = o.get('total_outstanding', p['total'])
             p['amount_due_after_deposit'] = o.get('amount_due_after_deposit', p['total'])
@@ -2934,6 +3682,7 @@ def cashier_patient_bills(request):
                     'deposit_applied_to_bill': dep_applied,
                     'total_paid': total_paid_val,
                     'initial_total': initial,
+                    'patient_deposits_recorded_sum': p.get('patient_deposits_recorded_sum', Decimal('0.00')),
                     'total_outstanding': o.get('total_outstanding', p_total),
                     'amount_due_after_deposit': o.get('amount_due_after_deposit', Decimal('0.00')),
                 })
@@ -2962,13 +3711,15 @@ def cashier_patient_bills(request):
                     'deposit_applied_to_bill': dep_applied,
                     'total_paid': total_paid_val,
                     'initial_total': initial,
+                    'patient_deposits_recorded_sum': p.get('patient_deposits_recorded_sum', Decimal('0.00')),
                     'amount_due_after_deposit': o.get('amount_due_after_deposit', Decimal('0.00')),
                 })
         patients_list = filtered
 
     patients_list.sort(key=lambda x: x['total'], reverse=True)
 
-    # Pagination: only run heavy _get_patient_pending_services_for_payment for the current page
+    # Pagination — use services already collected above (avoid re-running
+    # _get_patient_pending_services_for_payment for every patient on the page).
     per_page = 30
     try:
         page_num = max(1, int(request.GET.get('page', 1)))
@@ -2979,30 +3730,31 @@ def cashier_patient_bills(request):
     end_idx = start_idx + per_page
     page_patients = patients_list[start_idx:end_idx]
 
-    def _service_date(s):
-        obj = s.get('obj')
-        if not obj:
-            return None
-        return (getattr(obj, 'created', None) or getattr(obj, 'sale_date', None) or getattr(obj, 'admit_date', None)
-                or getattr(obj, 'issued_at', None) or getattr(obj, 'performed_at', None))
-    # Single source of truth: same outstanding as /patients/<id>/outstanding/ and Total Bill
     from .services.patient_outstanding_service import get_patient_outstanding_bulk
+    from .utils_billing import patient_bill_payer_details
     page_patient_ids = [p['patient'].id for p in page_patients]
     outstanding_by_patient = get_patient_outstanding_bulk(page_patient_ids)
     for p in page_patients:
-        try:
-            services_list, total = _get_patient_pending_services_for_payment(p['patient'])
-            p['services'] = [
-                {'type': s.get('type'), 'name': s.get('name'), 'price': s.get('price'), 'date': _service_date(s)}
-                for s in services_list
-            ]
-            p['total'] = total
-            dep_applied = p.get('deposit_applied_to_bill', Decimal('0.00'))
-            p['initial_total'] = total + dep_applied
-            o = outstanding_by_patient.get(p['patient'].id) or {}
+        # Normalize service rows for the template (keep list-built prices)
+        p['services'] = [
+            {
+                'type': s.get('type'),
+                'name': s.get('name'),
+                'price': s.get('price'),
+                'date': s.get('date'),
+                'is_paid': s.get('is_paid', False),
+            }
+            for s in p.get('services') or []
+        ]
+        o = outstanding_by_patient.get(p['patient'].id) or {}
+        if 'amount_due_after_deposit' not in p or p.get('amount_due_after_deposit') is None:
             p['amount_due_after_deposit'] = o.get('amount_due_after_deposit', Decimal('0.00'))
-        except Exception as e:
-            logger.warning('cashier_patient_bills: could not get pending services for patient %s: %s', p['patient'].id, e)
+        if 'total_outstanding' not in p:
+            p['total_outstanding'] = o.get('total_outstanding', p.get('total', Decimal('0.00')))
+        try:
+            p['payer_details'] = patient_bill_payer_details(p['patient'])
+        except Exception:
+            p['payer_details'] = None
 
     total_amount = sum(p['total'] for p in page_patients)
     total_services = sum(len(p['services']) for p in page_patients)
@@ -3012,8 +3764,16 @@ def cashier_patient_bills(request):
     prev_page = page_num - 1 if has_prev else 1
     next_page = page_num + 1 if has_next else num_pages
 
+    title = 'Patient Bills - Combined Billing'
+    if search:
+        title += f' (Search: {search})'
+    elif today_pending:
+        title += " (Today's Pending)"
+    elif filter_date:
+        title += f' ({filter_date})'
+
     context = {
-        'title': 'Patient Bills - Combined Billing' + (' (Today\'s Pending)' if today_pending else '') + (f' ({filter_date})' if filter_date and not today_pending else ''),
+        'title': title,
         'patients_bills': page_patients,
         'search': search,
         'today_pending': today_pending,
@@ -3042,12 +3802,16 @@ def cashier_all_pending_bills(request):
     Search by patient name, MRN, or service.
     Default to today's pending when no search so first load is fast.
     """
-    search = request.GET.get('search', '')
+    from .patient_search import patient_filter_q, normalize_query
+    search = normalize_query(request.GET.get('search', ''))
     service_filter = request.GET.get('service_type', 'all')
     filter_today_pending = request.GET.get('today_pending') == '1'
     today = timezone.now().date()
-    # Default to today's pending when no search so queries are date-bounded
-    if not search and not filter_today_pending:
+    # Default to today's pending when no search so queries are date-bounded.
+    # When searching by name, search all pending (do not force today).
+    if search:
+        filter_today_pending = False
+    elif not filter_today_pending:
         filter_today_pending = True
     
     pending_items = []
@@ -3067,7 +3831,7 @@ def cashier_all_pending_bills(request):
         is_deleted=False
     ).filter(
         Q(verified_by__isnull=False) | Q(release_record__isnull=False)
-    ).select_related('test', 'order__encounter__patient', 'release_record')
+    ).select_related('test', 'order__encounter__patient', 'order__encounter__patient__primary_insurance', 'release_record')
     if _date_range_start is not None:
         if _use_last_24h:
             last_24h = timezone.now() - timedelta(hours=24)
@@ -3077,9 +3841,7 @@ def cashier_all_pending_bills(request):
     
     if search:
         labs_query = labs_query.filter(
-            Q(order__encounter__patient__first_name__icontains=search) |
-            Q(order__encounter__patient__last_name__icontains=search) |
-            Q(order__encounter__patient__mrn__icontains=search) |
+            patient_filter_q(search, prefix='order__encounter__patient__') |
             Q(test__name__icontains=search)
         )
     
@@ -3102,7 +3864,11 @@ def cashier_all_pending_bills(request):
                 'patient_name': order.encounter.patient.full_name,
                 'patient_mrn': order.encounter.patient.mrn,
                 'service': lab.test.name,
-                'price': lab.test.price,
+                'price': billed_lab_or_scan_catalog_price(
+                    lab.test.price,
+                    getattr(order.encounter.patient, 'primary_insurance', None),
+                    kind='lab',
+                ),
                 'date': lab.created,
                 'encounter': order.encounter,
             })
@@ -3156,9 +3922,7 @@ def cashier_all_pending_bills(request):
             ).distinct()
     if search:
         rx_query = rx_query.filter(
-            Q(order__encounter__patient__first_name__icontains=search) |
-            Q(order__encounter__patient__last_name__icontains=search) |
-            Q(order__encounter__patient__mrn__icontains=search) |
+            patient_filter_q(search, prefix='order__encounter__patient__') |
             Q(drug__name__icontains=search)
         )
     
@@ -3239,11 +4003,9 @@ def cashier_all_pending_bills(request):
     
     if search:
         walkin_sales = walkin_sales.filter(
+            patient_filter_q(search, prefix='patient__') |
             Q(customer_name__icontains=search) |
-            Q(sale_number__icontains=search) |
-            Q(patient__mrn__icontains=search) |
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search)
+            Q(sale_number__icontains=search)
         )
     
     if service_filter in ['all', 'pharmacy', 'pharmacy_walkin']:
@@ -3285,9 +4047,8 @@ def cashier_all_pending_bills(request):
             )
     if search:
         imaging_query = imaging_query.filter(
-            Q(patient__first_name__icontains=search) |
-            Q(patient__last_name__icontains=search) |
-            Q(patient__mrn__icontains=search) |
+            patient_filter_q(search, prefix='patient__') |
+            patient_filter_q(search, prefix='order__encounter__patient__') |
             Q(study_type__icontains=search) |
             Q(body_part__icontains=search)
         )
@@ -3358,9 +4119,7 @@ def cashier_all_pending_bills(request):
             )
         if search:
             unpaid_invoices = unpaid_invoices.filter(
-                Q(patient__first_name__icontains=search) |
-                Q(patient__last_name__icontains=search) |
-                Q(patient__mrn__icontains=search) |
+                patient_filter_q(search, prefix='patient__') |
                 Q(invoice_number__icontains=search)
             )
         
@@ -3397,9 +4156,7 @@ def cashier_all_pending_bills(request):
             admissions_query = admissions_query.filter(admit_date__gte=ninety_days_ago)[:500]
         if search:
             admissions_query = admissions_query.filter(
-                Q(encounter__patient__first_name__icontains=search) |
-                Q(encounter__patient__last_name__icontains=search) |
-                Q(encounter__patient__mrn__icontains=search)
+                patient_filter_q(search, prefix='encounter__patient__')
             )
         
         for admission in admissions_query:
@@ -3427,21 +4184,6 @@ def cashier_all_pending_bills(request):
 
     # Unpaid consultation encounters (Outpatient + Special Consultation) so they appear in All Pending with patient name
     if service_filter == 'all' or service_filter == 'consultation':
-        consultation_paid_ids = set(
-            PaymentReceipt.objects.filter(
-                is_deleted=False,
-                service_type='consultation',
-                invoice__encounter_id__isnull=False
-            ).values_list('invoice__encounter_id', flat=True).distinct()
-        )
-        from django.db.models.functions import TruncDate
-        old_consultation_paid = set(
-            PaymentReceipt.objects.filter(
-                is_deleted=False,
-                service_type='consultation',
-                invoice__encounter_id__isnull=True
-            ).annotate(rd=TruncDate('receipt_date')).values_list('patient_id', 'rd')
-        )
         consultations_qs = Encounter.objects.filter(
             is_deleted=False,
             status='active'
@@ -3460,23 +4202,18 @@ def cashier_all_pending_bills(request):
                 )
         if search:
             consultations_qs = consultations_qs.filter(
-                Q(patient__first_name__icontains=search) |
-                Q(patient__last_name__icontains=search) |
-                Q(patient__mrn__icontains=search)
+                patient_filter_q(search, prefix='patient__')
             )
-        for enc in consultations_qs[:500]:
+        enc_list = list(consultations_qs[:500])
+        consultation_paid_ids = consultation_settled_encounter_ids([e.id for e in enc_list])
+        for enc in enc_list:
             if enc.id in consultation_paid_ids:
                 continue
-            _sa = enc.started_at
-            if _sa and getattr(_sa, 'tzinfo', None):
-                started_date = timezone.localtime(_sa).date()
-            else:
-                started_date = _sa.date() if hasattr(_sa, 'date') else _sa
-            if old_consultation_paid and any(pid == enc.patient_id and rdate >= started_date for (pid, rdate) in old_consultation_paid):
-                continue
             price = get_consultation_price_for_encounter(enc)
+            if price is None or price <= 0:
+                continue
             if price == Decimal('30.00'):
-                price = Decimal('150.00')
+                price = GENERAL_CONSULTATION_CASH
             enc_type_lower = (enc.encounter_type or '').lower()
             service_label = 'Specialist Consultation' if enc_type_lower == 'specialist' else f"{enc.get_encounter_type_display()} Consultation"
             pending_items.append({
@@ -3506,6 +4243,27 @@ def cashier_all_pending_bills(request):
     
     # Sort by date
     pending_items.sort(key=lambda x: x['date'], reverse=True)
+
+    # Attach policy/member numbers for insurance and corporate patients
+    from .utils_billing import patient_bill_payer_details
+    _policy_cache = {}
+    for item in pending_items:
+        patient = item.get('patient')
+        pid = getattr(patient, 'id', None)
+        if not pid:
+            item['policy_number'] = ''
+            continue
+        if pid not in _policy_cache:
+            try:
+                snap = patient_bill_payer_details(patient)
+                _policy_cache[pid] = (
+                    snap.get('member_or_policy_number') or ''
+                    if snap.get('is_insurance_or_corporate')
+                    else ''
+                )
+            except Exception:
+                _policy_cache[pid] = ''
+        item['policy_number'] = _policy_cache[pid]
     
     context = {
         'title': 'All Pending Bills',
@@ -3619,19 +4377,68 @@ def cashier_process_pharmacy_encounter(request, encounter_id):
         )
         if result and result.get('success'):
             receipt = result['receipt']
-            # Mark ALL dispensing records for this encounter as paid so they leave every queue
-            prescription_ids = [rx.id for rx in pending_rx]
-            updated = PharmacyDispensing.objects.filter(
-                prescription_id__in=prescription_ids,
-                payment_receipt_id__isnull=True,
-            ).exclude(dispensing_status='cancelled').update(
-                payment_receipt_id=receipt.id,
-                payment_verified_at=timezone.now(),
-                payment_verified_by_id=request.user.id,
-                dispensing_status='ready_to_dispense',
+            try:
+                invoice.update_totals()
+            except Exception:
+                pass
+            from .services.pharmacy_invoice_payment_link import (
+                link_pharmacy_dispensing_when_invoice_paid,
             )
-            logger.info(f"Pharmacy encounter payment: receipt {receipt.receipt_number}, updated {updated} dispensing record(s).")
-            messages.success(request, f"Payment recorded. Receipt {receipt.receipt_number}.")
+            from .utils_invoice_line import (
+                invoice_pharmacy_lines_are_settled,
+                invoice_pharmacy_lines_total,
+            )
+
+            pharmacy_due = total
+            try:
+                pharmacy_due = invoice_pharmacy_lines_total(invoice) or total
+            except Exception:
+                pharmacy_due = total
+
+            # Only mark Ready when the full pharmacy amount is covered (not a token partial).
+            # Other services on the same invoice may still be unpaid.
+            if amount_to_pay >= pharmacy_due or invoice_pharmacy_lines_are_settled(invoice):
+                prescription_ids = [rx.id for rx in pending_rx]
+                # Attach this receipt only where none exists — never overwrite (no duplicate pay).
+                PharmacyDispensing.objects.filter(
+                    prescription_id__in=prescription_ids,
+                    payment_receipt_id__isnull=True,
+                ).exclude(dispensing_status='cancelled').update(
+                    payment_receipt_id=receipt.id,
+                    payment_verified_at=timezone.now(),
+                    payment_verified_by_id=request.user.id,
+                    dispensing_status='ready_to_dispense',
+                )
+                link_pharmacy_dispensing_when_invoice_paid(
+                    invoice,
+                    receipt=receipt,
+                    verified_by_user=request.user,
+                    refresh_invoice=False,
+                )
+                messages.success(
+                    request,
+                    f"Pharmacy payment recorded. Receipt {receipt.receipt_number}. "
+                    f"Drugs are ready to dispense"
+                    + (
+                        f" (invoice still has GHS {invoice.balance:.2f} for other services)."
+                        if (invoice.balance or 0) > 0
+                        else "."
+                    ),
+                )
+            else:
+                messages.warning(
+                    request,
+                    f"Partial payment recorded (Receipt {receipt.receipt_number}). "
+                    f"Collect the remaining pharmacy amount (GHS {(pharmacy_due - amount_to_pay):.2f}) "
+                    f"before drugs can be dispensed.",
+                )
+            logger.info(
+                "Pharmacy encounter payment: receipt %s, amount %s, pharmacy_due %s, balance %s",
+                receipt.receipt_number,
+                amount_to_pay,
+                pharmacy_due,
+                invoice.balance,
+            )
             from django.urls import reverse
             return redirect(reverse('hospital:receipt_pos_print', args=[receipt.id]) + '?auto_print=1')
         messages.error(request, result.get('message', 'Payment failed.'))
@@ -3690,12 +4497,16 @@ def cashier_process_service_payment(request, service_type, service_id):
         patient = service_obj.order.encounter.patient
         service_name = service_obj.test.name
         payer = getattr(patient, 'primary_insurance', None)
-        unit_price = service_obj.test.price if hasattr(service_obj.test, 'price') else Decimal('0.00')
+        unit_price = billed_lab_or_scan_catalog_price(
+            getattr(service_obj.test, 'price', None), payer, kind='lab'
+        )
         try:
             test_code = getattr(service_obj.test, 'code', None) or str(service_obj.test_id)
             svc = ServiceCode.objects.filter(code=f'LAB-{test_code}', is_deleted=False).first()
             if svc:
-                unit_price = Decimal(str(pricing_engine.get_service_price(svc, patient, payer=payer) or unit_price))
+                engine_price = Decimal(str(pricing_engine.get_service_price(svc, patient, payer=payer) or 0))
+                if engine_price > 0:
+                    unit_price = engine_price
         except Exception:
             pass
         service_price = unit_price
@@ -3790,7 +4601,11 @@ def cashier_process_service_payment(request, service_type, service_id):
                 ).first()
                 
                 if catalog_item and catalog_item.price:
-                    service_price = catalog_item.price
+                    service_price = billed_lab_or_scan_catalog_price(
+                        catalog_item.price,
+                        getattr(patient, 'primary_insurance', None),
+                        kind='imaging',
+                    )
         except Exception as e:
             logger.warning(f"Error getting imaging price: {str(e)}")
             service_price = Decimal('50.00')  # Fallback to default
@@ -3823,13 +4638,14 @@ def cashier_process_service_payment(request, service_type, service_id):
         patient = service_obj.encounter.patient
         # Calculate current bed charges
         try:
-            from .services.bed_billing_service import bed_billing_service
+            from .services.bed_billing_service import BedBillingService, bed_billing_service
             charges = bed_billing_service.get_bed_charges_summary(service_obj)
             service_price = charges['current_charges']
             days = charges['days_admitted']
             service_name = f"Bed Charges - {service_obj.ward.name} - Bed {service_obj.bed.bed_number} ({days} nights)"
         except:
-            service_price = Decimal('120.00')
+            from .services.bed_billing_service import BedBillingService
+            service_price = BedBillingService.DETENTION_RATE
             service_name = f"Bed Charges - {service_obj.ward.name} - Bed {service_obj.bed.bed_number}"
     
     lab_bill_result = pharm_bill_result = None
@@ -3855,10 +4671,20 @@ def cashier_process_service_payment(request, service_type, service_id):
                 svc = ServiceCode.objects.filter(code=f'LAB-{test_code}', is_deleted=False).first()
                 if svc:
                     service_price = Decimal(str(pricing_engine.get_service_price(svc, patient, payer=payer) or 0))
+                    if service_price <= 0:
+                        service_price = billed_lab_or_scan_catalog_price(
+                            getattr(service_obj.test, 'price', None), payer, kind='lab'
+                        )
                 else:
-                    service_price = service_obj.test.price or Decimal('0')
+                    service_price = billed_lab_or_scan_catalog_price(
+                        getattr(service_obj.test, 'price', None), payer, kind='lab'
+                    )
             except Exception:
-                service_price = service_obj.test.price or Decimal('0')
+                service_price = billed_lab_or_scan_catalog_price(
+                    getattr(service_obj.test, 'price', None),
+                    getattr(patient, 'primary_insurance', None),
+                    kind='lab',
+                )
         amount = Decimal(request.POST.get('amount', service_price))
         payment_method = request.POST.get('payment_method', 'cash')
         reference_number = request.POST.get('reference_number', '')
@@ -4076,10 +4902,20 @@ def cashier_process_service_payment(request, service_type, service_id):
             svc = ServiceCode.objects.filter(code=f'LAB-{test_code}', is_deleted=False).first()
             if svc:
                 unit_price = Decimal(str(pricing_engine.get_service_price(svc, patient, payer=payer) or 0))
+                if unit_price <= 0:
+                    unit_price = billed_lab_or_scan_catalog_price(
+                        getattr(service_obj.test, 'price', None), payer, kind='lab'
+                    )
             else:
-                unit_price = service_obj.test.price if hasattr(service_obj.test, 'price') else Decimal('0.00')
+                unit_price = billed_lab_or_scan_catalog_price(
+                    getattr(service_obj.test, 'price', None), payer, kind='lab'
+                )
         except Exception:
-            unit_price = service_obj.test.price if hasattr(service_obj.test, 'price') else Decimal('0.00')
+            unit_price = billed_lab_or_scan_catalog_price(
+                getattr(service_obj.test, 'price', None),
+                getattr(patient, 'primary_insurance', None),
+                kind='lab',
+            )
     # Amount to collect after deposit (for form default value)
     amount_due_after_deposit = service_price
     if service_type == 'lab':
@@ -4170,7 +5006,11 @@ def _get_patient_pending_services_for_payment(patient):
         if lab_paid or on_unpaid_invoice:
             continue
         
-        unit_price = lab.test.price if hasattr(lab.test, 'price') else Decimal('0.00')
+        unit_price = billed_lab_or_scan_catalog_price(
+            getattr(lab.test, 'price', None),
+            getattr(patient, 'primary_insurance', None),
+            kind='lab',
+        )
         try:
             encounter = getattr(lab.order, 'encounter', None)
             patient_for_price = encounter.patient if encounter else patient
@@ -4414,8 +5254,12 @@ def _total_bill_services_to_display(services_list):
     from .models import Invoice, InvoiceLine
     from .models_pharmacy_walkin import WalkInPharmacySaleItem
     from .utils_invoice_line import (
+        clean_bill_line_description,
+        drug_label_for_bill,
         heal_invoice_zero_line_prices,
+        invoice_breakdown_rows_for_display,
         invoice_line_display_unit_and_total,
+        invoice_line_display_description,
         walkin_sale_item_display_unit_and_total,
     )
     display = []
@@ -4476,9 +5320,10 @@ def _total_bill_services_to_display(services_list):
                 sale=obj, is_deleted=False, waived_at__isnull=True
             ).select_related('drug').order_by('created')
             for item in sale_items:
-                drug_display = item.drug.name if item.drug else ''
-                if getattr(item.drug, 'strength', None):
-                    drug_display = f"{item.drug.name} {item.drug.strength}"
+                drug_display = drug_label_for_bill(
+                    item.drug.name if item.drug else '',
+                    getattr(item.drug, 'strength', None) if item.drug else None,
+                )
                 _up, _amt = walkin_sale_item_display_unit_and_total(item)
                 breakdown.append({
                     'description': drug_display,
@@ -4511,22 +5356,17 @@ def _total_bill_services_to_display(services_list):
                 heal_invoice_zero_line_prices(obj)
             except Exception:
                 pass
-            inv_lines = InvoiceLine.objects.filter(invoice=obj, is_deleted=False, waived_at__isnull=True).select_related('service_code')
-            breakdown = []
-            for l in inv_lines:
-                desc = (getattr(l.service_code, 'description', None) or l.description) if l.service_code else l.description
-                _up, _amt = invoice_line_display_unit_and_total(l)
-                breakdown.append({
-                    'description': desc,
-                    'quantity': l.quantity,
-                    'unit_price': _up,
-                    'amount': _amt,
-                    'line_id': str(l.id),
-                    'is_waived': False,
-                    'is_paid': is_paid,
-                })
+            # FIFO remaining / Paid badges so deposit & partial payments show on lines
+            breakdown = invoice_breakdown_rows_for_display(obj, prefer_pharmacy_first=False)
             if not breakdown:
-                breakdown = [{'description': 'No line items yet', 'quantity': 0, 'unit_price': 0, 'amount': Decimal('0.00'), 'is_paid': is_paid}]
+                breakdown = [{
+                    'description': 'No line items yet',
+                    'quantity': 0,
+                    'unit_price': 0,
+                    'amount': Decimal('0.00'),
+                    'is_paid': is_paid,
+                    'line_total_gross': Decimal('0.00'),
+                }]
         elif stype == 'invoice_line' and obj:
             line_id = s.get('id')
             line = InvoiceLine.objects.filter(id=line_id).select_related('service_code', 'invoice').first() if line_id else None
@@ -4541,40 +5381,79 @@ def _total_bill_services_to_display(services_list):
                     date = getattr(line.invoice, 'issued_at', None) or getattr(line.invoice, 'created', None)
                     encounter = getattr(line.invoice, 'encounter', None)
                     invoice_id = str(line.invoice_id)
-                    desc = (getattr(line.service_code, 'description', None) or line.description) if line.service_code else line.description
-                    line_inv_balance = getattr(line.invoice, 'balance', None) or Decimal('0.00')
                     try:
                         heal_invoice_zero_line_prices(line.invoice)
                         line.refresh_from_db()
                     except Exception:
                         pass
-                    _up, _amt = invoice_line_display_unit_and_total(line)
-                    breakdown = [{'description': desc, 'quantity': line.quantity, 'unit_price': _up, 'amount': _amt, 'line_id': str(line.id), 'is_waived': False, 'is_paid': line_inv_balance <= 0}]
+                    # Prefer full invoice FIFO view when this row is a whole invoice proxy
+                    if line.invoice_id:
+                        breakdown = invoice_breakdown_rows_for_display(
+                            line.invoice, prefer_pharmacy_first=False
+                        )
+                        # Keep only this line if services_list had a single-line entry
+                        if s.get('type') == 'invoice_line' and line_id:
+                            only = [r for r in breakdown if str(r.get('line_id') or '') == str(line_id)]
+                            if only:
+                                breakdown = only
+                    else:
+                        desc = invoice_line_display_description(line)
+                        line_inv_balance = getattr(line.invoice, 'balance', None) or Decimal('0.00')
+                        _up, _amt = invoice_line_display_unit_and_total(line)
+                        breakdown = [{
+                            'description': desc,
+                            'quantity': line.quantity,
+                            'unit_price': _up,
+                            'amount': _amt if line_inv_balance > 0 else Decimal('0.00'),
+                            'line_id': str(line.id),
+                            'is_waived': False,
+                            'is_paid': line_inv_balance <= 0,
+                            'line_total_gross': _amt,
+                        }]
             else:
                 date = getattr(obj, 'issued_at', None) or getattr(obj, 'created', None)
                 encounter = getattr(obj, 'encounter', None)
                 invoice_id = str(obj.id)
-                breakdown = [{'description': name, 'quantity': 1, 'unit_price': price, 'amount': price}]
+                breakdown = [{'description': name, 'quantity': 1, 'unit_price': price, 'amount': price, 'line_total_gross': price}]
         else:
             date = timezone.now()
         # Set is_paid for invoice/invoice_line so itemized bill can show "Paid"
         is_paid = False
+        invoice_partially_paid = False
         if stype == 'invoice' and obj:
-            is_paid = (getattr(obj, 'balance', None) or Decimal('0.00')) <= 0
+            inv_bal = getattr(obj, 'balance', None) or Decimal('0.00')
+            inv_tot = getattr(obj, 'total_amount', None) or Decimal('0.00')
+            is_paid = inv_bal <= 0
+            invoice_partially_paid = inv_bal > 0 and inv_tot > inv_bal
         elif stype == 'invoice_line' and obj:
             line = InvoiceLine.objects.filter(id=s.get('id')).select_related('invoice').first() if s.get('id') else None
             if line and line.invoice:
-                is_paid = (getattr(line.invoice, 'balance', None) or Decimal('0.00')) <= 0
+                inv_bal = getattr(line.invoice, 'balance', None) or Decimal('0.00')
+                inv_tot = getattr(line.invoice, 'total_amount', None) or Decimal('0.00')
+                is_paid = inv_bal <= 0
+                invoice_partially_paid = inv_bal > 0 and inv_tot > inv_bal
+        face_total = sum(
+            (
+                Decimal(str(r.get('line_total_gross') if r.get('line_total_gross') is not None else r.get('amount') or 0))
+                for r in breakdown
+                if not r.get('is_waived')
+            ),
+            Decimal('0.00'),
+        )
+        if face_total <= 0:
+            face_total = price
         display.append({
             'type': stype,
             'id': s.get('id', ''),
             'name': name,
             'price': price,
+            'face_total': face_total,
             'date': date,
             'encounter': encounter,
             'breakdown': breakdown,
             'invoice_id': invoice_id,
             'is_paid': is_paid,
+            'invoice_partially_paid': invoice_partially_paid,
         })
     return display
 
@@ -4743,16 +5622,34 @@ def cashier_process_patient_combined_payment(request, patient_id):
                     logger.warning(f"Combined payment allocation (part payment): {e}")
             
             # Link the single combined receipt to each service (no extra receipts - one receipt only)
+            # Only clear release/dispensing when that service's charges are settled — avoids
+            # marking lab/imaging paid on a partial total-bill payment meant for pharmacy.
             failed_services = []
+            from .utils_invoice_line import invoice_pharmacy_lines_are_settled
+
             for idx, service in enumerate(services_list):
                 inv, release_rec = service_invoices.get(idx, (None, None))
-                if inv and inv.balance <= 0 and release_rec:
+                if inv:
+                    try:
+                        inv.refresh_from_db()
+                    except Exception:
+                        pass
+                if inv and (inv.balance or Decimal('0')) <= 0 and release_rec:
                     link_deposit_receipt_to_release(None, release_rec, inv, request.user)
                     continue
                 if not release_rec:
                     continue
+                # Partial invoice: only auto-link pharmacy dispensing when drug amount is covered
+                if service['type'] == 'pharmacy':
+                    if not inv or not invoice_pharmacy_lines_are_settled(inv):
+                        continue
+                elif inv and (inv.balance or Decimal('0')) > 0:
+                    # Lab/imaging on an open invoice: wait until invoice fully settled
+                    continue
+                # Already linked — do not overwrite receipt (no duplicate payment link)
+                if getattr(release_rec, 'payment_receipt_id', None):
+                    continue
                 try:
-                    # Link combined receipt to this service's release/dispensing record (one receipt for all)
                     release_rec.payment_receipt = receipt
                     release_rec.payment_verified_at = timezone.now()
                     release_rec.payment_verified_by = request.user
@@ -4851,6 +5748,7 @@ def cashier_process_patient_combined_payment(request, patient_id):
     amount_due_after_deposit = outstanding_data['amount_due_after_deposit']
     initial_total = total_amount + deposit_applied_to_bill
 
+    from .utils_billing import patient_bill_payer_details
     context = {
         'title': f'Process Combined Payment - {patient.full_name}',
         'patient': patient,
@@ -4861,6 +5759,7 @@ def cashier_process_patient_combined_payment(request, patient_id):
         'patient_deposit_balance': patient_deposit_balance,
         'service_count': len(services_list),
         'payment_methods': Transaction.PAYMENT_METHODS,
+        'payer_details': patient_bill_payer_details(patient),
     }
     return render(request, 'hospital/cashier_combined_payment.html', context)
 
@@ -4925,7 +5824,13 @@ def cashier_add_manual_payment(request):
     # Preset services. (label, cash_amount, insurance_amount, receipt_service_type)
     OTHER_SERVICES = {
         'registration_fee': ('Registration Fee', Decimal('50.00'), Decimal('50.00'), 'other'),
-        'gp': ('General Consultation (GP)', Decimal('150.00'), Decimal('150.00'), 'consultation'),
+        'medical_report_school': ('Medical Report (School)', Decimal('400.00'), Decimal('400.00'), 'other'),
+        'medical_report_gp': ('Medical Report (GP)', Decimal('600.00'), Decimal('600.00'), 'other'),
+        'medical_report_extensive': ('Medical Report (Extensive)', Decimal('800.00'), Decimal('800.00'), 'other'),
+        'medical_report_international': ('Medical Report (International)', Decimal('1200.00'), Decimal('1200.00'), 'other'),
+        'gp': ('General Consultation (GP)', Decimal('158.00'), Decimal('168.00'), 'consultation'),
+        'antenatal': ('Antenatal / ANC', ANC_VISIT, ANC_VISIT, 'gynecology'),
+        'gynae_special': ('Gynae / Special', GYNAE_SPECIAL, GYNAE_SPECIAL, 'gynecology'),
         'admission': ('Admission', Decimal('150.00'), Decimal('150.00'), 'admission'),
         'bed': ('Bed Fee', Decimal('150.00'), Decimal('140.00'), 'bed'),
         'detainment': ('Detainment Fee', Decimal('150.00'), Decimal('140.00'), 'detainment'),
@@ -4948,7 +5853,10 @@ def cashier_add_manual_payment(request):
         amount_str = request.POST.get('amount', '0').strip()
         payment_method = request.POST.get('payment_method', 'cash')
         notes = (request.POST.get('notes', '') or '').strip()
-        charge_only = request.POST.get('charge_only') == '1'  # Add charge only, no payment (for reception)
+        from .utils_roles import get_user_role
+        user_role = get_user_role(request.user, request)
+        is_front_desk = user_role in ('receptionist', 'frontdesk', 'front_desk')
+        charge_only = request.POST.get('charge_only') == '1' or is_front_desk  # Front desk always requests; cashier collects
         
         if not patient_id:
             messages.error(request, 'Please select a patient.')
@@ -4980,13 +5888,7 @@ def cashier_add_manual_payment(request):
             amount = ins_amt if is_insurance else cash_amt
             description = label
             service_code, _ = ServiceCode.objects.get_or_create(
-                code={
-                    'registration_fee': 'REG', 'gp': 'CON001', 'admission': 'ADM001', 'bed': 'BED001', 'detainment': 'DET001',
-                    'doctor_care': 'ADM-DOCTOR-CARE', 'nursing_care': 'ADM-NURSING-CARE',
-                    'dressing': 'DRS001', 'injection': 'INJ001', 'ecg': 'ECG001', 'urinalysis': 'URA001',
-                    'xray': 'XR001', 'wound_care': 'WND001',
-                    'delivery_fee': 'MAT-DELIVER', 'midwife_care': 'MAT-MIDWIFE',
-                }.get(service_type, 'CASH-MISC'),
+                code=SERVICE_CODE_MAP.get(service_type, 'CASH-MISC'),
                 defaults={
                     'description': description,
                     'category': 'Other' if service_type == 'custom' else 'Clinical Services',
@@ -4997,19 +5899,12 @@ def cashier_add_manual_payment(request):
                 service_code.description = description
                 service_code.save(update_fields=['description'])
         else:
-            # custom
+            # custom — unique code per name so amounts add and the real name shows
             if not custom_service_name:
                 messages.error(request, 'Please enter the service name for custom service.')
                 return redirect('hospital:cashier_add_manual_payment')
-            service_code, _ = ServiceCode.objects.get_or_create(
-                code='CASH-MISC',
-                defaults={
-                    'description': 'Cashier-Added Service',
-                    'category': 'Other',
-                    'is_active': True,
-                }
-            )
             description = custom_service_name[:200]
+            service_code = _custom_misc_service_code(description)
             receipt_service_type = 'other'
         
         try:
@@ -5033,12 +5928,42 @@ def cashier_add_manual_payment(request):
                 invoice.update_totals()
                 
                 if charge_only:
+                    from .models_workflow import PaymentRequest
+                    import uuid as _uuid
+                    PaymentRequest.objects.create(
+                        invoice=invoice,
+                        patient=patient,
+                        requested_amount=amount,
+                        payment_type='full',
+                        requested_by=request.user,
+                        status='pending',
+                        notes=(
+                            notes
+                            or (
+                                f'{description} — requested by front desk'
+                                if is_front_desk
+                                else f'{description} — charge only'
+                            )
+                        ),
+                        request_number=(
+                            f"PAY{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                            f"{_uuid.uuid4().hex[:4].upper()}"
+                        ),
+                    )
                     messages.success(
                         request,
-                        f'✅ Charge of GHS {amount} added for {patient.full_name} ({description}). '
-                        f'Cashier will collect payment. Invoice #{invoice.invoice_number}'
+                        f'Charge of GHS {amount} added for {patient.full_name} ({description}). '
+                        f'Cashier can collect it from Pending Payment Requests or the patient bill. '
+                        f'Invoice #{invoice.invoice_number}'
                     )
-                    return redirect('hospital:cashier_add_manual_payment')
+                    from django.urls import reverse
+                    next_url = reverse('hospital:cashier_add_manual_payment')
+                    if service_type.startswith('medical_report'):
+                        next_url += '?focus=medical_report'
+                    if patient_id:
+                        sep = '&' if '?' in next_url else '?'
+                        next_url += f'{sep}patient_id={patient_id}'
+                    return redirect(next_url)
                 
                 result = UnifiedReceiptService.create_receipt_with_qr(
                     patient=patient,
@@ -5068,9 +5993,22 @@ def cashier_add_manual_payment(request):
             messages.error(request, f'Error recording payment: {str(e)}')
         
         return redirect('hospital:centralized_cashier_dashboard')
-    
+
+    from .utils_roles import get_user_role
+    user_role = get_user_role(request.user, request)
+    is_front_desk = user_role in ('receptionist', 'frontdesk', 'front_desk')
+    focus = (request.GET.get('focus') or '').strip()
+    selected_patient = None
+    prefill_patient_id = (request.GET.get('patient_id') or '').strip()
+    if prefill_patient_id:
+        selected_patient = Patient.objects.filter(pk=prefill_patient_id, is_deleted=False).first()
+    report_prices = {key: amount for key, _label, amount, _code in MEDICAL_REPORT_SERVICES}
+
     return render(request, 'hospital/cashier_add_manual_payment.html', {
-        'gp_price': Decimal('150.00'),
+        'gp_price': Decimal('158.00'),
+        'gp_price_corporate': Decimal('168.00'),
+        'antenatal_price': ANC_VISIT,
+        'gynae_special_price': GYNAE_SPECIAL,
         'admission_price': Decimal('150.00'),
         'bed_price_cash': Decimal('150.00'),
         'bed_price_insurance': Decimal('140.00'),
@@ -5087,6 +6025,14 @@ def cashier_add_manual_payment(request):
         'nursing_care_price': Decimal('70.00'),
         'delivery_fee_price': Decimal('2800.00'),
         'midwife_care_price': Decimal('300.00'),
+        'medical_report_school_price': report_prices['medical_report_school'],
+        'medical_report_gp_price': report_prices['medical_report_gp'],
+        'medical_report_extensive_price': report_prices['medical_report_extensive'],
+        'medical_report_international_price': report_prices['medical_report_international'],
+        'is_front_desk': is_front_desk,
+        'focus_medical_report': focus == 'medical_report',
+        'selected_patient': selected_patient,
+        'charge_only_default': is_front_desk,
     })
 
 
@@ -5135,7 +6081,8 @@ def cashier_non_patient_charge(request):
                 messages.error(request, 'Please enter a description for custom charges.')
                 return redirect('hospital:cashier_non_patient_charge')
             description = custom_description[:200]
-            code = 'CASH-MISC'
+            # Unique code so multiple custom non-patient charges do not overwrite each other
+            code = None  # resolved via _custom_misc_service_code below
         else:
             messages.error(request, 'Invalid charge type.')
             return redirect('hospital:cashier_non_patient_charge')
@@ -5156,14 +6103,17 @@ def cashier_non_patient_charge(request):
                     issued_at=timezone.now(),
                     due_at=timezone.now() + timedelta(days=7),
                 )
-                service_code, _ = ServiceCode.objects.get_or_create(
-                    code=code,
-                    defaults={
-                        'description': description,
-                        'category': 'Administrative',
-                        'is_active': True,
-                    },
-                )
+                if service_type == 'custom':
+                    service_code = _custom_misc_service_code(description)
+                else:
+                    service_code, _ = ServiceCode.objects.get_or_create(
+                        code=code,
+                        defaults={
+                            'description': description,
+                            'category': 'Administrative',
+                            'is_active': True,
+                        },
+                    )
                 create_or_merge_invoice_line(
                     invoice=invoice,
                     service_code=service_code,

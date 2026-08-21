@@ -14,52 +14,66 @@ CACHE_TIMEOUT_IMAGING = 3600  # 1 hour
 CACHE_TIMEOUT_PROCEDURES = 3600  # 1 hour
 CACHE_TIMEOUT_DIAGNOSIS_CODES = 7200  # 2 hours - diagnosis codes rarely change
 
+CACHE_KEY_DRUGS = 'hms:active_drugs_v2'
+CACHE_KEY_LAB_TESTS = 'hms:active_lab_tests_v2'
+CACHE_KEY_IMAGING = 'hms:active_imaging_studies_v2'
+CATALOG_CACHE_KEYS = (
+    'hms:active_drugs',
+    CACHE_KEY_DRUGS,
+    'hms:active_lab_tests',
+    CACHE_KEY_LAB_TESTS,
+    'hms:active_imaging_studies',
+    CACHE_KEY_IMAGING,
+    'hms:active_procedures',
+    'hms:diagnosis_codes',
+)
+
 
 def get_cached_drugs():
     """Get all active drugs with caching."""
-    cache_key = 'hms:active_drugs'
+    cache_key = CACHE_KEY_DRUGS
     drugs = cache.get(cache_key)
     
     if drugs is None:
         from .models import Drug
         drug_filter_q = Q(is_active=True) & Q(is_deleted=False) & Q(name__isnull=False) & ~Q(name__iexact='') & ~Q(name__icontains='INVALID')
-        # Get queryset - don't convert to list yet to avoid serialization issues
         drugs_qs = Drug.objects.filter(drug_filter_q).order_by('category', 'name').only(
-            'id', 'name', 'category', 'strength', 'form', 'generic_name', 'unit_price', 'atc_code'
+            'id', 'name', 'category', 'strength', 'form', 'generic_name', 'unit_price', 'atc_code', 'nhis_covered'
         )
-        # Store queryset directly (Django cache can handle querysets with pickle)
-        cache.set(cache_key, drugs_qs, CACHE_TIMEOUT_DRUGS)
-        logger.info(f"Cached {drugs_qs.count()} drugs")
-        return drugs_qs
+        # Evaluate before caching: pickled QuerySets can return 0 rows after Redis/worker restart.
+        drugs = list(drugs_qs)
+        cache.set(cache_key, drugs, CACHE_TIMEOUT_DRUGS)
+        logger.info(f"Cached {len(drugs)} drugs")
     
     return drugs
 
 
 def get_cached_lab_tests():
     """Get all active lab tests with caching."""
-    cache_key = 'hms:active_lab_tests'
+    cache_key = CACHE_KEY_LAB_TESTS
     tests = cache.get(cache_key)
     
     if tests is None:
         from .models import LabTest
         lab_test_filter_q = Q(is_active=True) & Q(is_deleted=False) & Q(name__isnull=False) & ~Q(name__iexact='') & ~Q(name__icontains='INVALID')
         tests_qs = LabTest.objects.filter(lab_test_filter_q).order_by('name').only(
-            'id', 'name', 'code', 'specimen_type', 'price'
+            'id', 'name', 'code', 'specimen_type', 'price', 'nhis_covered'
         )
-        cache.set(cache_key, tests_qs, CACHE_TIMEOUT_LAB_TESTS)
-        logger.info(f"Cached {tests_qs.count()} lab tests")
-        return tests_qs
+        tests = list(tests_qs)
+        cache.set(cache_key, tests, CACHE_TIMEOUT_LAB_TESTS)
+        logger.info(f"Cached {len(tests)} lab tests")
     
     return tests
 
 
-def lab_test_catalog_search_queryset(search_text, limit=50):
+def lab_test_catalog_search_queryset(search_text, limit=50, payer=None):
     """
     Active lab catalog rows for typeahead / cashier search.
     Splits on whitespace so e.g. 'hv cs' matches code HV-CS (each token must hit
     name, code, or specimen_type).
     """
     from .models import LabTest
+    from .services.nhis_drug_formulary import restrict_nhis_covered_queryset
 
     raw = (search_text or '').strip()
     if len(raw) < 2:
@@ -79,12 +93,13 @@ def lab_test_catalog_search_queryset(search_text, limit=50):
             | Q(specimen_type__icontains=tok)
         )
         qs = qs.filter(tok_q)
+    qs = restrict_nhis_covered_queryset(qs, payer)
     return qs.order_by('name')[:limit]
 
 
 def get_cached_imaging_studies():
     """Get all active imaging studies with caching."""
-    cache_key = 'hms:active_imaging_studies'
+    cache_key = CACHE_KEY_IMAGING
     studies = cache.get(cache_key)
     
     if studies is None:
@@ -93,11 +108,12 @@ def get_cached_imaging_studies():
             valid_imaging_modalities = [choice[0] for choice in ImagingStudy.MODALITY_CHOICES]
             imaging_filter_q = Q(is_active=True) & Q(is_deleted=False) & Q(modality__in=valid_imaging_modalities) & Q(name__isnull=False) & ~Q(name__iexact='') & ~Q(name__icontains='INVALID')
             studies_qs = ImagingCatalog.objects.filter(imaging_filter_q).order_by('modality', 'name').only(
-                'id', 'name', 'code', 'modality', 'body_part', 'study_type', 'price', 'corporate_price', 'insurance_price'
+                'id', 'name', 'code', 'modality', 'body_part', 'study_type', 'price', 'corporate_price', 'insurance_price', 'nhis_covered'
             )
-            cache.set(cache_key, studies_qs, CACHE_TIMEOUT_IMAGING)
-            logger.info(f"Cached {studies_qs.count()} imaging studies")
-            return studies_qs
+            studies = list(studies_qs)
+            cache.set(cache_key, studies, CACHE_TIMEOUT_IMAGING)
+            logger.info(f"Cached {len(studies)} imaging studies")
+            return studies
         except ImportError:
             from .models import LabTest
             # Return empty queryset with same model structure
@@ -124,9 +140,10 @@ def get_cached_procedures():
                 procedures_qs = ProcedureCatalog.objects.filter(procedure_filter_q).order_by('category', 'name').only(
                     'id', 'name', 'code', 'category', 'price', 'cash_price', 'corporate_price', 'insurance_price'
                 )
-                cache.set(cache_key, procedures_qs, CACHE_TIMEOUT_PROCEDURES)
-                logger.info(f"Cached {procedures_qs.count()} procedures")
-                return procedures_qs
+                procedures = list(procedures_qs)
+                cache.set(cache_key, procedures, CACHE_TIMEOUT_PROCEDURES)
+                logger.info(f"Cached {len(procedures)} procedures")
+                return procedures
             else:
                 from .models import LabTest
                 return LabTest.objects.none()
@@ -188,10 +205,10 @@ def get_cached_diagnosis_codes():
                 is_active=True,
                 is_deleted=False
             ).only('code', 'short_description', 'description')
-            
-            cache.set(cache_key, codes_qs, CACHE_TIMEOUT_DIAGNOSIS_CODES)
-            logger.info(f"Cached diagnosis codes queryset")
-            return codes_qs
+            codes = list(codes_qs)
+            cache.set(cache_key, codes, CACHE_TIMEOUT_DIAGNOSIS_CODES)
+            logger.info(f"Cached {len(codes)} diagnosis codes")
+            return codes
         except ImportError:
             from .models import LabTest
             return LabTest.objects.none()
@@ -205,14 +222,7 @@ def invalidate_cache(pattern):
         from django.core.cache import cache
         # For Redis, we'd need to use cache.delete_pattern, but Django's cache API doesn't support it directly
         # So we'll just clear specific keys we know about
-        cache_keys = [
-            'hms:active_drugs',
-            'hms:active_lab_tests',
-            'hms:active_imaging_studies',
-            'hms:active_procedures',
-            'hms:diagnosis_codes',
-        ]
-        for key in cache_keys:
+        for key in CATALOG_CACHE_KEYS:
             if pattern in key:
                 cache.delete(key)
                 logger.info(f"Invalidated cache: {key}")
@@ -222,13 +232,6 @@ def invalidate_cache(pattern):
 
 def clear_all_caches():
     """Clear all HMS caches."""
-    cache_keys = [
-        'hms:active_drugs',
-        'hms:active_lab_tests',
-        'hms:active_imaging_studies',
-        'hms:active_procedures',
-        'hms:diagnosis_codes',
-    ]
-    for key in cache_keys:
+    for key in CATALOG_CACHE_KEYS:
         cache.delete(key)
     logger.info("Cleared all HMS caches")

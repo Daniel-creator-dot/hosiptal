@@ -6,8 +6,9 @@ Write-Host "HMS Auto-Start Setup" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-$scriptPath = $PSScriptRoot
-$startupScript = Join-Path $scriptPath "startup_hms.bat"
+$CanonicalRoot = 'C:\chm'
+$scriptPath = $CanonicalRoot
+$startupScript = Join-Path $CanonicalRoot 'startup_hms.bat'
 $startupFolder = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupFolder "HMS_AutoStart.lnk"
 

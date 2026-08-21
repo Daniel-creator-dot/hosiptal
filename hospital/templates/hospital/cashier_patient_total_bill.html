@@ -42,9 +42,18 @@
 <div class="container-fluid">
     <div class="d-flex justify-content-between align-items-center mb-4 no-print">
         <div>
-            <h2>{{ patient.full_name }}</h2>
+            <h2>{{ patient.full_name }} {% patient_payer_badges patient %}</h2>
             <p class="text-muted mb-0">MRN: {{ patient.mrn }} | Phone: {{ patient.phone_number|default:"N/A" }}</p>
-            {% if patient.primary_insurance %}
+            {% if payer_details and not payer_details.is_cash %}
+            <p class="text-muted mb-0">
+                Payer: <strong>{{ payer_details.company_name }}</strong>
+                {% if payer_details.plan_name %} · Plan: {{ payer_details.plan_name }}{% endif %}
+                {% if payer_details.member_or_policy_number %}
+                · {% if payer_details.is_corporate %}Emp/Corp ID{% else %}Policy/Member #{% endif %}:
+                <strong>{{ payer_details.member_or_policy_number }}</strong>
+                {% endif %}
+            </p>
+            {% elif patient.primary_insurance %}
             <p class="text-muted mb-0">Payer: {{ patient.primary_insurance.name }}</p>
             {% endif %}
         </div>
@@ -58,10 +67,16 @@
             {% if patient_deposit_balance > 0 %}
             <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="d-inline">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-success" title="Apply deposit to this total bill as payment and generate receipts">
+                {% if today_pending %}<input type="hidden" name="today_pending" value="1">{% endif %}
+                {% if filter_date_str %}<input type="hidden" name="filter_date" value="{{ filter_date_str }}">{% endif %}
+                {% if service_filter %}<input type="hidden" name="service_filter" value="{{ service_filter }}">{% endif %}
+                <button type="submit" class="btn btn-success" title="Apply deposit to invoices on this total bill and generate receipts">
                     <i class="bi bi-check-circle"></i> Apply deposit to total bill
                 </button>
             </form>
+            <a href="{% url 'hospital:cashier_refund_unused_deposit' patient.id %}" class="btn btn-outline-warning" title="Pay out unused deposit to the patient (withdrawal)">
+                <i class="bi bi-cash-stack"></i> Withdraw deposit (GHS {{ patient_deposit_balance|floatformat:2 }})
+            </a>
             {% else %}
             <button type="button" class="btn btn-outline-secondary" disabled title="Record a deposit first, then apply it here">
                 <i class="bi bi-check-circle"></i> Apply deposit to total bill
@@ -71,7 +86,7 @@
                 <i class="bi bi-file-earmark-text"></i> Generate Bill
             </a>
             <a href="{% url 'hospital:cashier_process_patient_combined_payment' patient.id %}" class="btn btn-success">
-                <i class="bi bi-cash-coin"></i> {% if credit_balance > 0 %}Process Payment{% elif patient_deposit_balance > 0 %}Process Payment (Outstanding GHS {{ total_outstanding|floatformat:2 }}){% else %}Process Payment{% endif %}
+                <i class="bi bi-cash-coin"></i> {% if credit_balance > 0 %}Process Payment{% elif bill_outstanding > 0 %}Process Payment (GHS {{ bill_outstanding|floatformat:2 }}){% else %}Process Payment{% endif %}
             </a>
             {% if show_refund_credit %}
             <a href="{% url 'hospital:cashier_refund_credit' patient.id %}" class="btn btn-outline-warning" title="Refund credit to patient">
@@ -91,14 +106,27 @@
         <span class="me-3" style="font-size: 1.5rem;"><i class="bi bi-wallet2"></i></span>
         <div class="flex-grow-1">
             <strong class="d-block mb-1">Deposit available on account</strong>
-            <div class="mb-1">Deposit balance: <strong>GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</strong> — not deducted until you click <strong>Apply deposit to total bill</strong>. Full account amount due: <strong>GHS {{ amount_due_after_deposit|floatformat:2|intcomma }}</strong>.</div>
-            <div class="mb-2 small">Click <strong>Apply deposit to total bill</strong> when the patient is ready to pay — it records the deposit as payment and reduces invoice balances. Then use <strong>Collect Payment</strong> for any remaining cash or MoMo. Deposits are not applied automatically when you process payment.</div>
-            <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="d-inline">
+            <div class="mb-1">
+                {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
+                Total deposit made: <strong>GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</strong>.
+                {% endif %}
+                Available deposit: <strong>GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</strong> — not deducted until you click <strong>Apply deposit to total bill</strong>.
+                Total billed items: <strong>GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}</strong>.
+                This bill balance due: <strong>GHS {{ bill_outstanding|floatformat:2|intcomma }}</strong>.
+            </div>
+            <div class="mb-2 small">Use <strong>Apply deposit to total bill</strong> to pay invoices from the deposit, or <strong>Withdraw deposit</strong> to refund unused balance to the patient (cash / MoMo / bank).</div>
+            <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="d-inline me-2">
                 {% csrf_token %}
+                {% if today_pending %}<input type="hidden" name="today_pending" value="1">{% endif %}
+                {% if filter_date_str %}<input type="hidden" name="filter_date" value="{{ filter_date_str }}">{% endif %}
+                {% if service_filter %}<input type="hidden" name="service_filter" value="{{ service_filter }}">{% endif %}
                 <button type="submit" class="btn btn-success btn-sm">
                     <i class="bi bi-check-circle"></i> Apply deposit to total bill
                 </button>
             </form>
+            <a href="{% url 'hospital:cashier_refund_unused_deposit' patient.id %}" class="btn btn-outline-warning btn-sm">
+                <i class="bi bi-cash-stack"></i> Withdraw unused deposit
+            </a>
         </div>
     </div>
     {% else %}
@@ -116,7 +144,7 @@
     {% endif %}
     <div class="alert alert-light border border-success no-print mb-3 py-2" role="alert">
         <i class="bi bi-receipt-cutoff text-success me-2"></i>
-        <strong>Reception prices:</strong> Antenatal = 235 GHS &nbsp;|&nbsp; Gynae / Special = 260 GHS
+        <strong>Reception prices:</strong> Antenatal = 243 GHS &nbsp;|&nbsp; Gynae / Special = 268 GHS
     </div>
 
     {% if today_pending or filter_date or service_filter %}
@@ -238,18 +266,42 @@
         {% if credit_balance > 0 %}
         <strong>Credit on account:</strong> GHS {{ credit_balance|floatformat:2|intcomma }}
         {% else %}
-        <strong>Balance due (this bill):</strong> GHS {{ bill_outstanding|floatformat:2|intcomma }}
-        {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
-        &nbsp;|&nbsp; <strong>Total deposit made:</strong> GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}
-        {% endif %}
-        {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
-        &nbsp;|&nbsp; <strong>Deposit already posted to these invoices:</strong> GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}
-        {% endif %}
+        <strong>Total billed:</strong> GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}
+        &nbsp;|&nbsp; <strong>Less payments/deposit:</strong> GHS {{ payments_applied_to_bill|default:deposit_applied_to_bill|default:0|floatformat:2|intcomma }}
+        &nbsp;|&nbsp; <strong>Balance due:</strong> GHS {{ bill_outstanding|floatformat:2|intcomma }}
         {% endif %}
     </div>
-    <!-- Total Bill Summary (screen only — keeps print to one compact summary + table) -->
+    <!-- Total Bill Summary: Total billed − Deposit applied = Amount due -->
     <div class="row mb-4 no-print">
-        <div class="col-md-3 col-6 mb-3 mb-md-0">
+        <div class="col-md-4 col-6 mb-3 mb-md-0">
+            <div class="card text-white border border-light" style="background-color: #0d6efd;">
+                <div class="card-body">
+                    <h6 class="mb-1">Total billed items</h6>
+                    <h2 class="mb-1">GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}</h2>
+                    <small>
+                        {% if billed_items_count %}{{ billed_items_count }} charge line{{ billed_items_count|pluralize }} on this bill{% else %}Sum of all charge lines on this bill{% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 col-6 mb-3 mb-md-0">
+            <div class="card text-white" style="background-color: #6610f2;">
+                <div class="card-body">
+                    <h6>Payments / deposit applied</h6>
+                    <h2>GHS {{ payments_applied_to_bill|default:deposit_applied_to_bill|default:0|floatformat:2 }}</h2>
+                    <small>
+                        Already deducted from total billed.
+                        {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                        <span class="d-block mt-1">Deposit on this bill: GHS {{ deposit_applied_to_bill|floatformat:2 }}</span>
+                        {% endif %}
+                        {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                        <span class="d-block mt-1">Still available to apply: GHS {{ patient_deposit_balance|floatformat:2 }}</span>
+                        {% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 col-12 mb-3 mb-md-0">
             <div class="card bg-success text-white">
                 <div class="card-body">
                     {% if credit_balance > 0 %}
@@ -257,37 +309,10 @@
                     <h2>GHS {{ credit_balance|floatformat:2 }}</h2>
                     <small>Patient has overpaid. Use <strong>Refund credit</strong> to issue a refund.</small>
                     {% else %}
-                    <h6>Outstanding on this bill</h6>
+                    <h6>Balance due</h6>
                     <h2>GHS {{ bill_outstanding|floatformat:2 }}</h2>
-                    <small>{% if patient_deposit_balance > 0 %}GHS {{ patient_deposit_balance|floatformat:2 }} deposit is still on account — it does not reduce this figure until you click <strong>Apply deposit to total bill</strong>.{% else %}Balance due for this combined bill (after all posted payments).{% endif %}</small>
+                    <small>Total billed − payments/deposit{% if payments_applied_to_bill %} ({{ charges_face_total|default:initial_total|floatformat:2 }} − {{ payments_applied_to_bill|floatformat:2 }}){% endif %}</small>
                     {% endif %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3 mb-md-0">
-            <div class="card text-white" style="background-color: #0d6efd;">
-                <div class="card-body">
-                    <h6>Total Payment</h6>
-                    <h2>GHS {{ total_paid|default:0|floatformat:2|intcomma }}</h2>
-                    <small>{% if payment_filter_active %}Receipts in selected date range{% else %}Amount paid to date (all receipts){% endif %}</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3 mb-md-0">
-            <div class="card bg-primary text-white">
-                <div class="card-body">
-                    <h6>Items on this bill</h6>
-                    <h2>{{ services_count }}</h2>
-                    <small>Count of rows below (not an amount)</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3 col-6 mb-3 mb-md-0">
-            <div class="card bg-info text-white">
-                <div class="card-body">
-                    <h6>Patient</h6>
-                    <h5>{{ patient.full_name }} {% patient_payer_badges patient %}</h5>
-                    <small>{{ patient.mrn }}</small>
                 </div>
             </div>
         </div>
@@ -307,7 +332,7 @@
                             <th>Type</th>
                             <th>Service</th>
                             <th>Date</th>
-                            <th class="text-end">Amount</th>
+                            <th class="text-end">Amount due</th>
                             <th class="text-end no-print" style="width: 120px;">Actions</th>
                         </tr>
                     </thead>
@@ -335,7 +360,13 @@
                             </td>
                             <td><strong>{{ service.name }}</strong></td>
                             <td>{{ service.date|date:"M d, Y H:i" }}</td>
-                            <td class="text-end"><strong>GHS {{ service.price|floatformat:2 }}</strong></td>
+                            <td class="text-end">
+                                <strong>GHS {{ service.price|floatformat:2 }}</strong>
+                                {% if service.invoice_partially_paid and service.face_total and service.face_total != service.price %}
+                                <div class="small text-muted">Billed {{ service.face_total|floatformat:2 }}</div>
+                                {% endif %}
+                                {% if service.is_paid %}<span class="badge bg-success">Paid</span>{% endif %}
+                            </td>
                             <td class="text-end no-print" onclick="event.stopPropagation();">
                                 {% if service.type == 'invoice' or service.type == 'invoice_line' %}
                                     {% if remove_invoice_from_bill_url and can_remove_invoice_from_bill %}
@@ -375,12 +406,12 @@
                                     </thead>
                                     <tbody>
                                         {% for row in service.breakdown %}
-                                        {% if not row.is_waived and not row.is_paid %}
-                                        <tr>
-                                            <td class="py-1">{{ row.description|default:"—" }}</td>
+                                        {% if not row.is_waived %}
+                                        <tr class="{% if row.is_paid %}table-success{% endif %}">
+                                            <td class="py-1">{{ row.description|default:"—" }}{% if row.is_paid %} <span class="badge bg-success">Paid</span>{% endif %}</td>
                                             <td class="text-center py-1">{{ row.quantity|default:1 }}</td>
                                             <td class="text-end py-1">{{ row.unit_price|floatformat:2 }}</td>
-                                            <td class="text-end py-1"><strong>{{ row.amount|floatformat:2 }}</strong></td>
+                                            <td class="text-end py-1"><strong>{% if row.is_paid %}0.00{% else %}{{ row.amount|floatformat:2 }}{% endif %}</strong></td>
                                         </tr>
                                         {% endif %}
                                         {% endfor %}
@@ -400,50 +431,55 @@
                     </tbody>
                     <tfoot>
                         <tr class="table-light">
-                            <th colspan="3" class="text-end">Balance due <span class="small fw-normal text-muted">(sum of Amount column)</span></th>
-                            <th class="text-end">GHS {{ bill_outstanding|floatformat:2|intcomma }}</th>
+                            <th colspan="3" class="text-end">Total billed items{% if billed_items_count %} <span class="small fw-normal">({{ billed_items_count }} lines)</span>{% endif %}</th>
+                            <th class="text-end">GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}</th>
+                            <th class="text-end no-print"></th>
+                        </tr>
+                        <tr class="table-light">
+                            <th colspan="3" class="text-end">Less: Payments / deposit applied</th>
+                            <th class="text-end">−GHS {{ payments_applied_to_bill|default:deposit_applied_to_bill|default:0|floatformat:2|intcomma }}</th>
                             <th class="text-end no-print"></th>
                         </tr>
                         {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
                         <tr class="table-light">
-                            <th colspan="3" class="text-end text-muted small">Deposit already posted to these invoices <span class="fw-normal">(informational)</span></th>
+                            <th colspan="3" class="text-end text-muted small">Of which deposit applied to this bill</th>
                             <th class="text-end text-muted small">GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }}</th>
                             <th class="text-end no-print"></th>
                         </tr>
                         {% endif %}
-                        {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
-                        <tr class="table-light">
-                            <th colspan="3" class="text-end">Total deposit made <span class="small fw-normal text-muted">(slips on file)</span></th>
-                            <th class="text-end">GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</th>
+                        {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                        <tr class="table-warning">
+                            <th colspan="3" class="text-end small">Deposit still available (click Apply deposit to reduce amount due further)</th>
+                            <th class="text-end small">GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</th>
                             <th class="text-end no-print"></th>
                         </tr>
                         {% endif %}
-                        <tr style="border-top: 2px solid #dee2e6; font-size: 1.1rem;">
-                            <th colspan="3" class="text-end"><strong>Pay now</strong></th>
-                            <th class="text-end text-success"><strong>GHS {{ bill_outstanding|floatformat:2|intcomma }}</strong></th>
+                        <tr class="table-success" style="border-top: 2px solid #198754; font-size: 1.1rem;">
+                            <th colspan="3" class="text-end"><strong>Balance due</strong> <span class="small fw-normal text-muted">(billed − payments/deposit)</span></th>
+                            <th class="text-end"><strong>GHS {{ bill_outstanding|floatformat:2|intcomma }}</strong></th>
                             <th class="text-end no-print"></th>
                         </tr>
                     </tfoot>
                 </table>
             </div>
-            <div class="alert alert-secondary mb-0 mt-3 rounded no-print" style="border: 1px solid #dee2e6;">
-                <h6 class="mb-2"><strong>Statement for patient</strong> <span class="text-muted small fw-normal">(on-screen; matches table above)</span></h6>
-                <p class="mb-1"><strong>Balance due</strong> (this bill, matches Amount column): GHS {{ bill_outstanding|floatformat:2|intcomma }}</p>
-                {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
-                <p class="mb-1 small text-muted">Deposit already posted to these invoices: GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }} (already reflected in each invoice balance).</p>
-                {% endif %}
-                <p class="mb-1"><strong>Pay now:</strong> GHS {{ bill_outstanding|floatformat:2|intcomma }} — collect this at combined payment unless you apply more deposit first.</p>
-                {% if patient_deposits_recorded_sum and patient_deposits_recorded_sum > 0 %}
-                <p class="mb-0 small text-muted mt-2">
-                    <strong>Total deposit made</strong> (all slips on file): <strong>GHS {{ patient_deposits_recorded_sum|floatformat:2|intcomma }}</strong>.
-                    {% if patient_deposit_balance > 0 %}<strong>Available on account</strong> (not yet applied): <strong>GHS {{ patient_deposit_balance|floatformat:2|intcomma }}</strong> — use <strong>Apply deposit to total bill</strong> when the patient is ready.{% endif %}
+            <div class="alert alert-primary mb-0 mt-3 rounded no-print" style="border: 1px solid #0d6efd;">
+                <h6 class="mb-2"><strong>Bill summary</strong></h6>
+                <p class="mb-1"><strong>Total billed items{% if billed_items_count %} ({{ billed_items_count }}){% endif %}:</strong> GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}</p>
+                <p class="mb-1"><strong>Less: Payments / deposit applied:</strong> −GHS {{ payments_applied_to_bill|default:deposit_applied_to_bill|default:0|floatformat:2|intcomma }}
+                    {% if deposit_applied_to_bill and deposit_applied_to_bill > 0 %}
+                    <span class="text-muted small">(deposit on this bill: GHS {{ deposit_applied_to_bill|floatformat:2|intcomma }})</span>
+                    {% endif %}
                 </p>
+                <p class="mb-0 fs-5"><strong>Balance due:</strong> GHS {{ bill_outstanding|floatformat:2|intcomma }}</p>
+                {% if patient_deposit_balance and patient_deposit_balance > 0 %}
+                <p class="mb-0 mt-2 small text-warning">Deposit still available: GHS {{ patient_deposit_balance|floatformat:2|intcomma }} — use <strong>Apply deposit to total bill</strong> to reduce balance due.</p>
                 {% endif %}
             </div>
             <!-- Itemized bill: full line detail on screen only; use Generate Bill for a printable invoice -->
             <div class="card mt-4 border-primary no-print">
-                <div class="card-header bg-light">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <h5 class="mb-0"><i class="bi bi-receipt"></i> Itemized bill – all invoiced items</h5>
+                    <span class="badge bg-primary fs-6">Total billed: GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}{% if billed_items_count %} · {{ billed_items_count }} items{% endif %}</span>
                 </div>
                 <div class="card-body">
                     {% for service in services %}
@@ -451,13 +487,13 @@
                         <h6 class="text-dark border-bottom pb-1 mb-2">
                             {% if service.type == 'lab' %}<span class="badge bg-info">Lab</span>
                             {% elif service.type == 'pharmacy' %}<span class="badge bg-success">Pharmacy</span>
-                            {% elif service.type == 'pharmacy_walkin' %}<span class="badge bg-success">Prescribe</span>
                             {% elif service.type == 'imaging' %}<span class="badge" style="background: #6f42c1; color: white;">Imaging</span>
+                            {% elif service.type == 'pharmacy_walkin' %}<span class="badge bg-success">Prescribe</span>
                             {% elif service.type == 'invoice' or service.type == 'invoice_line' %}<span class="badge bg-secondary">Invoice</span>
                             {% elif service.type == 'bed' %}<span class="badge bg-warning text-dark">Bed</span>
                             {% else %}<span class="badge bg-secondary">{{ service.type|title }}</span>{% endif %}
                             {% if service.is_paid %}<span class="badge bg-success ms-1">Paid</span>{% endif %}
-                            {{ service.name }} — GHS {{ service.price|floatformat:2 }}
+                            {{ service.name }} — billed GHS {{ service.face_total|default:service.price|floatformat:2 }}{% if service.invoice_partially_paid %} <span class="text-muted fw-normal">(balance due GHS {{ service.price|floatformat:2 }})</span>{% endif %}
                         </h6>
                         {% if service.breakdown %}
                         <div class="table-responsive">
@@ -488,10 +524,14 @@
                             {% endif %}
                         </div>
                         {% else %}
-                        <p class="text-muted small mb-0">Single item — GHS {{ service.price|floatformat:2 }}</p>
+                        <p class="text-muted small mb-0">Single item — GHS {{ service.face_total|default:service.price|floatformat:2 }}</p>
                         {% endif %}
                     </div>
                     {% endfor %}
+                    <div class="border-top pt-3 mt-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <strong class="fs-5">Total billed items{% if billed_items_count %} ({{ billed_items_count }}){% endif %}</strong>
+                        <strong class="fs-5 text-primary">GHS {{ charges_face_total|default:initial_total|floatformat:2|intcomma }}</strong>
+                    </div>
                 </div>
             </div>
             {% if patient_deposits %}
@@ -553,6 +593,9 @@
                     <div class="col-md-4">
                         <form method="post" action="{% url 'hospital:cashier_apply_deposit_to_bill' patient.id %}" class="w-100">
                             {% csrf_token %}
+                            {% if today_pending %}<input type="hidden" name="today_pending" value="1">{% endif %}
+                            {% if filter_date_str %}<input type="hidden" name="filter_date" value="{{ filter_date_str }}">{% endif %}
+                            {% if service_filter %}<input type="hidden" name="service_filter" value="{{ service_filter }}">{% endif %}
                             <button type="submit" class="btn btn-success btn-lg w-100">
                                 <i class="bi bi-check-circle"></i> Apply deposit to total bill
                             </button>

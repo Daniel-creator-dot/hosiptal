@@ -32,11 +32,75 @@ from .services.pricing_engine_service import pricing_engine
 from .utils_billing import get_drug_price_for_prescription, patient_payer_display_labels
 from django.db import transaction
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 # Pharmacy “expiring soon” window: dashboard sample list, batch counts, stock list expiring filter
 PHARMACY_EXPIRY_FOCUS_DAYS = 70
+
+ALLOWED_LAB_RESULT_FILE_TYPES = frozenset({
+    'application/pdf',
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+})
+ALLOWED_LAB_RESULT_FILE_EXTENSIONS = (
+    '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.doc', '.docx',
+)
+
+
+def _lab_result_upload_allowed(uploaded_file):
+    if not uploaded_file:
+        return False
+    name = (getattr(uploaded_file, 'name', '') or '').lower()
+    content_type = getattr(uploaded_file, 'content_type', '') or ''
+    return content_type in ALLOWED_LAB_RESULT_FILE_TYPES or name.endswith(ALLOWED_LAB_RESULT_FILE_EXTENSIONS)
+
+
+def _staff_for_user(user):
+    try:
+        return Staff.objects.filter(user=user, is_deleted=False).order_by('-created').first()
+    except Exception:
+        return None
+
+
+def save_lab_result_file(result, uploaded_file, uploaded_by=None):
+    """Persist a lab report file on the patient record and lab result.
+
+    Stores PatientDocument (patient chart / medical records) and also sets
+    LabResult.attachment so View Report / print page can preview the same file.
+    """
+    from django.core.files.base import ContentFile
+    from .models_medical_records import PatientDocument
+
+    ext = (uploaded_file.name or '').lower().split('.')[-1] if '.' in (uploaded_file.name or '') else 'pdf'
+    doc = PatientDocument.objects.create(
+        patient=result.order.encounter.patient,
+        encounter=result.order.encounter,
+        lab_result=result,
+        title=f"Lab Report - {result.test.name} ({uploaded_file.name[:50]})",
+        document_type='lab_report',
+        uploaded_by=uploaded_by,
+        description=f"Lab result file for {result.test.name}",
+        document_date=date.today(),
+        file=uploaded_file,
+        file_size=uploaded_file.size,
+        file_type=uploaded_file.content_type or f'application/{ext}',
+    )
+    # Mirror onto LabResult.attachment when empty so print/View Report finds it
+    try:
+        if not (getattr(result, 'attachment', None) and result.attachment.name):
+            uploaded_file.seek(0)
+            raw = uploaded_file.read()
+            safe_name = (uploaded_file.name or f'lab_report.{ext}').replace('\\', '/').split('/')[-1]
+            result.attachment.save(safe_name, ContentFile(raw), save=True)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            'Could not mirror lab upload onto LabResult.attachment for %s', getattr(result, 'pk', None)
+        )
+    return doc
 
 
 def _user_can_manage_lab_queue(user):
@@ -62,21 +126,11 @@ def _get_encounter_invoice_for_pharmacy(encounter, request=None):
     If request is provided and user is pharmacy, detail_url is omitted so UI does not show invoice link."""
     if not encounter:
         return None
-    inv = Invoice.objects.filter(
+    inv = Invoice.all_objects.filter(
         encounter=encounter, is_deleted=False
-    ).select_related('payer').order_by('-created').first()
+    ).exclude(status__iexact='cancelled').select_related('payer').order_by('-created').first()
     if not inv:
         return None
-    # Ensure totals are current
-    try:
-        inv.calculate_totals()
-    except Exception:
-        pass
-    try:
-        from .utils_invoice_line import heal_invoice_zero_line_prices
-        heal_invoice_zero_line_prices(inv)
-    except Exception:
-        pass
     # Exclude waived lines
     lines = list(inv.lines.filter(is_deleted=False, waived_at__isnull=True).select_related('service_code', 'prescription').order_by('id'))
     from .utils_roles import is_pharmacy_user
@@ -135,21 +189,21 @@ def _invoice_is_financially_settled(inv):
 
 
 def _sync_pharmacy_order_payment_state(order):
-    """Safety net: align PharmacyDispensing with settled encounter invoices."""
+    """Align this order's encounter PharmacyDispensing with the encounter invoice only."""
     try:
         from .services.pharmacy_invoice_payment_link import (
             link_pharmacy_dispensing_when_invoice_paid,
-            reconcile_pending_pharmacy_dispensing_with_invoices,
         )
 
-        reconcile_pending_pharmacy_dispensing_with_invoices()
-        if order and getattr(order, 'encounter_id', None):
-            inv = Invoice.objects.filter(
-                encounter=order.encounter,
-                is_deleted=False,
-            ).order_by('-created').first()
-            if inv:
-                link_pharmacy_dispensing_when_invoice_paid(inv, refresh_invoice=True)
+        encounter_id = getattr(order, 'encounter_id', None) if order else None
+        if not encounter_id:
+            return
+        inv = Invoice.all_objects.filter(
+            encounter_id=encounter_id,
+            is_deleted=False,
+        ).exclude(status__iexact='cancelled').order_by('-created').first()
+        if inv:
+            link_pharmacy_dispensing_when_invoice_paid(inv, refresh_invoice=False)
     except Exception:
         logger.exception('Pharmacy payment sync failed for order %s', getattr(order, 'pk', None))
 
@@ -158,6 +212,9 @@ def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
     """
     Server-side dispense eligibility for a medication order.
     Matches pharmacy_dashboard_worldclass.html (can_dispense, badges, payment check).
+
+    Cash patients may dispense when each Rx is paid / ready — pharmacy portion of the
+    encounter invoice is enough; other unpaid services on the same invoice do not block.
     """
     prescriptions = list(
         prescriptions
@@ -190,6 +247,14 @@ def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
             is_deleted=False,
         ).order_by('-created').first()
     encounter_invoice_settled = _invoice_is_financially_settled(encounter_invoice)
+    pharmacy_portion_settled = encounter_invoice_settled
+    if encounter_invoice and not encounter_invoice_settled:
+        try:
+            from .utils_invoice_line import invoice_pharmacy_lines_are_settled
+
+            pharmacy_portion_settled = invoice_pharmacy_lines_are_settled(encounter_invoice)
+        except Exception:
+            pharmacy_portion_settled = False
 
     active_rx = []
     for rx in prescriptions:
@@ -212,6 +277,7 @@ def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
             'can_dispense': False,
             'cannot_dispense_reason': 'no_medications',
             'encounter_invoice_settled': encounter_invoice_settled,
+            'pharmacy_portion_settled': pharmacy_portion_settled,
             'payment_receipt': None,
             'sent_to_insurance': False,
             'rx_ids_with_active_bill': rx_ids_with_active_bill,
@@ -248,15 +314,15 @@ def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
                     break
                 if disp and disp.payment_receipt_id and payment_receipt is None:
                     payment_receipt = disp.payment_receipt
-            if (
-                not cannot_dispense_reason
-                and encounter_invoice
-                and not encounter_invoice_settled
-            ):
-                cannot_dispense_reason = 'invoice_not_settled'
+            # Do not require full encounter invoice settlement — only pharmacy payment.
 
     can_dispense = not bool(cannot_dispense_reason)
-    if can_dispense and payment_receipt is None and encounter_invoice_settled and encounter_invoice:
+    if (
+        can_dispense
+        and payment_receipt is None
+        and pharmacy_portion_settled
+        and encounter_invoice
+    ):
         try:
             from .services.pharmacy_invoice_payment_link import resolve_receipt_for_invoice_payment
 
@@ -268,6 +334,7 @@ def _evaluate_pharmacy_order_dispense(order, prescriptions=None):
         'can_dispense': can_dispense,
         'cannot_dispense_reason': cannot_dispense_reason,
         'encounter_invoice_settled': encounter_invoice_settled,
+        'pharmacy_portion_settled': pharmacy_portion_settled,
         'payment_receipt': payment_receipt,
         'sent_to_insurance': sent_to_insurance if is_insurance_or_corporate else False,
         'rx_ids_with_active_bill': rx_ids_with_active_bill,
@@ -1157,6 +1224,22 @@ def laboratory_dashboard(request):
         reverse=False
     )[:20]
 
+    # Attach diagnosis text for lab pending-orders table (template: order.lab_diagnosis_display)
+    try:
+        from .lab_order_diagnosis import order_lab_diagnosis_display
+        for _ord in pending_orders:
+            dx = order_lab_diagnosis_display(_ord)
+            _ord.lab_diagnosis_display = dx
+            if dx and not (getattr(_ord, 'clinical_indication', None) or '').strip():
+                try:
+                    _ord.clinical_indication = dx[:2000]
+                    _ord.save(update_fields=['clinical_indication', 'modified'])
+                except Exception:
+                    pass
+    except Exception:
+        for _ord in pending_orders:
+            _ord.lab_diagnosis_display = (getattr(_ord, 'clinical_indication', None) or '').strip()
+
     in_progress_results = list(
         LabResult.objects.filter(
             Q(status='in_progress'),
@@ -1171,12 +1254,13 @@ def laboratory_dashboard(request):
     today_results = list(
         LabResult.objects.filter(
             status='completed',
-            verified_at__date=filter_date,
             is_deleted=False,
+        ).filter(
+            Q(verified_at__date=filter_date) | Q(verified_at__isnull=True, modified__date=filter_date)
         )
         .select_related('test', 'order', 'order__encounter', 'order__encounter__patient', 'verified_by', 'verified_by__user')
         .select_related('release_record')
-        .order_by('-verified_at')[:50]
+        .order_by('-verified_at', '-modified')[:50]
     )
 
     pending_results = list(
@@ -1191,6 +1275,8 @@ def laboratory_dashboard(request):
     )
 
     def _group_results_by_patient_order(results_list):
+        from .lab_order_diagnosis import order_lab_diagnosis_display
+
         groups = {}
         for r in results_list:
             order = r.order
@@ -1198,9 +1284,18 @@ def laboratory_dashboard(request):
             key = (r.order_id or r.id, patient_id)
             if key not in groups:
                 patient = order.encounter.patient if order and order.encounter else None
+                diagnosis = order_lab_diagnosis_display(order) if order else ''
+                # Persist diagnosis onto the order when missing so lab screens always have it
+                if order and diagnosis and not (getattr(order, 'clinical_indication', None) or '').strip():
+                    try:
+                        order.clinical_indication = diagnosis[:2000]
+                        order.save(update_fields=['clinical_indication', 'modified'])
+                    except Exception:
+                        pass
                 groups[key] = {
                     'order': order,
                     'patient': patient,
+                    'diagnosis': diagnosis,
                     'results': [r],
                     'total_price': float(getattr(r.test, 'price', 0) or 0),
                     'priority': getattr(order, 'priority', 'routine') if order else 'routine',
@@ -1943,10 +2038,11 @@ def upload_imaging_image(request, study_id):
                 study.order.status = 'completed'
                 study.order.save(update_fields=['status'])
         
+        image_url = imaging_image.image.url if imaging_image.has_stored_file else ''
         return JsonResponse({
             'success': True,
             'image_id': str(imaging_image.id),
-            'image_url': imaging_image.image.url,
+            'image_url': image_url,
             'description': imaging_image.description or '',
             'sequence_number': imaging_image.sequence_number,
             'status': 'completed'
@@ -2028,7 +2124,7 @@ def edit_imaging_report(request, study_id):
                                     document_type='imaging_report',
                                     uploaded_by=current_staff,
                                     description=f"Report for {study.get_modality_display()} - {study.body_part}",
-                                    document_date=timezone.now().date(),
+                                    document_date=date.today(),
                                     file=uploaded_file,
                                     file_size=uploaded_file.size,
                                     file_type=uploaded_file.content_type or 'application/octet-stream',
@@ -2723,11 +2819,16 @@ def pharmacy_stock_excel(request):
 def pharmacy_stock_add(request):
     """Add pharmacy stock - HMS frontend form with drug search. Access: Admin, Procurement, Store Managers."""
     from .views_procurement import can_add_pharmacy_stock
-    
+    from .models_missing_features import Supplier
+
     if not can_add_pharmacy_stock(request.user):
         messages.error(request, 'You do not have permission to add pharmacy stock.')
         return redirect('hospital:pharmacy_stock_list')
-    
+
+    suppliers = list(
+        Supplier.objects.filter(is_deleted=False, is_active=True).order_by('name')
+    )
+
     if request.method == 'POST':
         drug_id = request.POST.get('drug_id')
         batch_number = (request.POST.get('batch_number') or '').strip()
@@ -2738,13 +2839,30 @@ def pharmacy_stock_add(request):
         unit_cost = request.POST.get('unit_cost', '0')
         total_cost_raw = (request.POST.get('total_cost') or '').strip()
         unit_price = request.POST.get('unit_price', '')
-        
+        supplier_id = (request.POST.get('supplier') or '').strip()
+        invoice_number = re.sub(
+            r'\s+', ' ', (request.POST.get('supplier_invoice_number') or request.POST.get('invoice_number') or '').strip()
+        )
+
         errors = []
         if not drug_id:
             errors.append('Please select a drug from the search.')
         if not expiry_date_str:
             errors.append('Expiry date is required.')
-        
+
+        supplier = None
+        if supplier_id:
+            supplier = Supplier.objects.filter(
+                pk=supplier_id, is_deleted=False, is_active=True
+            ).first()
+            if not supplier:
+                errors.append('Selected supplier is invalid. Choose a supplier from the list.')
+
+        if supplier and not invoice_number:
+            errors.append('Supplier invoice number is required when a supplier is selected.')
+        if invoice_number and not supplier:
+            errors.append('Select a supplier so this invoice number can be registered on the supplier account.')
+
         if errors:
             for e in errors:
                 messages.error(request, e)
@@ -2752,7 +2870,7 @@ def pharmacy_stock_add(request):
             try:
                 drug = Drug.objects.get(id=drug_id, is_deleted=False, is_active=True)
                 expiry_date = date.fromisoformat(expiry_date_str)
-                
+
                 if not batch_number:
                     dt = timezone.now()
                     prefix = f"BATCH-{dt.strftime('%Y%m%d')}"
@@ -2761,7 +2879,7 @@ def pharmacy_stock_add(request):
                         is_deleted=False
                     ).count()
                     batch_number = f"{prefix}-{same_prefix + 1:04d}"
-                
+
                 quantity_added = int(quantity or 0)
                 unit_cost_dec = Decimal(str(unit_cost or 0))
                 if total_cost_raw:
@@ -2774,7 +2892,7 @@ def pharmacy_stock_add(request):
                     except (ValueError, TypeError, ArithmeticError):
                         pass
                 with transaction.atomic():
-                    PharmacyStock.objects.create(
+                    stock = PharmacyStock.objects.create(
                         drug=drug,
                         batch_number=batch_number,
                         expiry_date=expiry_date,
@@ -2783,6 +2901,8 @@ def pharmacy_stock_add(request):
                         reorder_level=int(reorder_level or 10),
                         unit_cost=unit_cost_dec,
                         created_by=request.user,
+                        supplier=supplier,
+                        supplier_invoice_number=invoice_number,
                     )
                     # Update drug selling price if provided (editable on Add Pharmacy Stock)
                     if unit_price not in (None, ''):
@@ -2791,10 +2911,15 @@ def pharmacy_stock_add(request):
                             drug.save(update_fields=['unit_price'])
                         except (ValueError, TypeError):
                             pass
+                    if request.POST.get('nhis_covered') == 'on' and not drug.nhis_covered:
+                        drug.nhis_covered = True
+                        drug.save(update_fields=['nhis_covered'])
+                    # GL (1400/2100) and supplier payable posted via post_pharmacy_stock_accounting_on_create signal
                 added_on = timezone.localtime(timezone.now()).strftime('%d/%m/%Y %I:%M %p')
+                inv_note = f' | Invoice {invoice_number}' if invoice_number else ''
                 messages.success(
                     request,
-                    f'Stock added: {drug.name} - Batch {batch_number} | Current stock left: {quantity_added} | Added on: {added_on}'
+                    f'Stock added: {drug.name} - Batch {batch_number}{inv_note} | Current stock left: {quantity_added} | Added on: {added_on}'
                 )
                 return redirect('hospital:pharmacy_stock_list')
             except Drug.DoesNotExist:
@@ -2803,23 +2928,70 @@ def pharmacy_stock_add(request):
                 messages.error(request, str(e))
             except Exception as e:
                 messages.error(request, f'Error adding stock: {e}')
-    
-    context = {'drug_categories': Drug.CATEGORIES}
+
+    prefill_drug_json = None
+    prefill_drug_id = (request.GET.get('drug_id') or '').strip()
+    if prefill_drug_id:
+        try:
+            import json
+            prefill = Drug.objects.filter(
+                pk=prefill_drug_id, is_deleted=False, is_active=True
+            ).first()
+            if prefill:
+                details = ' '.join(
+                    p for p in [
+                        getattr(prefill, 'strength', '') or '',
+                        getattr(prefill, 'form', '') or '',
+                        getattr(prefill, 'generic_name', '') or '',
+                    ] if p
+                )
+                prefill_drug_json = json.dumps({
+                    'id': str(prefill.pk),
+                    'name': prefill.name or '',
+                    'details': details,
+                    'unitPrice': str(getattr(prefill, 'unit_price', '') or ''),
+                    'costPrice': str(getattr(prefill, 'cost_price', '') or ''),
+                    'preferred_supplier_id': str(prefill.preferred_supplier_id)
+                    if getattr(prefill, 'preferred_supplier_id', None)
+                    else '',
+                    'nhis_covered': bool(getattr(prefill, 'nhis_covered', False)),
+                })
+        except Exception:
+            prefill_drug_json = None
+
+    context = {
+        'drug_categories': Drug.CATEGORIES,
+        'suppliers': suppliers,
+        'prefill_drug_json': prefill_drug_json,
+    }
     return render(request, 'hospital/pharmacy_stock_add.html', context)
 
 
 @login_required
 def pharmacy_stock_edit(request, pk):
-    """Edit existing pharmacy stock batch. Admin only."""
+    """Edit existing pharmacy stock batch. Admin and procurement/stores staff."""
+    from django.urls import reverse
     from .views_procurement import can_edit_inventory
+    from .models_missing_features import Supplier
 
     if not can_edit_inventory(request.user):
         messages.error(request, 'You do not have permission to edit pharmacy stock.')
         return redirect('hospital:pharmacy_stock_list')
 
     stock = get_object_or_404(PharmacyStock, pk=pk, is_deleted=False)
+    suppliers = list(
+        Supplier.objects.filter(is_deleted=False, is_active=True).order_by('name')
+    )
+    next_url = (request.GET.get('next') or '').strip()
+    if not next_url.startswith('/'):
+        next_url = ''
+    cancel_url = next_url or reverse('hospital:pharmacy_stock_list')
 
     if request.method == 'POST':
+        post_next = (request.POST.get('next') or '').strip()
+        if post_next.startswith('/'):
+            next_url = post_next
+            cancel_url = next_url
         batch_number = (request.POST.get('batch_number') or '').strip()
         expiry_date_str = request.POST.get('expiry_date')
         location = (request.POST.get('location') or 'Main Pharmacy').strip()
@@ -2827,9 +2999,25 @@ def pharmacy_stock_edit(request, pk):
         reorder_level = request.POST.get('reorder_level', '10')
         unit_cost = request.POST.get('unit_cost', '0')
         total_cost_raw = (request.POST.get('total_cost') or '').strip()
+        supplier_id = (request.POST.get('supplier') or '').strip()
+        invoice_number = re.sub(
+            r'\s+', ' ',
+            (request.POST.get('supplier_invoice_number') or request.POST.get('invoice_number') or '').strip(),
+        )
         errors = []
         if not expiry_date_str:
             errors.append('Expiry date is required.')
+        supplier = None
+        if supplier_id:
+            supplier = Supplier.objects.filter(
+                pk=supplier_id, is_deleted=False, is_active=True
+            ).first()
+            if not supplier:
+                errors.append('Selected supplier is invalid. Choose a supplier from the list.')
+        if supplier and not invoice_number:
+            errors.append('Supplier invoice number is required when a supplier is selected.')
+        if invoice_number and not supplier:
+            errors.append('Select a supplier so this invoice number can be registered on the supplier account.')
         if errors:
             for e in errors:
                 messages.error(request, e)
@@ -2851,11 +3039,35 @@ def pharmacy_stock_edit(request, pk):
                 stock.quantity_on_hand = qty_int
                 stock.reorder_level = int(reorder_level or 10)
                 stock.unit_cost = unit_cost_dec
+                stock.supplier = supplier
+                stock.supplier_invoice_number = invoice_number
                 if batch_number:
                     stock.batch_number = batch_number
                 stock.save()
+                # Keep supplier payable reference aligned with invoice # (if line exists).
+                try:
+                    from .models_supplier_payables import SupplierPayableLine
+                    payable = SupplierPayableLine.objects.filter(
+                        pharmacy_stock=stock, is_deleted=False
+                    ).first()
+                    if payable and invoice_number and (payable.reference or '').strip().casefold() != invoice_number.casefold():
+                        payable.reference = invoice_number
+                        if supplier and payable.supplier_id != supplier.id:
+                            payable.supplier = supplier
+                        payable.save(update_fields=['reference', 'supplier', 'modified'])
+                    elif supplier and not payable and qty_int > 0 and unit_cost_dec > 0:
+                        from .models_supplier_payables import post_pharmacy_stock_supplier_payable
+                        post_pharmacy_stock_supplier_payable(
+                            stock=stock,
+                            quantity_added=qty_int,
+                            unit_cost=unit_cost_dec,
+                            supplier=supplier,
+                            user=request.user,
+                        )
+                except Exception:
+                    pass
                 messages.success(request, f'Stock updated: {stock.drug.name} - Batch {stock.batch_number}')
-                return redirect('hospital:pharmacy_stock_list')
+                return redirect(next_url or reverse('hospital:pharmacy_stock_list'))
             except ValueError as e:
                 messages.error(request, str(e))
             except Exception as e:
@@ -2864,6 +3076,9 @@ def pharmacy_stock_edit(request, pk):
     context = {
         'stock': stock,
         'drug_categories': Drug.CATEGORIES,
+        'suppliers': suppliers,
+        'next_url': next_url,
+        'cancel_url': cancel_url,
     }
     return render(request, 'hospital/pharmacy_stock_edit.html', context)
 
@@ -3161,7 +3376,6 @@ def edit_lab_result(request, result_id):
                     # Try parsing as date-time string with timezone
                     from datetime import datetime
                     expected_completion = datetime.strptime(expected_completion_str, '%Y-%m-%dT%H:%M')
-                    from django.utils import timezone
                     # Assume local timezone if not provided
                     if timezone.is_naive(expected_completion):
                         expected_completion = timezone.make_aware(expected_completion)
@@ -3172,8 +3386,6 @@ def edit_lab_result(request, result_id):
         
         # If no explicit datetime set, auto-calculate from tat_minutes for long tests
         if not expected_completion and result.test and result.test.tat_minutes >= 1440:  # >= 1 day
-            from django.utils import timezone
-            from datetime import timedelta
             start_time = result.created or timezone.now()
             expected_completion = start_time + timedelta(minutes=result.test.tat_minutes)
 
@@ -3208,45 +3420,19 @@ def edit_lab_result(request, result_id):
                 if key and val:
                     details[key] = val
 
-        # Handle result file upload (PDF, images, Word docs)
-        ALLOWED_LAB_FILE_TYPES = {
-            'application/pdf',
-            'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp',
-            'application/msword',  # .doc
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
-        }
-        if 'result_file' in request.FILES or 'pdf_report' in request.FILES:
-            uploaded_file = request.FILES.get('result_file') or request.FILES.get('pdf_report')
-            if uploaded_file and (uploaded_file.content_type in ALLOWED_LAB_FILE_TYPES or
-                                 getattr(uploaded_file, 'name', '').lower().endswith(('.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.doc', '.docx'))):
+        uploaded_file = request.FILES.get('result_file') or request.FILES.get('pdf_report')
+        if uploaded_file:
+            if _lab_result_upload_allowed(uploaded_file):
                 try:
-                    from .models_medical_records import PatientDocument
-                    current_staff = None
-                    try:
-                        current_staff = request.user.staff
-                    except Exception:
-                        pass
-                    ext = (uploaded_file.name or '').lower().split('.')[-1] if '.' in (uploaded_file.name or '') else 'pdf'
-                    doc = PatientDocument.objects.create(
-                        patient=result.order.encounter.patient,
-                        encounter=result.order.encounter,
-                        lab_result=result,
-                        title=f"Lab Report - {result.test.name} ({uploaded_file.name[:50]})",
-                        document_type='lab_report',
-                        uploaded_by=current_staff,
-                        description=f"Lab result file for {result.test.name}",
-                        document_date=timezone.now().date(),
-                        file=uploaded_file,
-                        file_size=uploaded_file.size,
-                        file_type=uploaded_file.content_type or f'application/{ext}',
+                    save_lab_result_file(result, uploaded_file, uploaded_by=_staff_for_user(request.user))
+                    messages.success(
+                        request,
+                        f'Result file "{uploaded_file.name}" uploaded successfully. Doctors can view and download it.',
                     )
-                    messages.success(request, f'Result file "{uploaded_file.name}" uploaded successfully. Doctors can view and download it.')
                 except Exception as doc_error:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f'Error saving lab result file: {doc_error}', exc_info=True)
+                    logger.error('Error saving lab result file: %s', doc_error, exc_info=True)
                     messages.warning(request, 'Lab result saved, but file upload failed. Please try again.')
-            elif uploaded_file:
+            else:
                 messages.error(request, 'Invalid file type. Allowed: PDF, JPG, PNG, GIF, WEBP, BMP, DOC, DOCX.')
         
         # Save onto result
@@ -3258,19 +3444,23 @@ def edit_lab_result(request, result_id):
         result.qualitative_result = qualitative
         result.notes = notes
         result.expected_completion_datetime = expected_completion
-        # Keep status if already completed else move to in_progress when editing
-        if result.status == 'pending':
-            result.status = 'in_progress'
+        from .lab_completion import apply_lab_result_workflow
+        apply_lab_result_workflow(
+            result,
+            request.user,
+            status_from_post=request.POST.get('status'),
+        )
         result.save()
 
-        messages.success(request, 'Lab result details saved.')
+        if result.status == 'completed':
+            messages.success(request, f'Lab result completed: {result.test.name}')
+        else:
+            messages.success(request, 'Lab result details saved.')
         return redirect('hospital:laboratory_dashboard')
 
     # Calculate default expected completion if not set
     default_expected_completion = None
     if not result.expected_completion_datetime and result.test and result.test.tat_minutes:
-        from django.utils import timezone
-        from datetime import timedelta
         start_time = result.created or timezone.now()
         default_expected_completion = start_time + timedelta(minutes=result.test.tat_minutes)
     
@@ -3407,21 +3597,13 @@ def update_lab_result_status(request, result_id):
         })
     
     elif action == 'complete':
-        # Mark lab result as completed + verified
-        result.status = 'completed'
+        from .lab_completion import apply_lab_result_workflow
         if value:
             result.value = value
         if notes:
             result.notes = notes
-        if current_staff:
-            result.verified_by = current_staff
-            result.verified_at = timezone.now()
+        apply_lab_result_workflow(result, request.user, status_from_post='completed', has_values=True)
         result.save()
-
-        # Also mark the parent order as completed so it no longer shows with a Start button
-        if order and order.status != 'completed':
-            order.status = 'completed'
-            order.save(update_fields=['status', 'modified'])
 
         return JsonResponse({
             'success': True,
@@ -3899,19 +4081,20 @@ def imaging_add_order(request):
 def imaging_catalog_list(request):
     """List imaging catalog with prices; allow editing prices."""
     from django.core.paginator import Paginator
-    from .utils_roles import get_user_role, is_account_or_finance
+    from .utils_roles import get_user_role, is_account_or_finance, is_it_user
 
     # Access control:
     # - Radiology/Scan staff (radiologist role) may rename scan studies
-    # - Account/finance and admin may update prices
+    # - Account/finance, admin, and IT may update prices and manage catalog
     try:
         user_role = get_user_role(request.user)
     except Exception:
         user_role = 'staff'
 
     is_admin = bool(getattr(request.user, 'is_superuser', False)) or user_role == 'admin'
-    can_rename = is_admin or user_role == 'radiologist'
-    can_edit_prices = is_admin or is_account_or_finance(request.user)
+    it_staff = is_it_user(request.user)
+    can_rename = is_admin or user_role == 'radiologist' or it_staff
+    can_edit_prices = is_admin or is_account_or_finance(request.user) or it_staff
     can_view = can_rename or can_edit_prices
 
     if not can_view:
@@ -3927,6 +4110,11 @@ def imaging_catalog_list(request):
             Q(modality__icontains=search) |
             Q(body_part__icontains=search)
         )
+    nhis_filter = (request.GET.get('nhis') or '').strip().lower()
+    if nhis_filter == 'yes':
+        items = items.filter(nhis_covered=True)
+    elif nhis_filter == 'no':
+        items = items.filter(nhis_covered=False)
     paginator = Paginator(items, 25)
     page = request.GET.get('page', 1)
     items_page = paginator.get_page(page)
@@ -3969,11 +4157,14 @@ def imaging_catalog_list(request):
                         obj.corporate_price = corp_val
                         obj.insurance_price = ins_val
                         update_fields.extend(['price', 'corporate_price', 'insurance_price'])
+                    obj.nhis_covered = request.POST.get('nhis_covered') == 'on'
+                    update_fields.append('nhis_covered')
                     if update_fields:
                         obj.save(update_fields=update_fields)
                     try:
                         from django.core.cache import cache
                         cache.delete('hms:active_imaging_studies')
+                        cache.delete('hms:active_imaging_studies_v2')
                     except Exception:
                         pass
                     messages.success(request, f'Updated {obj.name}.')
@@ -4011,11 +4202,13 @@ def imaging_catalog_list(request):
                             price=price,
                             corporate_price=corp_val,
                             insurance_price=ins_val,
-                            is_active=True
+                            is_active=True,
+                            nhis_covered=request.POST.get('nhis_covered') == 'on',
                         )
                         try:
                             from django.core.cache import cache
                             cache.delete('hms:active_imaging_studies')
+                            cache.delete('hms:active_imaging_studies_v2')
                         except Exception:
                             pass
                         messages.success(request, f'Imaging item "{imaging_item.name}" added successfully.')
@@ -4038,6 +4231,7 @@ def imaging_catalog_list(request):
                         try:
                             from django.core.cache import cache
                             cache.delete('hms:active_imaging_studies')
+                            cache.delete('hms:active_imaging_studies_v2')
                         except Exception:
                             pass
                         messages.success(request, f'Imaging item "{obj.name}" deleted successfully.')
@@ -4050,6 +4244,7 @@ def imaging_catalog_list(request):
     context = {
         'items_page': items_page,
         'search_query': search,
+        'nhis_filter': nhis_filter,
         'can_rename': can_rename,
         'can_edit_prices': can_edit_prices,
         'is_admin': is_admin,
@@ -4063,7 +4258,15 @@ def get_pharmacy_order_prescriptions(request, order_id):
     Returns all prescriptions so pharmacy can always see and edit drugs/quantities before sending to company.
     """
     try:
-        order = get_object_or_404(Order, pk=order_id, order_type='medication', is_deleted=False)
+        order = get_object_or_404(
+            Order.objects.select_related(
+                'encounter__patient__primary_insurance',
+                'requested_by__user',
+            ),
+            pk=order_id,
+            order_type='medication',
+            is_deleted=False,
+        )
         _sync_pharmacy_order_payment_state(order)
 
         # Prescriptions that already have an active (non-waived) bill - for UI badge only
@@ -4077,11 +4280,6 @@ def get_pharmacy_order_prescriptions(request, order_id):
         # then when pharmacy removes one and sends, we receive quantity 0 for that id.
         prescriptions = list(order.prescriptions.filter(is_deleted=False).select_related('drug'))
 
-        from .models_payment_verification import (
-            PharmacyDispensing,
-            PharmacyDispenseHistory,
-            PharmacyStockDeductionLog,
-        )
         evaluation = _evaluate_pharmacy_order_dispense(order, prescriptions=prescriptions)
         dispensings_by_rx = evaluation['dispensings_by_rx']
         is_insurance_or_corporate = evaluation['is_insurance_or_corporate']
@@ -4089,6 +4287,7 @@ def get_pharmacy_order_prescriptions(request, order_id):
         prescriptions_data = []
         patient_for_rx = order.encounter.patient
         payer_rx = getattr(patient_for_rx, 'primary_insurance', None)
+        drugs_shown = []
         for rx in prescriptions:
             # Use substituted drug from existing dispensing record if any (so re-open shows current bill)
             disp = dispensings_by_rx.get(str(rx.id))
@@ -4099,13 +4298,7 @@ def get_pharmacy_order_prescriptions(request, order_id):
                 qty_to_show = int(rx.quantity or 0)
 
             drug_price = get_drug_price_for_prescription(drug_to_show, payer=payer_rx)
-
-            # Check stock availability for the drug being shown
-            stock_available = PharmacyStock.objects.filter(
-                drug=drug_to_show,
-                is_deleted=False,
-                quantity_on_hand__gt=0
-            ).aggregate(total=Sum('quantity_on_hand'))['total'] or 0
+            drugs_shown.append(drug_to_show)
 
             has_active_bill = rx.id in rx_ids_with_active_bill
             payment_fields = _pharmacy_rx_payment_fields(
@@ -4117,11 +4310,11 @@ def get_pharmacy_order_prescriptions(request, order_id):
 
             prescriptions_data.append({
                 'id': str(rx.id),
-                'drug_id': str(drug_to_show.id),
-                'original_drug_id': str(rx.drug.id),
-                'drug_name': drug_to_show.name,
-                'drug_strength': drug_to_show.strength or '',
-                'drug_form': drug_to_show.form or '',
+                'drug_id': str(drug_to_show.id) if drug_to_show else '',
+                'original_drug_id': str(rx.drug.id) if rx.drug else '',
+                'drug_name': getattr(drug_to_show, 'name', '') or '',
+                'drug_strength': getattr(drug_to_show, 'strength', None) or '',
+                'drug_form': getattr(drug_to_show, 'form', None) or '',
                 'dose': rx.dose,
                 'frequency': rx.frequency,
                 'duration': rx.duration,
@@ -4129,11 +4322,30 @@ def get_pharmacy_order_prescriptions(request, order_id):
                 'drug_price': float(drug_price),
                 'total_price': float(drug_price * qty_to_show),
                 'instructions': rx.instructions,
-                'stock_available': int(stock_available),
+                'stock_available': 0,
                 'has_active_bill': has_active_bill,
                 'prescribed_on': timezone.localtime(rx.created).strftime('%Y-%m-%d %H:%M') if getattr(rx, 'created', None) else '',
                 **payment_fields,
             })
+
+        drug_ids = [d.id for d in drugs_shown if d is not None]
+        stock_by_drug = {}
+        if drug_ids:
+            stock_by_drug = {
+                str(did): int(total or 0)
+                for did, total in (
+                    PharmacyStock.objects.filter(
+                        drug_id__in=drug_ids,
+                        is_deleted=False,
+                        quantity_on_hand__gt=0,
+                    )
+                    .values('drug_id')
+                    .annotate(total=Sum('quantity_on_hand'))
+                    .values_list('drug_id', 'total')
+                )
+            }
+        for rx_data in prescriptions_data:
+            rx_data['stock_available'] = stock_by_drug.get(rx_data.get('drug_id') or '', 0)
 
         patient = order.encounter.patient
 
@@ -4147,13 +4359,13 @@ def get_pharmacy_order_prescriptions(request, order_id):
             is_insurance_or_corporate = True
 
         # Check insurance exclusion for each drug (insurance/corporate only)
+        drug_by_id = {str(d.id): d for d in drugs_shown if d is not None}
         for rx_data in prescriptions_data:
             rx_data['is_insurance_excluded'] = False
             if is_insurance_or_corporate and payer_info.get('payer'):
                 try:
-                    from .models import Drug
                     from .services.insurance_exclusion_service import InsuranceExclusionService
-                    drug = Drug.objects.filter(pk=rx_data['drug_id']).first()
+                    drug = drug_by_id.get(rx_data['drug_id'])
                     if drug:
                         result = InsuranceExclusionService(
                             patient=patient, payer=payer_info['payer'], drug=drug
@@ -4485,10 +4697,12 @@ def dispense_pharmacy_order(request, order_id):
                     'Send this order to insurance/payer first before dispensing.'
                 ),
                 'payment_or_cashier_required': (
-                    'Ensure payment is recorded at the cashier for each medication line.'
+                    'Collect the full pharmacy invoice amount at the cashier before dispensing. '
+                    'Other unpaid services on the same bill do not block drugs once pharmacy is paid.'
                 ),
                 'invoice_not_settled': (
-                    'The encounter invoice must be fully settled before dispensing.'
+                    'Collect the full pharmacy (drug) amount at the cashier before dispensing. '
+                    'Other unpaid services on the same bill do not block drugs once pharmacy is paid.'
                 ),
             }
             return JsonResponse({
@@ -4698,6 +4912,8 @@ def get_imaging_study_images(request, study_id):
         
         images_data = []
         for img in images:
+            if not img.has_stored_file:
+                continue
             images_data.append({
                 'id': str(img.id),
                 'url': img.image.url,
@@ -4841,13 +5057,14 @@ def start_imaging_order(request, order_id):
     from django.contrib import messages
     from django.shortcuts import redirect
     from django.http import JsonResponse
-    
-    # Check if this is an AJAX request (check multiple ways)
+
+    # True AJAX/fetch only — do NOT treat "/api/" in the path as AJAX by itself,
+    # or browser form POSTs (pending orders) get a raw JSON page instead of a redirect.
+    accept = (request.headers.get('Accept') or '').lower()
     is_ajax = (
-        request.headers.get('X-Requested-With') == 'XMLHttpRequest' or
-        request.GET.get('ajax') == 'true' or
-        request.content_type == 'application/json' or
-        '/api/' in request.path
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.GET.get('ajax') == 'true'
+        or 'application/json' in accept
     )
     
     try:

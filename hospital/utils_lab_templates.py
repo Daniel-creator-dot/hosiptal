@@ -200,7 +200,7 @@ _TFT_SUBSTRING_PHRASES = ('tft', 'thyroid', 'thyroxine', 'triiodothyronine')
 _TFT_BOUNDARY_TOKENS = ('tsh', 't3', 't4')
 # No bare 'fasting' — would match "Fasting Lipid Panel" and force glucose template before code/lipid checks.
 KEYWORDS_GLUCOSE = [
-    'glucose', 'blood sugar', 'fbs', 'rbs', 'hba1c', 'glycated', 'ogtt',
+    'glucose', 'blood sugar', 'fbs', 'rbs', 'hba1c', 'hbaic', 'glycated', 'ogtt',
     'fasting blood sugar', 'fasting glucose', 'fasting plasma glucose',
     'random blood sugar', 'glycated hemoglobin',
     'post prandial', 'post-prandial', 'ppbs',

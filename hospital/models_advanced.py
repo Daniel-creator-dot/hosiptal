@@ -119,14 +119,24 @@ class ClinicalNote(BaseModel):
             # Determine if specialist consultation (based on department or doctor profession)
             consultation_type = 'general'
             if self.created_by:
-                # Check if specialist department
-                if hasattr(self.created_by, 'department') and self.created_by.department:
+                try:
+                    from .utils_doctor_pricing import DoctorPricingService
+                    if DoctorPricingService.is_specialist_doctor(self.created_by):
+                        consultation_type = 'specialist'
+                except Exception:
+                    pass
+                if consultation_type != 'specialist' and hasattr(self.created_by, 'department') and self.created_by.department:
                     dept_name = self.created_by.department.name.lower()
-                    if any(keyword in dept_name for keyword in ['specialist', 'cardio', 'dental', 'ortho', 'neuro', 'ophthal']):
+                    if any(
+                        keyword in dept_name
+                        for keyword in (
+                            'specialist', 'cardio', 'dental', 'ortho', 'neuro', 'ophthal',
+                            'psychiatr', 'psychiatry', 'mental', 'physio',
+                        )
+                    ):
                         if not is_gp_general_medicine_department(self.created_by.department):
                             consultation_type = 'specialist'
-                # Check profession
-                elif self.created_by.profession in ['specialist']:
+                elif consultation_type != 'specialist' and self.created_by.profession in ['specialist']:
                     consultation_type = 'specialist'
                 consultation_type = normalize_consultation_type_for_gp_department(
                     self.encounter, consultation_type, self.created_by
@@ -217,7 +227,19 @@ class Diagnosis(BaseModel):
         help_text="Link to DiagnosisCode for proper name display"
     )
     diagnosis = models.CharField(max_length=200)
-    diagnosis_type = models.CharField(max_length=50, default='primary')  # primary, secondary, differential
+    DIAGNOSIS_TYPE_CHOICES = [
+        ('preliminary', 'Preliminary (before investigations)'),
+        ('final', 'Final (after results)'),
+        ('primary', 'Primary'),
+        ('secondary', 'Secondary'),
+        ('differential', 'Differential'),
+    ]
+    diagnosis_type = models.CharField(
+        max_length=50,
+        choices=DIAGNOSIS_TYPE_CHOICES,
+        default='preliminary',
+        help_text='Preliminary = working diagnosis before lab/imaging; Final = confirmed after results.',
+    )
     description = models.TextField(blank=True)
     diagnosed_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True)
     diagnosis_date = models.DateTimeField(default=timezone.now)
@@ -617,6 +639,10 @@ class ImagingCatalog(BaseModel):
     insurance_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Insurance/NHIS price')
     description = models.TextField(blank=True, help_text='Description of the imaging study')
     is_active = models.BooleanField(default=True, help_text='Whether this study is available for ordering')
+    nhis_covered = models.BooleanField(
+        default=False,
+        help_text='When set, this scan is on the NHIS list and can be ordered for NHIS patients without cash pay',
+    )
     
     class Meta:
         ordering = ['modality', 'name']
@@ -718,14 +744,18 @@ class ImagingImage(BaseModel):
         return f"Image {self.sequence_number} - {self.imaging_study}"
 
     @property
+    def has_stored_file(self):
+        return bool(self.image and getattr(self.image, 'name', None))
+
+    @property
     def filename(self):
-        if not self.image:
+        if not self.has_stored_file:
             return ""
         return os.path.basename(self.image.name)
 
     @property
     def is_previewable(self):
-        if not self.image:
+        if not self.has_stored_file:
             return False
         _, ext = os.path.splitext(self.image.name.lower())
         return ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}

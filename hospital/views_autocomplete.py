@@ -222,7 +222,9 @@ def api_autocomplete_drugs(request):
     )
     
     # Filter for active, non-deleted drugs with valid names
-    drugs = list(Drug.objects.filter(
+    from .services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    drugs_qs = Drug.objects.filter(
         search_query,
         is_active=True,
         is_deleted=False,
@@ -231,23 +233,22 @@ def api_autocomplete_drugs(request):
         name__iexact=''
     ).exclude(
         name__icontains='INVALID'
-    ).order_by('name')[:20])
+    )
+    drugs_qs = restrict_drug_queryset_for_payer(drugs_qs, pricing_payer)
+    drugs = list(drugs_qs.order_by('name')[:20])
 
     # Stock quantity - PharmacyStock first, InventoryItem (pharmacy store) as fallback
     stock_map = {}
     expiry_map = {}  # Soonest expiry per drug (for doctors to see expiring drugs)
     try:
+        from .pharmacy_stock_utils import pharmacy_stock_qty_map_for_drugs
         from .models import PharmacyStock
-        from django.db.models import Sum, Min
+        from django.db.models import Min
         from django.utils import timezone as tz
         from datetime import timedelta
         if drugs:
             drug_ids = [d.id for d in drugs]
-            stock_totals = PharmacyStock.objects.filter(
-                drug_id__in=drug_ids,
-                is_deleted=False
-            ).values('drug_id').annotate(total=Sum('quantity_on_hand'))
-            stock_map = {s['drug_id']: (s['total'] or 0) for s in stock_totals}
+            stock_map = pharmacy_stock_qty_map_for_drugs(drug_ids)
             # Soonest expiry per drug (within 30 days, not expired) - for doctor awareness
             today = tz.now().date()
             expiring_soon = today + timedelta(days=30)
@@ -259,35 +260,25 @@ def api_autocomplete_drugs(request):
                 is_deleted=False
             ).values('drug_id').annotate(soonest=Min('expiry_date'))
             expiry_map = {s['drug_id']: s['soonest'] for s in soonest_expiry}
-            # Fallback: add InventoryItem qty for drugs with 0 in PharmacyStock
-            try:
-                from .models_procurement import Store, InventoryItem
-                pharmacy_store = Store.get_pharmacy_store_for_prescriptions()
-                if pharmacy_store:
-                    for item in InventoryItem.objects.filter(
-                        store=pharmacy_store, drug_id__in=drug_ids,
-                        is_deleted=False, is_active=True
-                    ).values('drug_id', 'quantity_on_hand'):
-                        did = item['drug_id']
-                        if did and (stock_map.get(did) or 0) == 0:
-                            stock_map[did] = item['quantity_on_hand'] or 0
-            except Exception:
-                pass
     except Exception:
         pass
+
+    from .pharmacy_stock_utils import OUT_OF_STOCK_PRESCRIBE_MESSAGE
 
     results = []
     for drug in drugs:
         price = float(get_drug_price_for_prescription(drug, pricing_payer))
 
         # Stock quantity - show for all users so doctors see availability
-        stock_qty = stock_map.get(drug.id, 0) or 0
+        stock_qty = int(stock_map.get(drug.id, 0) or 0)
+        available = stock_qty > 0
         if stock_qty > 0:
             stock_str = f"<strong>Stock: {stock_qty}</strong> | "
-        elif stock_qty == 0:
-            stock_str = "<strong>Stock: 0 (Out of stock)</strong> | "
         else:
-            stock_str = ""
+            stock_str = (
+                f"<strong style=\"color:#b91c1c;\">Stock: {stock_qty} — "
+                f"{OUT_OF_STOCK_PRESCRIBE_MESSAGE}</strong> | "
+            )
 
         # Expiry warning - show when drug has stock expiring within 30 days
         expiry_str = ""
@@ -318,7 +309,10 @@ def api_autocomplete_drugs(request):
         
         # Display: drug name + stock + expiry badge when expiring soon
         base_display = f"{drug.name} {drug.strength or ''} {drug.form or ''}".strip()
-        display_with_stock = f"{base_display} · Stock: {stock_qty}" if stock_qty >= 0 else base_display
+        if available:
+            display_with_stock = f"{base_display} · Stock: {stock_qty}"
+        else:
+            display_with_stock = f"{base_display} · Out of stock — see pharmacist"
         if expiry_fmt:
             display_with_stock = f"{display_with_stock} · Expires: {expiry_fmt}"
 
@@ -343,9 +337,12 @@ def api_autocomplete_drugs(request):
             'price': str(round(price, 2)),
             'unit_price': str(round(price, 2)),
             'cost_price': str(round(cost_price, 2)),
-            'stock_qty': int(stock_qty) if stock_qty is not None else 0,
+            'stock_qty': stock_qty,
+            'available': available,
+            'unavailable_reason': '' if available else OUT_OF_STOCK_PRESCRIBE_MESSAGE,
             'display': display_with_stock,
             'subtext': subtext,
+            'nhis_covered': bool(getattr(drug, 'nhis_covered', False)),
             **exclusion,
         })
     
@@ -359,6 +356,7 @@ def api_autocomplete_lab_tests(request):
     Returns JSON with lab test suggestions as user types
     """
     from .utils_cache import lab_test_catalog_search_queryset
+    from .utils_billing import billed_lab_or_scan_catalog_price
 
     query = request.GET.get('q', '').strip()
     encounter_id = request.GET.get('encounter_id', '').strip()
@@ -373,7 +371,7 @@ def api_autocomplete_lab_tests(request):
         except Exception:
             pricing_payer = None
 
-    lab_tests = list(lab_test_catalog_search_queryset(query, limit=50))
+    lab_tests = list(lab_test_catalog_search_queryset(query, limit=50, payer=pricing_payer))
 
     # Check if user is a doctor or nurse (they shouldn't see prices)
     is_doctor = False
@@ -400,8 +398,9 @@ def api_autocomplete_lab_tests(request):
         except Exception:
             pass
         # Build subtext - exclude price for doctors and nurses
+        billed_price = billed_lab_or_scan_catalog_price(test.price, pricing_payer, kind='lab')
         if can_see_prices:
-            subtext = f"Specimen: {test.specimen_type or 'N/A'} | <strong>Price: GHS {(float(test.price) if test.price else 0.00):.2f}</strong>"
+            subtext = f"Specimen: {test.specimen_type or 'N/A'} | <strong>Price: GHS {float(billed_price):.2f}</strong>"
         else:
             subtext = f"Specimen: {test.specimen_type or 'N/A'}"
         if exclusion.get('is_insurance_excluded'):
@@ -416,9 +415,10 @@ def api_autocomplete_lab_tests(request):
             'name': test.name,
             'code': test.code or 'N/A',
             'specimen_type': test.specimen_type or 'N/A',
-            'price': str(float(test.price) if test.price else 0.00),
+            'price': str(float(billed_price)),
             'display': display,
             'subtext': subtext,
+            'nhis_covered': bool(getattr(test, 'nhis_covered', False)),
             **exclusion,
         })
     
@@ -432,6 +432,7 @@ def api_autocomplete_imaging_studies(request):
     Returns JSON with imaging study suggestions as user types
     """
     from .models import Staff
+    from .utils_billing import billed_lab_or_scan_catalog_price
     
     # Check if user is a doctor or nurse (they shouldn't see prices)
     is_doctor = False
@@ -464,6 +465,17 @@ def api_autocomplete_imaging_studies(request):
             use_catalog = False
     
     query = request.GET.get('q', '').strip()
+    encounter_id = request.GET.get('encounter_id', '').strip()
+    pricing_payer = None
+    if encounter_id:
+        try:
+            from .models import Encounter
+            from .utils_billing import get_patient_payer_info
+            enc = Encounter.objects.filter(pk=encounter_id, is_deleted=False).select_related('patient').first()
+            if enc and enc.patient_id:
+                pricing_payer = get_patient_payer_info(enc.patient, enc).get('payer')
+        except Exception:
+            pricing_payer = None
     
     if len(query) < 2:
         return JsonResponse({'results': []})
@@ -472,6 +484,7 @@ def api_autocomplete_imaging_studies(request):
     
     if use_catalog:
         # Search in ImagingCatalog
+        from .services.nhis_drug_formulary import restrict_nhis_covered_queryset
         search_query = Q(
             Q(name__icontains=query) |
             Q(code__icontains=query) |
@@ -479,18 +492,31 @@ def api_autocomplete_imaging_studies(request):
             Q(modality__icontains=query)
         )
         
-        studies = ImagingCatalog.objects.filter(
+        studies_qs = ImagingCatalog.objects.filter(
             search_query,
             is_active=True,
             is_deleted=False
-        )[:20]
+        )
+        studies = restrict_nhis_covered_queryset(studies_qs, pricing_payer)[:20]
         
         for study in studies:
+            exclusion = {}
+            try:
+                from .services.insurance_exclusion_service import catalog_exclusion_info
+                exclusion = catalog_exclusion_info(item=study, payer=pricing_payer)
+            except Exception:
+                pass
+            billed_price = billed_lab_or_scan_catalog_price(study.price, pricing_payer, kind='imaging')
             # Build subtext - exclude price for doctors
             if is_doctor:
                 subtext = f"Modality: {study.modality or 'N/A'} | Body Part: {study.body_part or 'N/A'}"
             else:
-                subtext = f"Modality: {study.modality or 'N/A'} | Body Part: {study.body_part or 'N/A'} | <strong>Price: GHS {(float(study.price) if study.price else 0.00):.2f}</strong>"
+                subtext = f"Modality: {study.modality or 'N/A'} | Body Part: {study.body_part or 'N/A'} | <strong>Price: GHS {float(billed_price):.2f}</strong>"
+            if exclusion.get('is_insurance_excluded'):
+                subtext += ' | <strong style="color:#b45309;">Insurance excluded — patient pays cash</strong>'
+            display = f"{study.name or study.description} ({study.code or 'No Code'})"
+            if exclusion.get('is_insurance_excluded'):
+                display = f'{display} · ⚠ Not on insurance'
             
             results.append({
                 'id': str(study.id),
@@ -498,9 +524,11 @@ def api_autocomplete_imaging_studies(request):
                 'code': study.code or 'N/A',
                 'modality': study.modality or 'N/A',
                 'body_part': study.body_part or 'N/A',
-                'price': str(float(study.price) if study.price else 0.00),
-                'display': f"{study.name or study.description} ({study.code or 'No Code'})",
-                'subtext': subtext
+                'price': str(float(billed_price)),
+                'display': display,
+                'subtext': subtext,
+                'nhis_covered': bool(getattr(study, 'nhis_covered', False)),
+                **exclusion,
             })
     else:
         # Fallback: Search in ImagingPrice or return empty

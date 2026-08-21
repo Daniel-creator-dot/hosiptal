@@ -12,6 +12,8 @@ _STREAM_TO_SERVICE_TYPE = {
     'consultation': 'consultation',
     'consultation_general': 'consultation',
     'consultation_specialist': 'consultation',
+    'sustainability': 'sustainability',
+    'sustainability_insurance': 'sustainability',
     'lab': 'lab',
     'laboratory': 'lab',
     'pharmacy': 'pharmacy',
@@ -34,6 +36,391 @@ def stream_to_service_type(stream_key):
     return _STREAM_TO_SERVICE_TYPE.get(
         key, key if key in _STREAM_TO_SERVICE_TYPE.values() else 'other'
     )
+
+
+def _peel_sustainability_from_amount(amt, remaining_fee):
+    """
+    Take Sustainability and Insurance (up to remaining GHS 8) first from a
+    consultation-like payment slice — not a proportional fraction of the tariff.
+
+    Proportional peels produced under-8 credits (e.g. 156 → 7.90) and, across
+    partial payments, also over-posted 4115 when consultation was re-allocated.
+    """
+    amt = Decimal(str(amt or 0))
+    remaining_fee = Decimal(str(remaining_fee or 0))
+    if amt <= 0 or remaining_fee <= 0:
+        return D0, amt
+    sust = min(remaining_fee, amt).quantize(Decimal('0.01'))
+    return sust, amt - sust
+
+
+def _sustainability_due_for_invoice(invoice):
+    """GHS 8 × number of consultation-like lines on the invoice (min one fee if peeling)."""
+    from hospital.utils_billing import (
+        CONSULTATION_LINE_SERVICE_CODES,
+        SUSTAINABILITY_FEE,
+        is_consultation_like_charge,
+    )
+
+    if invoice is None:
+        return SUSTAINABILITY_FEE
+    n = 0
+    try:
+        for line in invoice.lines.filter(
+            is_deleted=False, waived_at__isnull=True
+        ).select_related('service_code'):
+            code = (
+                getattr(getattr(line, 'service_code', None), 'code', None) or ''
+            ).strip().upper()
+            desc = getattr(line, 'description', None) or ''
+            if code in CONSULTATION_LINE_SERVICE_CODES or code == 'PHYSIO-SUB':
+                n += 1
+            elif is_consultation_like_charge(code=code, description=desc):
+                n += 1
+    except Exception:
+        return SUSTAINABILITY_FEE
+    if n <= 0:
+        return SUSTAINABILITY_FEE
+    return (SUSTAINABILITY_FEE * n).quantize(Decimal('0.01'))
+
+
+def _sustainability_already_posted_for_invoice(invoice):
+    """Sum of 4115 credits already posted for this invoice (payments + deposit applies)."""
+    if invoice is None:
+        return D0
+    try:
+        from django.db.models import Sum
+
+        from hospital.models_accounting import Account, Transaction
+        from hospital.models_accounting_advanced import AdvancedJournalEntry, AdvancedJournalEntryLine
+    except Exception:
+        return D0
+
+    acc = Account.objects.filter(account_code='4115', is_deleted=False).first()
+    if acc is None:
+        acc = Account.objects.filter(account_code='4115').first()
+    if acc is None:
+        return D0
+
+    refs = set(
+        Transaction.objects.filter(
+            invoice_id=invoice.pk,
+            transaction_type='payment_received',
+            is_deleted=False,
+        ).values_list('transaction_number', flat=True)
+    )
+    refs.update(
+        AdvancedJournalEntry.objects.filter(
+            invoice_id=invoice.pk,
+            is_deleted=False,
+            status='posted',
+        ).values_list('reference', flat=True)
+    )
+    try:
+        from hospital.models_patient_deposits import DepositApplication
+
+        for dep_num in DepositApplication.objects.filter(
+            invoice_id=invoice.pk,
+            is_deleted=False,
+        ).values_list('deposit__deposit_number', flat=True):
+            if dep_num:
+                refs.add(f'DEP-{dep_num}')
+    except Exception:
+        pass
+
+    refs = {r for r in refs if r}
+    if not refs:
+        return D0
+
+    total = AdvancedJournalEntryLine.objects.filter(
+        account=acc,
+        is_deleted=False,
+        journal_entry__reference__in=refs,
+        journal_entry__is_deleted=False,
+        journal_entry__status='posted',
+    ).aggregate(s=Sum('credit_amount'))['s']
+    return total or D0
+
+
+_SERVICE_SUSTAINABILITY_PEEL_TYPES = frozenset({
+    'lab',
+    'lab_test',
+    'laboratory',
+    'pharmacy',
+    'pharmacy_walkin',
+    'pharmacy_prescription',
+    'medication',
+    'imaging',
+    'imaging_study',
+    'radiology',
+    'admission',
+    'bed',
+    'detainment',
+})
+
+
+def _coalesce_split_amounts(splits):
+    merged = {}
+    order = []
+    for svc, amt in splits:
+        amt = Decimal(str(amt or 0))
+        if amt <= 0:
+            continue
+        if svc not in merged:
+            order.append(svc)
+            merged[svc] = D0
+        merged[svc] += amt
+    return [(svc, merged[svc]) for svc in order]
+
+
+def peel_service_sustainability_from_splits(splits, invoice=None):
+    """
+    Peel the 10% Sustainability and Insurance increment from billed drug / lab / scan / ward
+    amounts (billed × 10/110 → GL 4115). Consultations keep the separate GHS 8 peel.
+    """
+    from hospital.utils_billing import invoice_uses_service_sustainability, service_sustainability_portion
+
+    if not splits:
+        return splits
+    if not invoice_uses_service_sustainability(invoice):
+        return [
+            (svc, Decimal(str(amt or 0)))
+            for svc, amt in splits
+            if Decimal(str(amt or 0)) > 0
+        ]
+
+    result = []
+    sust_total = D0
+    for svc, amt in splits:
+        amt = Decimal(str(amt or 0))
+        if amt <= 0:
+            continue
+        key = (svc or '').strip().lower()
+        if key == 'sustainability':
+            result.append((svc, amt))
+            continue
+        if key in _SERVICE_SUSTAINABILITY_PEEL_TYPES:
+            portion = service_sustainability_portion(amt)
+            rest = (amt - portion).quantize(Decimal('0.01'))
+            if rest > 0:
+                result.append((svc, rest))
+            if portion > 0:
+                sust_total += portion
+            continue
+        result.append((svc, amt))
+    if sust_total > 0:
+        result.append(('sustainability', sust_total.quantize(Decimal('0.01'))))
+    return _coalesce_split_amounts(result)
+
+
+def expand_consultation_with_sustainability(splits, invoice=None):
+    """
+    Peel Sustainability and Insurance onto GL 4115:
+
+    Consultation-like (fixed GHS 8, not 10%):
+    - General OPD: 158 → 150 consultation + 8 sustainability
+    - Specialist / gynae (CON002): billed fee includes +8 → peel 8
+    - Physio subsequent (PHYSIO-SUB): 158 → 150 physiotherapy + 8 sustainability
+    - Antenatal (MAT-ANC): 243 → 235 gynecology + 8 sustainability
+
+    Drugs, lab, scans, and ward/admission fees (billed already include +10%):
+    - Peel billed × 10/110 from lab / pharmacy / imaging / admission streams
+
+    Takes the full remaining GHS 8 from the consultation-like slice first (not a
+    proportional share). Caps total GHS-8 credits per invoice at 8 × consult lines.
+    The 10% service increment is peeled from each payment slice in proportion.
+    """
+    if not splits:
+        return splits
+
+    from hospital.utils_billing import (
+        ANC_VISIT,
+        GENERAL_CONSULTATION_CASH,
+        GENERAL_CONSULTATION_CORPORATE,
+        GENERAL_OPD_LINE_SERVICE_CODES,
+        GYNAE_SPECIAL,
+        PHYSIO_SUBSEQUENT,
+        SPECIALIST_CONSULTATION,
+        SUSTAINABILITY_FEE,
+        get_consultation_line_for_encounter,
+        get_consultation_price_for_encounter,
+        is_consultation_like_charge,
+    )
+
+    peel_consultation = False
+    peel_physio_sub = False
+    peel_gynecology = False
+    consult_tariff = None
+
+    encounter = getattr(invoice, 'encounter', None) if invoice else None
+    if encounter is None and invoice and getattr(invoice, 'encounter_id', None):
+        try:
+            from hospital.models import Encounter
+            encounter = Encounter.objects.filter(pk=invoice.encounter_id).first()
+        except Exception:
+            encounter = None
+
+    line_codes = set()
+    if invoice is not None:
+        try:
+            for line in invoice.lines.filter(is_deleted=False, waived_at__isnull=True).select_related('service_code'):
+                code = (getattr(getattr(line, 'service_code', None), 'code', None) or '').strip().upper()
+                desc = getattr(line, 'description', None) or ''
+                if code:
+                    line_codes.add(code)
+                if is_consultation_like_charge(code=code, description=desc):
+                    peel_consultation = True
+        except Exception:
+            pass
+
+    if 'PHYSIO-SUB' in line_codes:
+        peel_physio_sub = True
+    if 'CON002' in line_codes:
+        peel_consultation = True
+        peel_gynecology = True
+    if 'MAT-ANC' in line_codes:
+        peel_gynecology = True
+        consult_tariff = ANC_VISIT
+    if any(c in GENERAL_OPD_LINE_SERVICE_CODES for c in line_codes):
+        peel_consultation = True
+
+    if encounter:
+        try:
+            consult_tariff = get_consultation_price_for_encounter(encounter) or consult_tariff
+        except Exception:
+            pass
+        line = None
+        try:
+            line = get_consultation_line_for_encounter(encounter)
+        except Exception:
+            line = None
+        code = (
+            getattr(getattr(line, 'service_code', None), 'code', None) or ''
+        ).strip().upper()
+        if code == 'MAT-ANC':
+            peel_gynecology = True
+            if consult_tariff is None:
+                consult_tariff = ANC_VISIT
+        elif code in GENERAL_OPD_LINE_SERVICE_CODES or code == 'CON002':
+            peel_consultation = True
+        elif consult_tariff in (
+            GENERAL_CONSULTATION_CASH,
+            GENERAL_CONSULTATION_CORPORATE,
+            SPECIALIST_CONSULTATION,
+            GYNAE_SPECIAL,
+            ANC_VISIT,
+        ):
+            peel_consultation = True
+            if consult_tariff == ANC_VISIT or (
+                encounter and 'antenatal' in (getattr(encounter, 'encounter_type', None) or '').lower()
+            ):
+                peel_consultation = False
+                peel_gynecology = True
+        elif consult_tariff and consult_tariff >= GENERAL_CONSULTATION_CASH:
+            enc_type = (getattr(encounter, 'encounter_type', None) or '').strip().lower()
+            if enc_type in ('specialist', 'gynae') or code == 'CON002':
+                peel_consultation = True
+            elif 'antenatal' in enc_type or code == 'MAT-ANC':
+                peel_gynecology = True
+            elif enc_type:
+                if (
+                    consult_tariff < Decimal('200.00')
+                    or abs(consult_tariff - GENERAL_CONSULTATION_CASH) <= Decimal('0.01')
+                    or abs(consult_tariff - GENERAL_CONSULTATION_CORPORATE) <= Decimal('0.01')
+                ):
+                    peel_consultation = True
+    else:
+        for svc, amt in splits:
+            a = Decimal(str(amt or 0))
+            if a <= 0:
+                continue
+            if svc == 'consultation':
+                if (
+                    abs(a - GENERAL_CONSULTATION_CASH) <= Decimal('0.01')
+                    or abs(a - GENERAL_CONSULTATION_CORPORATE) <= Decimal('0.01')
+                    or abs(a - SPECIALIST_CONSULTATION) <= Decimal('0.01')
+                    or a >= Decimal('150.00')
+                ):
+                    peel_consultation = True
+                    if consult_tariff is None:
+                        consult_tariff = a
+            elif svc == 'gynecology' and (
+                abs(a - GYNAE_SPECIAL) <= Decimal('0.01')
+                or abs(a - ANC_VISIT) <= Decimal('0.01')
+                or a >= Decimal('235.00')
+            ):
+                peel_gynecology = True
+                if consult_tariff is None:
+                    consult_tariff = a
+            elif svc == 'physiotherapy' and abs(a - PHYSIO_SUBSEQUENT) <= Decimal('0.01'):
+                peel_physio_sub = True
+
+    if not peel_physio_sub:
+        for svc, amt in splits:
+            if svc == 'physiotherapy' and abs(Decimal(str(amt or 0)) - PHYSIO_SUBSEQUENT) <= Decimal('0.01'):
+                peel_physio_sub = True
+                break
+
+    if not peel_consultation and not peel_physio_sub and not peel_gynecology:
+        cleaned = [
+            (svc, Decimal(str(amt or 0)))
+            for svc, amt in splits
+            if Decimal(str(amt or 0)) > 0
+        ]
+        return peel_service_sustainability_from_splits(cleaned, invoice=invoice)
+
+    due = _sustainability_due_for_invoice(invoice)
+    already = _sustainability_already_posted_for_invoice(invoice)
+    remaining_fee = due - already
+    if remaining_fee < 0:
+        remaining_fee = D0
+    # Never peel more than one fee chunk beyond due (guards bad already-calc)
+    if remaining_fee > due:
+        remaining_fee = due
+    if remaining_fee > SUSTAINABILITY_FEE * 20:
+        remaining_fee = due
+
+    result = []
+    for svc, amt in splits:
+        amt = Decimal(str(amt or 0))
+        if amt <= 0:
+            continue
+        if svc == 'consultation' and peel_consultation:
+            sust, consult = _peel_sustainability_from_amount(amt, remaining_fee)
+            remaining_fee -= sust
+            if consult > 0:
+                result.append(('consultation', consult))
+            if sust > 0:
+                result.append(('sustainability', sust))
+            continue
+        # Psychiatry stream (before remapping) also carries the sustainability fee
+        if svc == 'psychiatry' and peel_consultation:
+            sust, psych = _peel_sustainability_from_amount(amt, remaining_fee)
+            remaining_fee -= sust
+            if psych > 0:
+                result.append(('psychiatry', psych))
+            if sust > 0:
+                result.append(('sustainability', sust))
+            continue
+        if svc == 'gynecology' and peel_gynecology:
+            sust, gyn = _peel_sustainability_from_amount(amt, remaining_fee)
+            remaining_fee -= sust
+            if gyn > 0:
+                result.append(('gynecology', gyn))
+            if sust > 0:
+                result.append(('sustainability', sust))
+            continue
+        if svc == 'physiotherapy' and peel_physio_sub:
+            sust, phys = _peel_sustainability_from_amount(amt, remaining_fee)
+            remaining_fee -= sust
+            if phys > 0:
+                result.append(('physiotherapy', phys))
+            if sust > 0:
+                result.append(('sustainability', sust))
+            continue
+        result.append((svc, amt))
+    peeled = result or [(svc, Decimal(str(amt or 0))) for svc, amt in splits]
+    return peel_service_sustainability_from_splits(peeled, invoice=invoice)
 
 
 def _normalize_cashier_service_type(raw):
@@ -469,6 +856,8 @@ def revenue_splits_for_transaction(txn, receipt=None):
     """
     Resolve revenue account splits for a payment transaction.
     Priority: cashier service_details → PaymentAllocation + service_details → invoice display lines → service_type.
+    Always peels GHS 8 Sustainability and Insurance from consultation / physio-subsequent
+    when applicable, and peels 10% of billed drugs / lab / scans / ward fees to 4115.
     """
     amount = txn.amount
     invoice = txn.invoice
@@ -476,20 +865,20 @@ def revenue_splits_for_transaction(txn, receipt=None):
 
     splits = cashier_revenue_splits_from_receipt(receipt, amount)
     if splits:
-        return splits
+        return expand_consultation_with_sustainability(splits, invoice=invoice)
 
     splits = _splits_from_payment_allocations(txn, receipt, amount)
     if splits:
-        return splits
+        return expand_consultation_with_sustainability(splits, invoice=invoice)
 
     if invoice:
         if service_type in ('other', 'combined', 'invoice', 'general'):
             splits = allocate_payment_to_revenue_accounts(invoice, amount)
             if splits:
-                return splits
+                return expand_consultation_with_sustainability(splits, invoice=invoice)
         if service_type not in ('other', 'combined'):
             line_splits = allocate_payment_to_revenue_accounts(invoice, amount)
             if len(line_splits) > 1:
-                return line_splits
+                return expand_consultation_with_sustainability(line_splits, invoice=invoice)
 
-    return [(service_type, amount)]
+    return expand_consultation_with_sustainability([(service_type, amount)], invoice=invoice)

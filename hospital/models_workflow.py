@@ -245,9 +245,11 @@ class CashierSession(BaseModel):
         """Bill/service payment_received totals (excludes patient deposit intake and deposit-to-bill postings)."""
         from decimal import Decimal
 
+        # total_payments is net (bill + deposit intake - refunds/withdrawals)
         tp = self.total_payments or Decimal('0')
         dr = self.deposit_received_total or Decimal('0')
-        out = tp - dr
+        rf = self.total_refunds or Decimal('0')
+        out = tp + rf - dr
         return out if out > 0 else Decimal('0')
 
     def save(self, *args, **kwargs):
@@ -264,10 +266,19 @@ class CashierSession(BaseModel):
         return f"{prefix}{timestamp}"
     
     def calculate_totals(self):
-        """Calculate session totals: bill/service payments, patient deposit intake, refunds, expected cash."""
+        """Calculate session totals: bill/service payments, patient deposit intake, refunds, expected cash.
+
+        total_payments is NET money for the session:
+        bill/service payments + deposit intake − refunds/deposit withdrawals.
+
+        Deposit withdrawals are attributed to the cashier who *received* the deposit
+        (by REFUND-{deposit_number}…), even if another user processed the payout —
+        otherwise the deposit keeps inflating that cashier's total after withdrawal.
+        """
         from .models_accounting import Transaction
         from .models_patient_deposits import PatientDeposit
         from django.db import models as db_models
+        from django.db.models import Q
         from decimal import Decimal
 
         session_end = self.closed_at if self.closed_at else timezone.now()
@@ -297,12 +308,58 @@ class CashierSession(BaseModel):
             total=db_models.Sum('deposit_amount')
         )['total'] or Decimal('0.00')
 
-        self.total_payments = bill_payments_total + self.deposit_received_total
+        # Withdrawals of deposits this cashier received (any processor) — for net totals
+        deposit_numbers = [
+            n for n in deposit_qs.values_list('deposit_number', flat=True) if n
+        ]
+        deposit_withdrawal_ids = set()
+        deposit_withdrawals_total = Decimal('0.00')
+        if deposit_numbers:
+            dep_ref_q = Q()
+            for num in deposit_numbers:
+                dep_ref_q |= Q(reference_number__startswith=f'REFUND-{num}')
+            dep_withdraw_qs = Transaction.objects.filter(
+                transaction_type__in=('refund_issued', 'refund'),
+                is_deleted=False,
+                transaction_date__lte=session_end,
+            ).filter(dep_ref_q)
+            for t in dep_withdraw_qs:
+                deposit_withdrawal_ids.add(t.pk)
+                deposit_withdrawals_total += t.amount or Decimal('0.00')
 
-        refunds = transactions.filter(transaction_type='refund_issued')
-        self.total_refunds = refunds.aggregate(
-            total=db_models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        # Credit refunds this cashier processed (not deposit REFUND-* withdrawals)
+        credit_refunds_qs = transactions.filter(
+            transaction_type='refund_issued',
+        ).exclude(reference_number__startswith='REFUND-')
+        credit_refunds_total = (
+            credit_refunds_qs.aggregate(total=db_models.Sum('amount'))['total']
+            or Decimal('0.00')
+        )
+        cash_credit_refunds = (
+            credit_refunds_qs.filter(payment_method='cash').aggregate(
+                total=db_models.Sum('amount')
+            )['total']
+            or Decimal('0.00')
+        )
+
+        # Legacy type 'refund' processed by this cashier that are not already counted
+        legacy_qs = transactions.filter(transaction_type='refund').exclude(
+            pk__in=deposit_withdrawal_ids
+        )
+        legacy_total = legacy_qs.aggregate(total=db_models.Sum('amount'))['total'] or Decimal('0.00')
+        cash_legacy = (
+            legacy_qs.filter(payment_method='cash').aggregate(total=db_models.Sum('amount'))['total']
+            or Decimal('0.00')
+        )
+
+        self.total_refunds = (
+            deposit_withdrawals_total + credit_refunds_total + legacy_total
+        )
+
+        gross_intake = bill_payments_total + self.deposit_received_total
+        self.total_payments = gross_intake - self.total_refunds
+        if self.total_payments < 0:
+            self.total_payments = Decimal('0.00')
 
         cash_bill_payments = bill_payments.filter(payment_method='cash')
         cash_payments_total = cash_bill_payments.aggregate(
@@ -316,19 +373,29 @@ class CashierSession(BaseModel):
             or Decimal('0.00')
         )
 
-        cash_refunds = refunds.filter(payment_method='cash')
-        cash_refunds_total = cash_refunds.aggregate(
-            total=db_models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        # Expected cash follows the drawer: only cash deposit withdrawals *this cashier* paid out
+        cash_deposit_withdrawals_paid = (
+            transactions.filter(
+                transaction_type__in=('refund_issued', 'refund'),
+                payment_method='cash',
+                reference_number__startswith='REFUND-',
+            ).aggregate(total=db_models.Sum('amount'))['total']
+            or Decimal('0.00')
+        )
 
         self.expected_cash = (
             self.opening_cash
             + cash_payments_total
             + cash_deposit_intake
-            - cash_refunds_total
+            - cash_deposit_withdrawals_paid
+            - cash_credit_refunds
+            - cash_legacy
         )
 
-        self.total_transactions = transactions.count()
+        own_txn_ids = set(transactions.values_list('pk', flat=True))
+        self.total_transactions = transactions.count() + len(
+            deposit_withdrawal_ids - own_txn_ids
+        )
 
         self.save(
             update_fields=[

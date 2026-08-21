@@ -70,9 +70,30 @@ class InsuranceExclusionService:
             except Exception:
                 lab_test = None
 
+        imaging_catalog = getattr(self, 'imaging_catalog', None)
+        if not imaging_catalog and self.service_code:
+            try:
+                from ..utils_invoice_line import resolve_imaging_catalog_for_invoice_line
+                class _Line:
+                    pass
+                line = _Line()
+                line.service_code = self.service_code
+                imaging_catalog = resolve_imaging_catalog_for_invoice_line(line)
+            except Exception:
+                imaging_catalog = None
+
         # Formulary-level exclusion — drugs (all insurers or selected companies)
         if self.drug:
             from .drug_formulary_insurance_exclusion import drug_excluded_for_payer
+            from .nhis_drug_formulary import nhis_uncovered_patient_pay_reason
+            nhis_reason = nhis_uncovered_patient_pay_reason(payer=self.payer, drug=self.drug)
+            if nhis_reason:
+                return InsuranceExclusionResult(
+                    is_excluded=True,
+                    enforcement='patient_pay',
+                    reason=nhis_reason,
+                    rule=None,
+                )
             excluded, reason = drug_excluded_for_payer(drug=self.drug, payer=self.payer)
             if excluded:
                 return InsuranceExclusionResult(
@@ -82,17 +103,37 @@ class InsuranceExclusionService:
                     rule=None,
                 )
 
-        # Formulary-level exclusion — lab tests (global flag only)
-        if lab_test and getattr(lab_test, 'exclude_from_insurance', False):
-            reason = (lab_test.insurance_exclusion_reason or '').strip()
-            if not reason:
-                reason = f'{lab_test.name} is not covered by insurance — patient must pay cash.'
-            return InsuranceExclusionResult(
-                is_excluded=True,
-                enforcement='patient_pay',
-                reason=reason,
-                rule=None,
-            )
+        # Formulary-level exclusion — lab tests (all insurers or selected companies)
+        if lab_test:
+            from .lab_test_insurance_exclusion import lab_test_excluded_for_payer
+            from .nhis_drug_formulary import nhis_uncovered_patient_pay_reason
+            nhis_reason = nhis_uncovered_patient_pay_reason(payer=self.payer, lab_test=lab_test)
+            if nhis_reason:
+                return InsuranceExclusionResult(
+                    is_excluded=True,
+                    enforcement='patient_pay',
+                    reason=nhis_reason,
+                    rule=None,
+                )
+            excluded, reason = lab_test_excluded_for_payer(lab_test=lab_test, payer=self.payer)
+            if excluded:
+                return InsuranceExclusionResult(
+                    is_excluded=True,
+                    enforcement='patient_pay',
+                    reason=reason,
+                    rule=None,
+                )
+
+        if imaging_catalog:
+            from .nhis_drug_formulary import nhis_uncovered_patient_pay_reason
+            nhis_reason = nhis_uncovered_patient_pay_reason(payer=self.payer, imaging_catalog=imaging_catalog)
+            if nhis_reason:
+                return InsuranceExclusionResult(
+                    is_excluded=True,
+                    enforcement='patient_pay',
+                    reason=nhis_reason,
+                    rule=None,
+                )
 
         # Corporate patients are not subject to insurance exclusions (handled above).
 
@@ -105,7 +146,7 @@ class InsuranceExclusionService:
         for rule in rules_qs:
             if not rule.is_effective(self.reference_date):
                 continue
-            if rule.matches_target(service_code=self.service_code, drug=self.drug):
+            if rule.matches_target(service_code=self.service_code, drug=self.drug, lab_test=lab_test):
                 reason = rule.formatted_reason(service_code=self.service_code, drug=self.drug)
                 return InsuranceExclusionResult(
                     is_excluded=rule.enforcement_action in ['block', 'patient_pay'],
@@ -153,7 +194,7 @@ class InsuranceExclusionService:
                 Q(insurance_plan__isnull=True)
             )
 
-        return qs.select_related('insurance_company', 'insurance_plan', 'service_code', 'drug')
+        return qs.select_related('insurance_company', 'insurance_plan', 'service_code', 'drug', 'lab_test')
 
 
 def catalog_exclusion_info(*, item, payer=None) -> dict:
@@ -161,10 +202,31 @@ def catalog_exclusion_info(*, item, payer=None) -> dict:
     Exclusion metadata for Drug or LabTest rows (autocomplete / consultation UI).
     is_insurance_excluded is True when the item is excluded for this payer (insurance only).
     """
-    from ..models import Drug
+    from ..models import Drug, LabTest
+    from .nhis_drug_formulary import nhis_uncovered_patient_pay_reason
 
     reason = (getattr(item, 'insurance_exclusion_reason', '') or '').strip()
     payer_is_insurance = is_insurance_billing_payer(payer)
+
+    nhis_kwargs = {}
+    if isinstance(item, Drug):
+        nhis_kwargs['drug'] = item
+    elif isinstance(item, LabTest):
+        nhis_kwargs['lab_test'] = item
+    else:
+        try:
+            from ..models_advanced import ImagingCatalog
+            if isinstance(item, ImagingCatalog):
+                nhis_kwargs['imaging_catalog'] = item
+        except Exception:
+            pass
+    nhis_reason = nhis_uncovered_patient_pay_reason(payer=payer, **nhis_kwargs) if nhis_kwargs else ''
+    if nhis_reason:
+        return {
+            'exclude_from_insurance': True,
+            'is_insurance_excluded': True,
+            'insurance_exclusion_reason': nhis_reason,
+        }
 
     if isinstance(item, Drug):
         from .drug_formulary_insurance_exclusion import (
@@ -174,6 +236,25 @@ def catalog_exclusion_info(*, item, payer=None) -> dict:
         has_config = drug_has_any_insurance_exclusion(drug=item)
         if payer_is_insurance:
             excluded, payer_reason = drug_excluded_for_payer(drug=item, payer=payer)
+            return {
+                'exclude_from_insurance': has_config,
+                'is_insurance_excluded': excluded,
+                'insurance_exclusion_reason': payer_reason if excluded else '',
+            }
+        return {
+            'exclude_from_insurance': has_config,
+            'is_insurance_excluded': False,
+            'insurance_exclusion_reason': reason if has_config else '',
+        }
+
+    if isinstance(item, LabTest):
+        from .lab_test_insurance_exclusion import (
+            lab_test_excluded_for_payer,
+            lab_test_has_any_insurance_exclusion,
+        )
+        has_config = lab_test_has_any_insurance_exclusion(lab_test=item)
+        if payer_is_insurance:
+            excluded, payer_reason = lab_test_excluded_for_payer(lab_test=item, payer=payer)
             return {
                 'exclude_from_insurance': has_config,
                 'is_insurance_excluded': excluded,

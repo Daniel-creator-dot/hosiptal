@@ -128,14 +128,9 @@ class PaperlessReceiptService:
             
             # Create SMS message with receipt link
             message = (
-                f"💳 Payment Receipt\n"
-                f"Receipt: {receipt.receipt_number}\n"
-                f"Amount Paid: GHS {receipt.amount_paid}\n"
-                f"Date: {receipt.receipt_date.strftime('%b %d, %Y')}\n"
-                f"\n"
-                f"View details: {settings.SITE_URL}/hms/receipt/{receipt.id}/\n"
-                f"\n"
-                f"PrimeCare Medical Center"
+                f"Receipt {receipt.receipt_number}: paid GHS {receipt.amount_paid} "
+                f"on {receipt.receipt_date.strftime('%d/%m/%Y')}. "
+                f"Details: {settings.SITE_URL}/hms/receipt/{receipt.id}/ -PrimeCare"
             )
             
             # Send SMS

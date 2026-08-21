@@ -452,6 +452,109 @@
                 </div>
             </div>
 
+            <!-- NHIS panel -->
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="nhis_covered" name="nhis_covered"
+                           {% if test.nhis_covered %}checked{% endif %}>
+                    <label class="form-check-label" for="nhis_covered">
+                        <strong>NHIS-covered lab test</strong>
+                    </label>
+                    <div class="form-text">Doctors can order this for NHIS patients without cash pay. Unchecked tests can still be added at cashier as patient cash.</div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h6><i class="bi bi-box-seam"></i>Kit / reagent tracking</h6>
+                <p class="text-muted small mb-3">
+                    Measurable labs are kit tests (one cassette per completed test).
+                    Immeasurable labs are chemistry reagents counted as remaining tests per kit.
+                </p>
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label" for="stock_tracking">Tracking type</label>
+                        <select class="form-select" name="stock_tracking" id="stock_tracking">
+                            <option value="untracked" {% if not test or test.stock_tracking == 'untracked' %}selected{% endif %}>Not tracked</option>
+                            <option value="measurable" {% if test.stock_tracking == 'measurable' %}selected{% endif %}>Measurable (kit / cassette)</option>
+                            <option value="immeasurable" {% if test.stock_tracking == 'immeasurable' %}selected{% endif %}>Immeasurable (chemistry reagent)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <label class="form-label" for="kit_name">Kit / reagent name</label>
+                        <input type="text" class="form-control" name="kit_name" id="kit_name"
+                               value="{% if test %}{{ test.kit_name }}{% endif %}"
+                               placeholder="e.g. Typhoid IgG/IgM">
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <label class="form-label" for="qty_per_box">Pieces per box</label>
+                        <input type="number" class="form-control" name="qty_per_box" id="qty_per_box"
+                               min="1" value="{% if test and test.qty_per_box %}{{ test.qty_per_box }}{% endif %}"
+                               placeholder="25">
+                        <small class="text-muted">Measurable kits, e.g. 25 or 100</small>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <label class="form-label" for="tests_per_kit">Tests per kit</label>
+                        <input type="number" class="form-control" name="tests_per_kit" id="tests_per_kit"
+                               min="1" value="{% if test and test.tests_per_kit %}{{ test.tests_per_kit }}{% endif %}"
+                               placeholder="330">
+                        <small class="text-muted">Chemistry kits, e.g. Urea 330</small>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <label class="form-label" for="reagent_volume_note">Volume note</label>
+                        <input type="text" class="form-control" name="reagent_volume_note" id="reagent_volume_note"
+                               value="{% if test %}{{ test.reagent_volume_note }}{% endif %}"
+                               placeholder="R1: 4x35ml R2: 2x18ml">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Insurance Exclusion -->
+            <div class="form-section">
+                <h6><i class="bi bi-shield-x"></i>Insurance Exclusion</h6>
+                <p class="text-muted small mb-3">
+                    Insurance patients pay cash at cashier for excluded tests. Corporate billing is unchanged.
+                    Exclude from all insurers, or tick only the companies that do not cover this test.
+                </p>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="exclude_from_insurance" name="exclude_from_insurance"
+                           {% if test.exclude_from_insurance %}checked{% endif %}>
+                    <label class="form-check-label" for="exclude_from_insurance">
+                        <strong>Exclude from all insurance companies</strong>
+                    </label>
+                    <div class="form-text">NHIS and private insurers. Leave off to pick specific companies below.</div>
+                </div>
+                <div class="mb-3" id="insuranceCompanyPicker">
+                    <label class="form-label">Or exclude selected companies only</label>
+                    {% if insurance_companies %}
+                    <div class="border rounded p-3 bg-light" style="max-height: 220px; overflow-y: auto;">
+                        {% for company in insurance_companies %}
+                        <div class="form-check">
+                            <input class="form-check-input insurance-company-checkbox" type="checkbox"
+                                   name="excluded_insurance_companies"
+                                   value="{{ company.id }}"
+                                   id="ins_co_{{ company.id }}"
+                                   {% if company.id in selected_insurance_company_ids %}checked{% endif %}>
+                            <label class="form-check-label" for="ins_co_{{ company.id }}">
+                                {{ company.name }}
+                                <span class="text-muted small">({{ company.code }})</span>
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="form-text">Tick one or more insurers. Leave empty and turn off “exclude all” to keep the test covered.</div>
+                    {% else %}
+                    <p class="text-muted small mb-0">No active insurance companies found. Add insurers under Insurance management first.</p>
+                    {% endif %}
+                </div>
+                <div class="mb-0">
+                    <label for="insurance_exclusion_reason" class="form-label">Reason (shown to prescribers, lab &amp; cashier)</label>
+                    <textarea class="form-control" id="insurance_exclusion_reason"
+                              name="insurance_exclusion_reason" rows="2" maxlength="255"
+                              placeholder="e.g. Not on NHIS panel">{% if test %}{{ test.insurance_exclusion_reason|default:'' }}{% endif %}</textarea>
+                </div>
+            </div>
+
             <!-- Form Actions -->
             <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
                 <a href="{% if test %}{% url 'hospital:lab_test_detail' test.pk %}{% else %}{% url 'hospital:lab_tests_catalog' %}{% endif %}" 
@@ -671,6 +774,22 @@ document.addEventListener('DOMContentLoaded', function() {
         codeInput.addEventListener('input', function() {
             this.value = this.value.toUpperCase();
         });
+    }
+
+    const excludeAll = document.getElementById('exclude_from_insurance');
+    const companyPicker = document.getElementById('insuranceCompanyPicker');
+    function syncInsurancePickerState() {
+        if (!excludeAll || !companyPicker) return;
+        const disabled = excludeAll.checked;
+        companyPicker.style.opacity = disabled ? '0.55' : '1';
+        companyPicker.querySelectorAll('.insurance-company-checkbox').forEach(function (cb) {
+            cb.disabled = disabled;
+            if (disabled) cb.checked = false;
+        });
+    }
+    if (excludeAll) {
+        excludeAll.addEventListener('change', syncInsurancePickerState);
+        syncInsurancePickerState();
     }
 });
 </script>

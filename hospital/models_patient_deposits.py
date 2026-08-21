@@ -187,6 +187,14 @@ class PatientDeposit(BaseModel):
         
         if self.status != 'active':
             raise ValidationError(f"Cannot apply deposit {self.deposit_number}: Status is {self.get_status_display()}")
+
+        if getattr(invoice, 'is_deleted', False) or getattr(invoice, 'status', None) in (
+            'cancelled', 'paid', 'written_off'
+        ):
+            raise ValidationError(
+                f"Cannot apply deposit to invoice {getattr(invoice, 'invoice_number', invoice.pk)}: "
+                f"invoice is {getattr(invoice, 'status', 'unavailable')}"
+            )
         
         # Fix legacy: available_balance=0 but used_amount=0 and deposit_amount>0
         if (self.available_balance or Decimal('0')) <= 0 and (self.used_amount or Decimal('0')) == 0 and (self.deposit_amount or Decimal('0')) > 0:
@@ -256,6 +264,28 @@ class PatientDeposit(BaseModel):
                         transaction_date=timezone.now(),
                         notes=f'Payment from deposit {self.deposit_number}'
                     )
+                    # Tag consultation when deposit settles a consult invoice so cashier
+                    # paid-detection and revenue split both see it (GL still posts via DepositApplication).
+                    receipt_service_type = 'other'
+                    service_details = {'deposit_number': self.deposit_number}
+                    try:
+                        from hospital.utils_billing import CONSULTATION_LINE_SERVICE_CODES
+                        from hospital.services.receipt_revenue_allocation import (
+                            build_service_details_for_invoice,
+                        )
+                        has_consult = invoice.lines.filter(
+                            is_deleted=False,
+                            waived_at__isnull=True,
+                            service_code__code__in=CONSULTATION_LINE_SERVICE_CODES,
+                        ).exists()
+                        if has_consult:
+                            receipt_service_type = 'consultation'
+                            service_details = build_service_details_for_invoice(
+                                invoice, amount, service_type='consultation'
+                            )
+                            service_details['deposit_number'] = self.deposit_number
+                    except Exception:
+                        pass
                     PaymentReceipt.objects.create(
                         transaction_id=txn.pk,
                         invoice=invoice,
@@ -265,8 +295,8 @@ class PatientDeposit(BaseModel):
                         received_by=self.received_by,
                         receipt_date=timezone.now(),
                         notes=f'Payment from deposit {self.deposit_number}',
-                        service_type='other',
-                        service_details={'deposit_number': self.deposit_number}
+                        service_type=receipt_service_type,
+                        service_details=service_details,
                     )
             # Single source of truth: invoice totals/balance from lines + receipts + deposit applications
             invoice.update_totals()
@@ -275,64 +305,95 @@ class PatientDeposit(BaseModel):
     
     def refund(self, amount=None, refund_method='cash', refunded_by=None, notes=''):
         """
-        Refund all or part of the deposit
-        
-        Args:
-            amount: Amount to refund (defaults to available_balance)
-            refund_method: Method of refund
-            refunded_by: User processing the refund
-            notes: Refund notes
-        
-        Returns:
-            Refund transaction
+        Withdraw / refund all or part of the unused deposit (cashier withdrawal).
+
+        Creates a refund_issued transaction (unique ref per payout) so cashier session
+        cash and cashbook see the outflow. GL peels Customer Deposits → Cash.
         """
         from decimal import Decimal
-        
+        import uuid
+        from django.db import transaction as db_transaction
+
         # Fix legacy: available_balance=0 but used_amount=0 and deposit_amount>0
         if (self.available_balance or Decimal('0')) <= 0 and (self.used_amount or Decimal('0')) == 0 and (self.deposit_amount or Decimal('0')) > 0:
             self.available_balance = self.deposit_amount
             self.save(update_fields=['available_balance'])
-        
+
         if amount is None:
             amount = self.available_balance
         else:
             amount = Decimal(str(amount))
-        
+
+        if amount <= 0:
+            raise ValidationError('Refund amount must be greater than zero.')
+
         if amount > self.available_balance:
             raise ValidationError(
                 f"Refund amount GHS {amount} exceeds available balance GHS {self.available_balance}"
             )
-        
-        # Check for duplicate refund transaction before creating
-        refund_ref = f"REFUND-{self.deposit_number}"
-        existing_refund = Transaction.objects.filter(
-            transaction_type='refund',
-            reference_number=refund_ref,
-            is_deleted=False
-        ).first()
-        
-        if existing_refund:
-            # Duplicate found - return existing refund
-            refund_transaction = existing_refund
-        else:
-            # Create refund transaction
+
+        # Unique per payout so partial refunds each get their own txn + GL entry
+        refund_ref = f"REFUND-{self.deposit_number}-{uuid.uuid4().hex[:10].upper()}"
+
+        with db_transaction.atomic():
+            deposit = PatientDeposit.objects.select_for_update().get(pk=self.pk)
+            # Re-check under lock
+            avail = deposit.display_available_balance
+            if (deposit.available_balance or Decimal('0')) <= 0 and avail > 0:
+                deposit.available_balance = avail
+            if amount > deposit.available_balance:
+                raise ValidationError(
+                    f"Refund amount GHS {amount} exceeds available balance GHS {deposit.available_balance}"
+                )
+
             refund_transaction = Transaction.objects.create(
-                transaction_type='refund',
-                patient=self.patient,
+                transaction_type='refund_issued',
+                patient=deposit.patient,
                 amount=amount,
-                payment_method=refund_method,
+                payment_method=refund_method or 'cash',
                 reference_number=refund_ref,
                 processed_by=refunded_by,
                 transaction_date=timezone.now(),
-                notes=f"Refund for deposit {self.deposit_number}. {notes}"
+                notes=(
+                    f"Deposit withdrawal for {deposit.deposit_number}. "
+                    f"{(notes or '').strip()}"
+                ).strip(),
             )
-        
-        # Update deposit
-        self.available_balance -= amount
-        if self.available_balance <= 0:
-            self.status = 'refunded'
-        self.save(update_fields=['available_balance', 'status'])
-        
+
+            deposit.available_balance = (deposit.available_balance or Decimal('0')) - amount
+            if deposit.available_balance <= 0:
+                deposit.available_balance = Decimal('0.00')
+                deposit.status = 'refunded'
+            deposit.save(update_fields=['available_balance', 'status'])
+
+            # Keep in-memory instance in sync
+            self.available_balance = deposit.available_balance
+            self.status = deposit.status
+
+        # Refresh open sessions: deposit intake is on received_by; processor may differ
+        try:
+            from .models_workflow import CashierSession
+
+            cashier_ids = set()
+            if deposit.received_by_id:
+                cashier_ids.add(deposit.received_by_id)
+            if refunded_by is not None:
+                cashier_ids.add(getattr(refunded_by, 'pk', refunded_by))
+            for cid in cashier_ids:
+                open_session = (
+                    CashierSession.objects.filter(
+                        cashier_id=cid,
+                        status='open',
+                        is_deleted=False,
+                    )
+                    .order_by('-opened_at')
+                    .first()
+                )
+                if open_session:
+                    open_session.calculate_totals()
+        except Exception:
+            pass
+
         return refund_transaction
     
     @property

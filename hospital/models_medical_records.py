@@ -219,6 +219,16 @@ class PatientDocument(BaseModel):
     def __str__(self):
         return f"{self.title} - {self.patient.full_name}"
 
+    @property
+    def has_stored_file(self):
+        name = getattr(self.file, 'name', None) if self.file else None
+        if not name:
+            return False
+        try:
+            return self.file.storage.exists(name)
+        except Exception:
+            return False
+
 
 class MedicalRecordAccess(BaseModel):
     """

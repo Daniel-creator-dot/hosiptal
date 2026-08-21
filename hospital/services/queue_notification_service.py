@@ -16,55 +16,31 @@ class QueueNotificationService:
     Supports SMS, WhatsApp, and Email
     """
     
-    # SMS Message Templates
+    # SMS Message Templates (short, no emoji — GSM-7 = cheaper segments)
     TEMPLATES = {
-        'check_in': """🏥 {hospital_name}
-
-Your visit ticket: {queue_number}
-(Show this ticket at reception if asked.)
-
-📍 {department}
-👥 Your place in line: #{position}
-⏱️ Est. wait: ~{wait_time} min
-📅 {date}
-
-Stay in the waiting area. Do not go to the consultation room until you get a text that names you and the doctor calling you.""",
-
-        'progress_update': """🏥 Queue update
-
-Ticket {queue_number}
-You're now #{position} in line
-⏱️ Est. wait: ~{wait_time} min
-
-Thanks for waiting — we're moving as fast as we can.""",
-
-        'ready': """🏥 {hospital_name}
-
-{call_line}
-
-{room_line}
-
-Ticket: {queue_number}
-
-Please arrive within 5 minutes.""",
-
-        'no_show': """🏥 Please come to the desk
-
-Ticket {queue_number} — we called you but there was no response.
-
-Please see reception right away so you don't lose your place.""",
-
-        'completed': """🏥 Thank you for visiting!
-
-Ticket {queue_number} — visit completed
-
-💊 Next steps:
-{next_steps}
-
-📱 Questions? Call: {hospital_phone}
-Visit us: {hospital_name}"""
+        'check_in': (
+            "{hospital_name}: Ticket {queue_number}. {department}. "
+            "Place #{position}, wait ~{wait_time} min ({date}). "
+            "Stay in waiting area until called."
+        ),
+        'progress_update': (
+            "Queue update: Ticket {queue_number} now #{position}, "
+            "wait ~{wait_time} min."
+        ),
+        'ready': (
+            "{hospital_name}: {call_line} {room_line} "
+            "Ticket {queue_number}. Come within 5 min."
+        ),
+        'no_show': (
+            "Ticket {queue_number} called with no response. "
+            "See reception now to keep your place."
+        ),
+        'completed': (
+            "Thanks for visiting {hospital_name}. Ticket {queue_number} done. "
+            "{next_steps} Call {hospital_phone} if needed."
+        ),
     }
-    
+
     def __init__(self):
         self.logger = logger
         self.hospital_name = getattr(settings, 'HOSPITAL_NAME', 'General Hospital')
@@ -156,10 +132,7 @@ Visit us: {hospital_name}"""
             # Remind to pay at Cashier (no amounts in SMS — total is confirmed at desk)
             payment_info = ""
             if consultation_amount:
-                payment_info = (
-                    "\n\nIf you need to pay before being seen, visit the Cashier first, "
-                    "then return to the waiting area — not the consultation room."
-                )
+                payment_info = " Pay at Cashier first if required."
             
             message = base_message + payment_info
             
@@ -322,14 +295,14 @@ Visit us: {hospital_name}"""
 
             room = (queue_entry.room_number or '').strip()
             if room:
-                room_line = f'Please come to room {room}.'
+                room_line = f'Go to room {room}.'
             else:
-                room_line = 'Please proceed to the consultation area as directed by staff.'
+                room_line = 'Go to consultation as directed.'
 
             if doctor_display:
                 call_line = f'{doctor_display} is calling {patient_name}.'
             else:
-                call_line = f'{patient_name}, you are being called to consult.'
+                call_line = f'{patient_name}, you are being called.'
 
             message = self.TEMPLATES['ready'].format(
                 hospital_name=self.hospital_name,

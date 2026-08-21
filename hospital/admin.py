@@ -609,12 +609,12 @@ class OrderAdmin(admin.ModelAdmin):
 
 @admin.register(LabTest)
 class LabTestAdmin(admin.ModelAdmin):
-    list_display = ['code', 'name', 'specimen_type', 'tat_display', 'price_display', 'is_active_badge']
-    list_filter = ['specimen_type', 'is_active', 'created']
+    list_display = ['code', 'name', 'specimen_type', 'tat_display', 'price_display', 'stock_tracking', 'nhis_covered', 'is_active_badge']
+    list_filter = ['specimen_type', 'stock_tracking', 'nhis_covered', 'is_active', 'created']
     search_fields = ['code', 'name']
     ordering = ['name']
     readonly_fields = ['created', 'modified']
-    actions = ['activate_tests', 'deactivate_tests', 'bulk_set_price']
+    actions = ['activate_tests', 'deactivate_tests', 'bulk_set_price', 'mark_nhis_covered', 'unmark_nhis_covered']
     
     fieldsets = (
         ('Test Information', {
@@ -623,9 +623,17 @@ class LabTestAdmin(admin.ModelAdmin):
         ('Pricing & Timing', {
             'fields': ('price', 'tat_minutes')
         }),
+        ('NHIS panel', {
+            'fields': ('nhis_covered',),
+            'description': 'NHIS patients can order this test without cash pay when marked. Unmarked tests can still be added at cashier as patient cash.',
+        }),
+        ('Kit / reagent tracking', {
+            'fields': ('stock_tracking', 'kit_name', 'qty_per_box', 'tests_per_kit', 'reagent_volume_note'),
+            'description': 'Measurable = cassette kits (pieces per box). Immeasurable = chemistry reagents (tests per kit).',
+        }),
         ('Insurance coverage', {
             'fields': ('exclude_from_insurance', 'insurance_exclusion_reason'),
-            'description': 'When excluded, insurance patients pay cash at the cashier for this test. Corporate billing is unchanged.',
+            'description': 'When excluded from all insurers, insurance patients pay cash. To exclude selected companies only, use Lab Tests Catalog → Edit test.',
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -672,6 +680,16 @@ class LabTestAdmin(admin.ModelAdmin):
         """Redirect to bulk pricing page (implement if needed)"""
         self.message_user(request, 'Use the Pricing Management dashboard for bulk price updates: /hms/pricing/')
     bulk_set_price.short_description = 'Bulk update prices →'
+
+    def mark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=True)
+        self.message_user(request, f'{updated} lab test(s) marked as NHIS panel.')
+    mark_nhis_covered.short_description = 'Mark selected tests as NHIS panel'
+
+    def unmark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=False)
+        self.message_user(request, f'{updated} lab test(s) removed from NHIS panel.')
+    unmark_nhis_covered.short_description = 'Remove selected tests from NHIS panel'
 
 
 @admin.register(LabResult)
@@ -1007,12 +1025,12 @@ class DrugAdminForm(forms.ModelForm):
 @admin.register(Drug)
 class DrugAdmin(admin.ModelAdmin):
     form = DrugAdminForm
-    list_display = ['name', 'category_display', 'generic_name', 'strength', 'form', 'preferred_supplier', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'is_active']
-    list_filter = ['category', 'form', 'is_controlled', 'is_active', 'created']
+    list_display = ['name', 'category_display', 'generic_name', 'strength', 'form', 'preferred_supplier', 'unit_price_display', 'cost_price_display', 'margin_display', 'controlled_badge', 'nhis_covered', 'is_active']
+    list_filter = ['category', 'form', 'is_controlled', 'nhis_covered', 'is_active', 'created']
     search_fields = ['name', 'generic_name', 'atc_code', 'category', 'preferred_supplier__name']
     ordering = ['name']
     readonly_fields = ['created', 'modified']
-    actions = ['activate_drugs', 'deactivate_drugs']
+    actions = ['activate_drugs', 'deactivate_drugs', 'mark_nhis_covered', 'unmark_nhis_covered']
     
     fieldsets = (
         ('Drug Information', {
@@ -1027,8 +1045,8 @@ class DrugAdmin(admin.ModelAdmin):
             'description': 'Unit Price: Selling price per unit | Cost Price: Purchase cost from supplier | Preferred supplier links the drug to procurement vendors.'
         }),
         ('Insurance coverage', {
-            'fields': ('exclude_from_insurance', 'insurance_exclusion_reason'),
-            'description': 'When excluded, insurance patients pay cash at the cashier for this drug. Corporate billing is unchanged.',
+            'fields': ('nhis_covered', 'exclude_from_insurance', 'insurance_exclusion_reason'),
+            'description': 'NHIS formulary: doctors only see these drugs for NHIS patients. Exclusion: insurance patients pay cash at cashier.',
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -1095,6 +1113,16 @@ class DrugAdmin(admin.ModelAdmin):
         updated = queryset.update(is_active=False)
         self.message_user(request, f'✅ {updated} drug(s) deactivated successfully.')
     deactivate_drugs.short_description = 'Deactivate selected drugs'
+
+    def mark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=True)
+        self.message_user(request, f'{updated} drug(s) marked as NHIS formulary.')
+    mark_nhis_covered.short_description = 'Mark selected drugs as NHIS formulary'
+
+    def unmark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=False)
+        self.message_user(request, f'{updated} drug(s) removed from NHIS formulary.')
+    unmark_nhis_covered.short_description = 'Remove selected drugs from NHIS formulary'
 
 
 class PharmacyStockAdminForm(forms.ModelForm):

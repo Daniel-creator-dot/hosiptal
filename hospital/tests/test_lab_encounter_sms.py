@@ -94,7 +94,7 @@ class PendingLabsFollowupWordingTests(TestCase):
         pending = LabResult.objects.filter(pk=lr.pk)
         text = SMSService.pending_labs_followup_wording(pending)
         self.assertNotIn('tomorrow', text.lower())
-        self.assertIn('still being processed', text.lower())
+        self.assertIn('still running', text.lower())
 
 
 class LabEncounterPartialSmsTests(TestCase):

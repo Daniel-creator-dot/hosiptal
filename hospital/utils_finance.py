@@ -104,6 +104,8 @@ class FinancialValidator:
         bill_payments = payments.exclude(payment_method='deposit')
         bill_payments_total = bill_payments.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
 
+        from django.db.models import Q
+
         deposit_qs = PatientDeposit.objects.filter(
             received_by_id=session.cashier_id,
             deposit_date__gte=session.opened_at,
@@ -112,7 +114,35 @@ class FinancialValidator:
         ).exclude(status='cancelled')
         deposit_received = deposit_qs.aggregate(Sum('deposit_amount'))['amount__sum'] or Decimal('0.00')
 
-        calc_total_payments = bill_payments_total + deposit_received
+        deposit_numbers = [
+            n for n in deposit_qs.values_list('deposit_number', flat=True) if n
+        ]
+        deposit_withdrawal_ids = set()
+        deposit_withdrawals_total = Decimal('0.00')
+        if deposit_numbers:
+            dep_ref_q = Q()
+            for num in deposit_numbers:
+                dep_ref_q |= Q(reference_number__startswith=f'REFUND-{num}')
+            for t in Transaction.objects.filter(
+                transaction_type__in=('refund_issued', 'refund'),
+                is_deleted=False,
+                transaction_date__lte=session_end,
+            ).filter(dep_ref_q):
+                deposit_withdrawal_ids.add(t.pk)
+                deposit_withdrawals_total += t.amount or Decimal('0.00')
+
+        credit_refunds = transactions.filter(transaction_type='refund_issued').exclude(
+            reference_number__startswith='REFUND-'
+        )
+        credit_refunds_total = credit_refunds.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+        legacy_refunds = transactions.filter(transaction_type='refund').exclude(
+            pk__in=deposit_withdrawal_ids
+        )
+        legacy_total = legacy_refunds.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+        refunds_total = deposit_withdrawals_total + credit_refunds_total + legacy_total
+        calc_total_payments = max(
+            Decimal('0.00'), bill_payments_total + deposit_received - refunds_total
+        )
 
         cash_bill = (
             bill_payments.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
@@ -122,11 +152,24 @@ class FinancialValidator:
             deposit_qs.filter(payment_method='cash').aggregate(Sum('deposit_amount'))['amount__sum']
             or Decimal('0.00')
         )
-        refunds = transactions.filter(transaction_type='refund_issued')
-        cash_refunds = (
-            refunds.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
+        cash_credit_refunds = (
+            credit_refunds.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
             or Decimal('0.00')
         )
+        cash_legacy = (
+            legacy_refunds.filter(payment_method='cash').aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        # Cash drawer follows who paid out the withdrawal
+        cash_deposit_withdrawals_paid = (
+            transactions.filter(
+                transaction_type__in=('refund_issued', 'refund'),
+                payment_method='cash',
+                reference_number__startswith='REFUND-',
+            ).aggregate(Sum('amount'))['amount__sum']
+            or Decimal('0.00')
+        )
+        cash_refunds = cash_deposit_withdrawals_paid + cash_credit_refunds + cash_legacy
         calc_expected_cash = session.opening_cash + cash_bill + cash_deposit_intake - cash_refunds
 
         if session.total_payments != calc_total_payments:
@@ -134,7 +177,7 @@ class FinancialValidator:
                 'valid': False,
                 'error': (
                     f'Session total payments (GHS {session.total_payments}) does not match '
-                    f'recalculated bill/service + deposit intake (GHS {calc_total_payments})'
+                    f'recalculated net (bill/service + deposit intake − refunds) (GHS {calc_total_payments})'
                 ),
             }
 

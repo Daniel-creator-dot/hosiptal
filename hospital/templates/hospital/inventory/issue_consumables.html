@@ -1,0 +1,239 @@
+{% extends "hospital/base.html" %}
+{% load humanize %}
+
+{% block title %}Issue to staff and lab - HMS{% endblock %}
+{% block page_title %}Issue to staff and laboratory{% endblock %}
+{% block page_subtitle %}Give toilet rolls, tissues, gloves and other store supplies to individual staff — or issue kits to the laboratory{% endblock %}
+
+{% block content %}
+<div class="container-fluid pb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <a href="{% url 'hospital:inventory:inventory_dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left"></i> Inventory
+            </a>
+            <a href="{% url 'hospital:inventory:items_list' %}" class="btn btn-outline-secondary btn-sm">All items</a>
+        </div>
+        <form method="get" class="d-flex flex-wrap gap-2 align-items-end">
+            <div>
+                <label class="form-label small mb-0">Store</label>
+                <select name="store" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">All stores</option>
+                    {% for s in stores %}
+                    <option value="{{ s.id }}" {% if selected_store_id == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small mb-0">Search</label>
+                <input type="text" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="e.g. toilet roll">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        </form>
+    </div>
+
+    <div class="alert alert-info border-0 shadow-sm">
+        <strong>Procurement / stores:</strong> Issue toilet rolls, tissues and other consumables
+        to <em>individual staff</em> (select their name below). Receive goods into Main Store first,
+        then use <strong>Give out</strong>. Lab kits can still be issued to the laboratory.
+        <a class="alert-link ms-1" href="{% url 'hospital:stock_management_monitoring' %}?stock_view=facility">View facility stock</a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-semibold">
+                    <i class="bi bi-box-seam me-1 text-teal"></i> Items available to issue
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Store</th>
+                                    <th class="text-end">On hand</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in items %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ item.item_name }}
+                                            {% if item.id|stringformat:"s" in lab_item_ids %}
+                                            <span class="badge bg-info text-dark">Lab</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="small text-muted">
+                                            {{ item.item_code|default:"" }}
+                                            {% if item.category %} · {{ item.category.name }}{% endif %}
+                                        </div>
+                                    </td>
+                                    <td class="small">{{ item.store.name }}</td>
+                                    <td class="text-end fw-semibold">{{ item.quantity_on_hand|intcomma }} {{ item.unit_of_measure }}</td>
+                                    <td class="text-end">
+                                        {% if can_issue %}
+                                        <button type="button"
+                                                class="btn btn-sm btn-success js-pick-issue"
+                                                data-item-id="{{ item.id }}"
+                                                data-item-name="{{ item.item_name }}"
+                                                data-max="{{ item.quantity_on_hand }}"
+                                                data-uom="{{ item.unit_of_measure }}"
+                                                data-is-lab="{% if item.id|stringformat:"s" in lab_item_ids %}1{% else %}0{% endif %}">
+                                            Give out
+                                        </button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted p-4">
+                                        No consumable stock on hand.
+                                        Receive supplies via procurement first, or clear filters.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 mb-4" id="issue-form-card">
+                <div class="card-header bg-success text-white fw-semibold">
+                    <i class="bi bi-person-check me-1"></i> Issue to staff or laboratory
+                </div>
+                <div class="card-body">
+                    {% if not can_issue %}
+                    <div class="alert alert-warning mb-0">
+                        Only procurement and stores can issue stock. Ask them to issue kits to the laboratory or supplies to staff.
+                    </div>
+                    {% else %}
+                    <form method="post" id="issue-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="issue_to_staff">
+                        <input type="hidden" name="item_id" id="issue-item-id" value="" required>
+                        {% if selected_store_id %}<input type="hidden" name="store" value="{{ selected_store_id }}">{% endif %}
+
+                        <div class="mb-3">
+                            <label class="form-label">Item</label>
+                            <div class="form-control bg-light" id="issue-item-label">Select an item with “Give out”</div>
+                        </div>
+                        <div class="mb-3">
+                            <span class="form-label d-block">Issue to</span>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="destination" id="dest_lab" value="lab">
+                                <label class="form-check-label" for="dest_lab">Laboratory (lab stock goes up)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="destination" id="dest_staff" value="staff" checked>
+                                <label class="form-check-label" for="dest_staff">Staff / ward (stock leaves)</label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="issue-qty">Quantity *</label>
+                            <input type="number" class="form-control" name="quantity" id="issue-qty" min="1" step="1" required>
+                            <div class="form-text">Available: <span id="issue-max">—</span> <span id="issue-uom"></span></div>
+                        </div>
+                        <div class="mb-3" id="staff-fields">
+                            <label class="form-label" for="recipient_staff_id">Give to staff *</label>
+                            <select name="recipient_staff_id" id="recipient_staff_id" class="form-select">
+                                <option value="">— Select staff member —</option>
+                                {% for s in recipient_staff %}
+                                <option value="{{ s.id }}">{{ s.user.get_full_name|default:s.user.username }} ({{ s.get_profession_display }})</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Required for toilet rolls, tissues and personal consumables.</div>
+                        </div>
+                        <div class="mb-3" id="name-fields">
+                            <label class="form-label" for="recipient_name">Or type recipient name</label>
+                            <input type="text" class="form-control" name="recipient_name" id="recipient_name" maxlength="120" placeholder="If staff not in list">
+                        </div>
+                        <div class="mb-3" id="dept-fields">
+                            <label class="form-label" for="department_id">Department / ward</label>
+                            <select name="department_id" id="department_id" class="form-select">
+                                <option value="">— Optional —</option>
+                                {% for d in departments %}
+                                <option value="{{ d.id }}">{{ d.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="notes">Notes</label>
+                            <input type="text" class="form-control" name="notes" id="notes" maxlength="200" placeholder="Optional">
+                        </div>
+                        <button type="submit" class="btn btn-success w-100 fw-semibold" id="issue-submit" disabled>
+                            <i class="bi bi-check2-circle me-1"></i> Confirm issue
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-semibold">Recent issues</div>
+                <div class="list-group list-group-flush">
+                    {% for txn in recent_issues %}
+                    <div class="list-group-item small">
+                        <div class="fw-semibold">{{ txn.inventory_item.item_name }} · {{ txn.quantity|floatformat:0 }}</div>
+                        <div class="text-muted">{{ txn.to_location|default:txn.notes|truncatechars:80 }}</div>
+                        <div class="text-muted">{{ txn.transaction_date|date:"d/m/Y H:i" }} · {{ txn.transaction_number }}</div>
+                    </div>
+                    {% empty %}
+                    <div class="list-group-item text-muted small">No recent issues yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var form = document.getElementById('issue-form');
+    if (!form) return;
+    var itemId = document.getElementById('issue-item-id');
+    var uomEl = document.getElementById('issue-uom');
+    var itemLabel = document.getElementById('issue-item-label');
+    var qty = document.getElementById('issue-qty');
+    var maxEl = document.getElementById('issue-max');
+    var submit = document.getElementById('issue-submit');
+
+    document.querySelectorAll('.js-pick-issue').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var id = btn.getAttribute('data-item-id');
+            var name = btn.getAttribute('data-item-name') || '';
+            var max = parseInt(btn.getAttribute('data-max') || '0', 10) || 0;
+            var uom = btn.getAttribute('data-uom') || 'units';
+            itemId.value = id;
+            itemLabel.textContent = name + ' (max ' + max + ' ' + uom + ')';
+            qty.max = String(max);
+            qty.value = max > 0 ? '1' : '';
+            maxEl.textContent = String(max);
+            if (uomEl) uomEl.textContent = uom;
+            submit.disabled = !(id && max > 0);
+            var isLab = btn.getAttribute('data-is-lab') === '1';
+            var destLab = document.getElementById('dest_lab');
+            var destStaff = document.getElementById('dest_staff');
+            if (destLab && destStaff) {
+                destLab.checked = isLab;
+                destStaff.checked = !isLab;
+            }
+            document.getElementById('issue-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+
+    form.addEventListener('submit', function (e) {
+        if (!itemId.value) {
+            e.preventDefault();
+            alert('Select an item first.');
+        }
+    });
+})();
+</script>
+{% endblock %}

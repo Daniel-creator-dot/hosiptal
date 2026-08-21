@@ -256,8 +256,130 @@ def insurance_company_create(request):
     
     context = {
         'title': 'Add New Insurance Company',
+        'company': None,
+        'is_edit': False,
     }
     
+    return render(request, 'hospital/insurance/company_form.html', context)
+
+
+@login_required
+def insurance_company_edit(request, pk):
+    """Edit insurance company name and details (keeps linked Payer name in sync)."""
+    from .models import Payer
+
+    company = get_object_or_404(InsuranceCompany, pk=pk, is_deleted=False)
+
+    if request.method == 'POST':
+        old_name = company.name
+        name = (request.POST.get('name') or '').strip()
+        code = (request.POST.get('code') or '').strip().upper()
+        phone_number = request.POST.get('phone_number', '')
+        email = request.POST.get('email', '')
+        website = request.POST.get('website', '')
+        address = request.POST.get('address', '')
+        contract_number = request.POST.get('contract_number', '')
+        payment_terms_days = request.POST.get('payment_terms_days', 30)
+        billing_contact_name = request.POST.get('billing_contact_name', '')
+        billing_contact_email = request.POST.get('billing_contact_email', '')
+        notes = request.POST.get('notes', '')
+        status = (request.POST.get('status') or company.status or 'active').strip()
+        is_active = request.POST.get('is_active') == '1'
+
+        if not name or not code:
+            messages.error(request, 'Name and code are required.')
+            return render(
+                request,
+                'hospital/insurance/company_form.html',
+                {'title': f'Edit {company.name}', 'company': company, 'is_edit': True, 'post': request.POST},
+            )
+
+        clash_name = (
+            InsuranceCompany.objects.filter(name__iexact=name, is_deleted=False)
+            .exclude(pk=company.pk)
+            .exists()
+        )
+        clash_code = (
+            InsuranceCompany.objects.filter(code__iexact=code, is_deleted=False)
+            .exclude(pk=company.pk)
+            .exists()
+        )
+        if clash_name:
+            messages.error(request, f'Another company already uses the name "{name}".')
+            return render(
+                request,
+                'hospital/insurance/company_form.html',
+                {'title': f'Edit {company.name}', 'company': company, 'is_edit': True, 'post': request.POST},
+            )
+        if clash_code:
+            messages.error(request, f'Another company already uses the code "{code}".')
+            return render(
+                request,
+                'hospital/insurance/company_form.html',
+                {'title': f'Edit {company.name}', 'company': company, 'is_edit': True, 'post': request.POST},
+            )
+
+        try:
+            company.name = name
+            company.code = code
+            company.phone_number = phone_number
+            company.email = email
+            company.website = website
+            company.address = address
+            company.contract_number = contract_number
+            company.payment_terms_days = int(payment_terms_days or 30)
+            company.billing_contact_name = billing_contact_name
+            company.billing_contact_email = billing_contact_email
+            company.notes = notes
+            company.status = status if status in ('active', 'suspended', 'inactive') else company.status
+            company.is_active = is_active
+            company.save()
+
+            # Sync linked billing Payer name
+            payer = Payer.objects.filter(
+                name__iexact=old_name,
+                payer_type__in=('private', 'nhis', 'insurance'),
+                is_deleted=False,
+            ).first()
+            if payer:
+                # Avoid colliding with another payer of same type+new name
+                other = (
+                    Payer.objects.filter(name__iexact=name, payer_type=payer.payer_type, is_deleted=False)
+                    .exclude(pk=payer.pk)
+                    .first()
+                )
+                if not other:
+                    payer.name = name
+                    payer.is_active = is_active
+                    payer.save(update_fields=['name', 'is_active', 'modified'])
+            else:
+                payer, _ = Payer.objects.get_or_create(
+                    name=name,
+                    payer_type='private',
+                    defaults={'is_active': is_active},
+                )
+
+            from .patient_payer import propagate_payer_display_name_change
+
+            prop = propagate_payer_display_name_change(old_name, name, payer=payer)
+            touched = (
+                prop.get('patients_by_snapshot', 0)
+                + prop.get('patients_by_fk', 0)
+                + prop.get('corporate_accounts', 0)
+            )
+            msg = f'Updated "{company.name}".'
+            if touched or old_name.strip().lower() != name.strip().lower():
+                msg += ' Front desk and patient records now show the new name.'
+            messages.success(request, msg)
+            return redirect('hospital:insurance_company_detail', pk=company.pk)
+        except Exception as e:
+            messages.error(request, f'Could not save: {e}')
+
+    context = {
+        'title': f'Edit {company.name}',
+        'company': company,
+        'is_edit': True,
+    }
     return render(request, 'hospital/insurance/company_form.html', context)
 
 

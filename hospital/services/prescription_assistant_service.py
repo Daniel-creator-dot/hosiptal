@@ -102,12 +102,17 @@ def _match_indication(query):
     return None
 
 
-def get_drugs_for_categories(category_codes, include_stock=True, limit=20):
+def get_drugs_for_categories(category_codes, include_stock=True, limit=20, payer=None):
     """Return active drugs in given categories, optionally with stock."""
-    qs = Drug.objects.filter(
-        category__in=category_codes,
-        is_active=True,
-        is_deleted=False
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    qs = restrict_drug_queryset_for_payer(
+        Drug.objects.filter(
+            category__in=category_codes,
+            is_active=True,
+            is_deleted=False
+        ),
+        payer,
     ).order_by('name')[:limit]
     drugs = list(qs)
     if not include_stock:
@@ -141,15 +146,20 @@ def get_dosing_hint(category_code):
     return DOSING_HINTS.get(category_code, DOSING_HINTS['other']).copy()
 
 
-def search_drugs_free_text(query, limit=15, include_stock=True):
+def search_drugs_free_text(query, limit=15, include_stock=True, payer=None):
     """Search drugs by name/generic/ATC."""
     if not _normalize(query):
         return []
-    qs = Drug.objects.filter(
-        is_active=True,
-        is_deleted=False
-    ).filter(
-        Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query)
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+    qs = restrict_drug_queryset_for_payer(
+        Drug.objects.filter(
+            is_active=True,
+            is_deleted=False
+        ).filter(
+            Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query)
+        ),
+        payer,
     ).order_by('name')[:limit]
     drugs = list(qs)
     if not include_stock:
@@ -194,11 +204,14 @@ def build_chat_response(message, encounter_id=None, selected_drug_ids=None):
     """
     selected_drug_ids = selected_drug_ids or []
     patient = None
+    nhis_payer = None
     if encounter_id:
         from ..models import Encounter
         try:
             enc = Encounter.objects.select_related('patient').get(pk=encounter_id, is_deleted=False)
             patient = enc.patient
+            from .nhis_drug_formulary import payer_from_encounter
+            nhis_payer = payer_from_encounter(enc)
         except Encounter.DoesNotExist:
             pass
 
@@ -241,7 +254,7 @@ def build_chat_response(message, encounter_id=None, selected_drug_ids=None):
     match = _match_indication(message)
     if match:
         category_codes, indication_label = match
-        suggested_drugs = get_drugs_for_categories(category_codes, include_stock=True, limit=15)
+        suggested_drugs = get_drugs_for_categories(category_codes, include_stock=True, limit=15, payer=nhis_payer)
         first_cat = category_codes[0] if category_codes else 'other'
         dosing_hint = get_dosing_hint(first_cat)
         reply_parts.append(f"**Indication:** {indication_label}")
@@ -253,7 +266,7 @@ def build_chat_response(message, encounter_id=None, selected_drug_ids=None):
     else:
         # 3) Free-text drug search
         if len(msg) >= 2:
-            suggested_drugs = search_drugs_free_text(message, limit=15, include_stock=True)
+            suggested_drugs = search_drugs_free_text(message, limit=15, include_stock=True, payer=nhis_payer)
             if suggested_drugs:
                 reply_parts.append(f"Found **{len(suggested_drugs)}** drug(s) matching \"{message.strip()}\". Select to add to prescription.")
             else:

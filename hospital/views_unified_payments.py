@@ -37,8 +37,12 @@ def lab_payment_process(request, lab_result_id):
     lab_result = get_object_or_404(LabResult, id=lab_result_id, is_deleted=False)
     patient = lab_result.order.encounter.patient
     
-    # Get test price
-    test_price = lab_result.test.price if hasattr(lab_result.test, 'price') else Decimal('0.00')
+    # Get test price (catalog + 10% Sustainability and Insurance, plus payer markup)
+    from .utils_billing import billed_lab_or_scan_catalog_price
+    payer = getattr(patient, 'primary_insurance', None)
+    test_price = billed_lab_or_scan_catalog_price(
+        getattr(lab_result.test, 'price', None), payer, kind='lab'
+    )
     
     if request.method == 'POST':
         amount = Decimal(request.POST.get('amount', test_price))

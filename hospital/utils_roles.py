@@ -501,6 +501,10 @@ ROLE_FEATURES = {
             'system_health',
             'backups',
             'security',
+            'pharmacy',
+            'lab_catalog',
+            'imaging_catalog',
+            'laboratory',
         ],
         'features': [
             'view_auditlog',
@@ -518,6 +522,10 @@ ROLE_FEATURES = {
             'system_health',
             'backups',
             'security',
+            'pharmacy',
+            'lab_catalog',
+            'imaging_catalog',
+            'laboratory',
         ],
         'features': [
             'view_auditlog',
@@ -628,6 +636,39 @@ def is_doctor(user):
         return True
     role = get_user_role(user)
     return role == 'doctor'
+
+
+def is_it_user(user, request=None):
+    """IT staff (role, group, profession, or IT department)."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    try:
+        role = get_user_role(user, request=request)
+        if role in ('it', 'it_staff'):
+            return True
+    except Exception:
+        pass
+    if _user_has_group(user, [
+        'IT', 'it_staff', 'IT Staff', 'IT Operations', 'IT Support',
+        'it_operations', 'it_support',
+    ]):
+        return True
+    try:
+        from .models import Staff
+        staff = Staff.objects.filter(user=user, is_deleted=False).first()
+        if staff:
+            profession_lower = (staff.profession or '').strip().lower().replace(' ', '_')
+            if profession_lower in ('it', 'it_staff', 'it_operations', 'it_support'):
+                return True
+            if 'it' in profession_lower:
+                return True
+            if staff.department and 'it' in str(staff.department).lower():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def is_procurement_staff(user):
@@ -772,6 +813,20 @@ def _compute_user_role(user):
                 pass
             _ensure_staff_flag(user)
             return 'admin', staff
+
+    # IT groups (including "IT Operations") — resolve before ROLE_FEATURES so
+    # users without a Staff row still get the it role (not generic staff).
+    for group_name in user_groups:
+        group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
+        if group_lower in ('it', 'it_staff', 'it_operations', 'it_support'):
+            _ensure_staff_flag(user)
+            return 'it', staff
+
+    for group_name in user_groups:
+        group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
+        if group_lower in ('front_desk', 'frontdesk', 'front_office'):
+            _ensure_staff_flag(user)
+            return 'receptionist', staff
 
     for group_name in user_groups:
         group_lower = group_name.lower().replace(' ', '_').replace('&', '_')
@@ -1025,6 +1080,7 @@ def get_role_navigation(user):
             {'title': 'Dashboard', 'url': '/hms/admin-dashboard/', 'icon': 'speedometer2'},
             {'title': 'Chat Channel', 'url': '/hms/admin/chat/', 'icon': 'chat-dots'},
             {'title': 'IT Operations', 'url': '/hms/admin/it-operations/', 'icon': 'motherboard'},
+            {'title': 'Remove duplicates', 'url': '/hms/admin/it-operations/cleanup/', 'url_name': 'records_cleanup', 'icon': 'person-x'},
             {'title': 'Marketing & BD', 'url': '/hms/marketing/', 'icon': 'megaphone'},
             {'title': 'Procurement Approvals', 'url': '/hms/procurement/admin/pending/', 'icon': 'clipboard-check'},
             {'title': 'Pharmacy Requests', 'url': '/hms/procurement/approval/dashboard/', 'icon': 'capsule-pill'},
@@ -1042,12 +1098,14 @@ def get_role_navigation(user):
             {'title': 'Lab report & financials', 'url': '/hms/laboratory/report/', 'url_name': 'laboratory_financial_report', 'path_prefix': '/hms/laboratory/report', 'icon': 'file-earmark-bar-graph'},
             {'title': 'Pre-employment / Pre-admission', 'url': '/hms/screening/', 'url_name': 'screening_dashboard', 'icon': 'clipboard2-check'},
             {'title': 'Reports', 'url': '/hms/reports/', 'icon': 'graph-up'},
+            {'title': 'Maternity deliveries', 'url': '/hms/reports/maternity-deliveries/', 'url_name': 'maternity_procedures_report', 'icon': 'hospital'},
             {'title': 'Medical analytics', 'url': '/hms/medical-analytics/', 'url_name': 'admin_medical_analytics_report', 'icon': 'clipboard-data'},
             {'title': 'Settings', 'url': '/hms/settings/', 'icon': 'gear'},
         ],
         'accountant': [
             {'title': 'Comprehensive Dashboard', 'url': '/hms/accountant/comprehensive-dashboard/', 'icon': 'speedometer2'},
             {'title': 'Management reports', 'url': '/hms/accountant/management-reports/', 'icon': 'easel'},
+            {'title': 'Maternity deliveries', 'url': '/hms/reports/maternity-deliveries/', 'url_name': 'maternity_procedures_report', 'icon': 'hospital'},
             {'title': 'Cashier — Patients & Create Bill', 'url': '/hms/cashier/central/patients/', 'icon': 'people', 'url_name': 'cashier_patient_list'},
             {'title': 'Create Billing', 'url': '/hms/cashier/central/create-billing/', 'icon': 'file-earmark-plus', 'url_name': 'cashier_create_billing'},
             {'title': 'Claims Bills', 'url': '/hms/accountant/billing/claims-hub/', 'icon': 'file-earmark-text', 'path_prefix': '/hms/accountant/billing/'},
@@ -1121,7 +1179,7 @@ def get_role_navigation(user):
         ],
         'doctor': [
             {'title': 'Medical Dashboard', 'url': '/hms/medical-dashboard/', 'icon': 'speedometer2'},
-            {'title': 'Consultation billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=consultation', 'icon': 'file-earmark-spreadsheet'},
+            {'title': 'Consultation billed (invoices)', 'url': '/hms/accountant/department-billed-revenue/?dept=consultation', 'icon': 'file-earmark-spreadsheet'},
             {'title': 'Patient Flowboard', 'url': '/hms/doctor/flowboard/', 'url_name': 'doctor_patient_flowboard', 'icon': 'diagram-3'},
             {'title': 'My Patients', 'url': '/hms/patients/', 'icon': 'person'},
             {'title': 'Admitted Patients', 'url': '/hms/admitted-patients/', 'url_name': 'admitted_patients_list', 'icon': 'hospital'},
@@ -1156,6 +1214,7 @@ def get_role_navigation(user):
             {'title': 'Bill Antenatal Items', 'url': '/hms/midwife/antenatal-items/', 'icon': 'capsule'},
             {'title': 'Postnatal Care', 'url': '/hms/midwife/postnatal/', 'icon': 'heart-fill'},
             {'title': 'Delivery Records', 'url': '/hms/midwife/delivery/', 'icon': 'hospital'},
+            {'title': 'Deliveries count (monthly)', 'url': '/hms/reports/maternity-deliveries/', 'url_name': 'maternity_procedures_report', 'icon': 'bar-chart'},
             {'title': 'Patients', 'url': '/hms/patients/', 'icon': 'person'},
             {'title': 'Admitted Patients', 'url': '/hms/admitted-patients/', 'url_name': 'admitted_patients_list', 'icon': 'hospital'},
             {'title': 'Bed Manager', 'url': '/hms/beds/management/', 'url_name': 'bed_management_worldclass', 'icon': 'columns-gap'},
@@ -1169,19 +1228,22 @@ def get_role_navigation(user):
             {'title': 'Pharmacy Flowboard', 'url': '/hms/pharmacy/flowboard/', 'url_name': 'pharmacy_flowboard', 'icon': 'diagram-3'},
             {'title': 'Admitted Patients', 'url': '/hms/admitted-patients/', 'url_name': 'admitted_patients_list', 'icon': 'hospital'},
             {'title': 'Dispensing Queue', 'url': '/hms/pharmacy/pending-dispensing/', 'icon': 'bag-check'},
-            {'title': 'Billed revenue (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=pharmacy', 'icon': 'file-earmark-bar-graph'},
+            {'title': 'Billed revenue (invoices)', 'url': '/hms/accountant/department-billed-revenue/?dept=pharmacy', 'icon': 'file-earmark-bar-graph'},
             {'title': 'My Sales (Verify)', 'url': '/hms/pharmacy/my-sales/', 'url_name': 'pharmacy_my_sales', 'icon': 'receipt-cutoff'},
             {'title': 'Payment Verification', 'url': '/hms/payment/pharmacy/dispensing/', 'icon': 'lock'},
             {'title': 'Drug Classification Guide', 'url': '/hms/drug-classification-guide/', 'icon': 'book'},
         ],
         'procurement_officer': [
             {'title': 'Procurement Dashboard', 'url': '/hms/procurement/', 'icon': 'speedometer2'},
+            {'title': 'Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
+            {'title': 'Inventory Stores', 'url': '/hms/inventory/dashboard/', 'icon': 'box-seam'},
+            {'title': 'Issue to Staff', 'url': '/hms/inventory/issue-consumables/', 'icon': 'person-check'},
+            {'title': 'Stock Monitoring', 'url': '/hms/accountant/stock-management-monitoring/?stock_view=facility', 'icon': 'graph-up'},
             {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
             {'title': 'Procurement Requests', 'url': '/hms/procurement/requests/', 'icon': 'file-earmark-text'},
             {'title': 'Create Request', 'url': '/hms/procurement/requests/new/', 'icon': 'plus-circle'},
             {'title': 'Pending Approvals', 'url': '/hms/procurement/approval/dashboard/', 'icon': 'clipboard-check'},
             {'title': 'Workflow Dashboard', 'url': '/hms/procurement/workflow/', 'icon': 'diagram-3'},
-            {'title': 'Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
             {'title': 'Inventory', 'url': '/hms/procurement/inventory/', 'icon': 'boxes'},
             {'title': 'Low Stock Alerts', 'url': '/hms/procurement/reports/low-stock/', 'icon': 'exclamation-triangle'},
             {'title': 'Store Transfers', 'url': '/hms/procurement/transfers/', 'icon': 'arrow-left-right'},
@@ -1191,16 +1253,18 @@ def get_role_navigation(user):
         ],
         'store_manager': [
             {'title': 'Procurement Dashboard', 'url': '/hms/procurement/', 'icon': 'speedometer2'},
-            {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
+            {'title': 'Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
             {'title': 'Inventory Dashboard', 'url': '/hms/inventory-stores/dashboard/', 'icon': 'box-seam'},
+            {'title': 'Issue to Staff', 'url': '/hms/inventory/issue-consumables/', 'icon': 'person-check'},
+            {'title': 'Stock Monitoring', 'url': '/hms/accountant/stock-management-monitoring/?stock_view=facility', 'icon': 'graph-up'},
             {'title': 'All Items', 'url': '/hms/inventory/items/', 'icon': 'box-seam'},
             {'title': 'Add Item', 'url': '/hms/procurement/inventory-items/new/', 'icon': 'plus-circle'},
+            {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
             {'title': 'Procurement Requests', 'url': '/hms/procurement/requests/', 'icon': 'file-earmark-text'},
             {'title': 'Create Request', 'url': '/hms/procurement/requests/new/', 'icon': 'plus-circle'},
             {'title': 'Store Transfers', 'url': '/hms/procurement/transfers/', 'icon': 'arrow-left-right'},
             {'title': 'Create Transfer', 'url': '/hms/procurement/transfers/create-modern/', 'icon': 'arrow-left-right'},
             {'title': 'Receiving Dashboard', 'url': '/hms/procurement/receiving/dashboard/', 'icon': 'truck'},
-            {'title': 'Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
             {'title': 'Stock Alerts', 'url': '/hms/inventory/alerts/', 'icon': 'bell'},
             {'title': 'Low Stock Report', 'url': '/hms/procurement/reports/low-stock/', 'icon': 'exclamation-triangle'},
             {'title': 'Suppliers', 'url': '/hms/procurement/suppliers/', 'icon': 'truck'},
@@ -1209,11 +1273,13 @@ def get_role_navigation(user):
         ],
         'inventory_stores_manager': [
             {'title': 'Procurement Dashboard', 'url': '/hms/procurement/', 'icon': 'speedometer2'},
-            {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
-            {'title': 'Inventory Dashboard', 'url': '/hms/inventory-stores/dashboard/', 'icon': 'box-seam'},
             {'title': 'All Stores', 'url': '/hms/procurement/stores/', 'icon': 'shop'},
+            {'title': 'Inventory Dashboard', 'url': '/hms/inventory-stores/dashboard/', 'icon': 'box-seam'},
+            {'title': 'Issue to Staff', 'url': '/hms/inventory/issue-consumables/', 'icon': 'person-check'},
+            {'title': 'Stock Monitoring', 'url': '/hms/accountant/stock-management-monitoring/?stock_view=facility', 'icon': 'graph-up'},
             {'title': 'Inventory Items', 'url': '/hms/inventory/items/', 'icon': 'box-seam'},
             {'title': 'Add Item', 'url': '/hms/procurement/inventory-items/new/', 'icon': 'plus-circle'},
+            {'title': 'Pharmacy', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
             {'title': 'Procurement Requests', 'url': '/hms/procurement/requests/', 'icon': 'file-earmark-text'},
             {'title': 'Create Request', 'url': '/hms/procurement/requests/new/', 'icon': 'plus-circle'},
             {'title': 'Store Transfers', 'url': '/hms/procurement/transfers/', 'icon': 'arrow-left-right'},
@@ -1231,13 +1297,13 @@ def get_role_navigation(user):
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Lab Results', 'url': '/hms/lab-results/', 'icon': 'clipboard2-pulse'},
             {'title': 'Lab report & financials', 'url': '/hms/laboratory/report/', 'url_name': 'laboratory_financial_report', 'path_prefix': '/hms/laboratory/report', 'icon': 'file-earmark-bar-graph'},
-            {'title': 'Lab billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=lab', 'icon': 'file-earmark-spreadsheet'},
+            {'title': 'Lab billed (invoices)', 'url': '/hms/accountant/department-billed-revenue/?dept=lab', 'icon': 'file-earmark-spreadsheet'},
             {'title': 'Lab Tests catalog', 'url': '/hms/lab-tests/', 'icon': 'flask'},
         ],
         'radiologist': [
             {'title': 'Radiology Dashboard', 'url': '/hms/dashboard/radiology/', 'url_name': 'radiologist_dashboard', 'icon': 'camera-reels-fill'},
             {'title': 'Imaging Dashboard', 'url': '/hms/imaging/', 'url_name': 'imaging_dashboard', 'icon': 'camera'},
-            {'title': 'Imaging billed (invoices)', 'url': '/hms/reports/department-billed-revenue/?dept=imaging', 'icon': 'file-earmark-bar-graph'},
+            {'title': 'Imaging billed (invoices)', 'url': '/hms/accountant/department-billed-revenue/?dept=imaging', 'icon': 'file-earmark-bar-graph'},
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Pending Orders', 'url': '/hms/imaging/pending/', 'url_name': 'radiologist_pending_orders', 'icon': 'clock-history'},
             {'title': 'My Studies', 'url': '/hms/imaging/my-studies/', 'url_name': 'radiologist_my_studies', 'icon': 'person-badge'},
@@ -1249,6 +1315,7 @@ def get_role_navigation(user):
         ],
         'receptionist': [
             {'title': 'Reception Dashboard', 'url': '/hms/reception-dashboard/', 'icon': 'speedometer2'},
+            {'title': 'Request Medical Report', 'url': '/hms/cashier/central/add-manual-payment/?focus=medical_report', 'url_name': 'cashier_add_manual_payment', 'icon': 'file-earmark-medical'},
             {'title': 'Service charges (reference)', 'url': '/hms/frontdesk/service-charges/', 'url_name': 'frontdesk_service_charges', 'icon': 'currency-exchange'},
             {'title': 'Patient Flowboard', 'url': '/hms/flow/dashboard/', 'url_name': 'flow_dashboard', 'icon': 'diagram-3'},
             {'title': 'Patients', 'url': '/hms/patients/', 'icon': 'person'},
@@ -1261,11 +1328,22 @@ def get_role_navigation(user):
             {'title': 'Patients — Create Bill', 'url': '/hms/cashier/central/patients/', 'icon': 'people', 'url_name': 'cashier_patient_list'},
             {'title': 'Create Billing', 'url': '/hms/cashier/central/create-billing/', 'icon': 'file-earmark-plus', 'url_name': 'cashier_create_billing'},
             {'title': 'Payments', 'url': '/hms/cashier/receipts/', 'icon': 'credit-card', 'url_name': 'cashier_receipts_list'},
+            {'title': 'Medical Reports', 'url': '/hms/cashier/central/add-manual-payment/?focus=medical_report', 'url_name': 'cashier_add_manual_payment', 'icon': 'file-earmark-medical'},
             {'title': 'Invoices', 'url': '/hms/cashier/invoices/', 'icon': 'receipt', 'url_name': 'cashier_invoices'},
             {'title': 'My Session', 'url': '/hms/cashier/session/', 'icon': 'cash-stack'},
         ],
         'it': [
             {'title': 'IT Operations', 'url': '/hms/admin/it-operations/', 'icon': 'motherboard'},
+            {'title': 'Remove duplicates', 'url': '/hms/admin/it-operations/cleanup/', 'url_name': 'records_cleanup', 'icon': 'person-x'},
+            {'title': 'Patient Attendance Report', 'url': '/hms/reports/patient-attendance/', 'url_name': 'patient_attendance_report', 'icon': 'person-lines-fill'},
+            {'title': 'Reports Hub', 'url': '/hms/reports/', 'url_name': 'reports_dashboard', 'icon': 'file-earmark-bar-graph'},
+            {'title': 'Pharmacy Dashboard', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
+            {'title': 'Pharmacy Stock', 'url': '/hms/pharmacy/stock/', 'icon': 'box-seam'},
+            {'title': 'Drug Formulary', 'url': '/hms/drugs/', 'icon': 'capsule-pill'},
+            {'title': 'Stock Monitoring', 'url': '/hms/accountant/stock-management-monitoring/', 'icon': 'graph-up'},
+            {'title': 'Laboratory', 'url': '/hms/laboratory/', 'icon': 'clipboard2-pulse'},
+            {'title': 'Lab Tests Catalog', 'url': '/hms/lab-tests/', 'icon': 'flask'},
+            {'title': 'Imaging Catalog', 'url': '/hms/imaging/catalog/', 'icon': 'camera'},
             {'title': 'Chat Channel', 'url': '/hms/admin/chat/', 'icon': 'chat-dots'},
             {'title': 'System Health', 'url': '/hms/system-health/', 'icon': 'heart-pulse'},
             {'title': 'Backups', 'url': '/hms/admin/backups/', 'icon': 'database'},
@@ -1275,6 +1353,16 @@ def get_role_navigation(user):
         ],
         'it_staff': [
             {'title': 'IT Operations', 'url': '/hms/admin/it-operations/', 'icon': 'motherboard'},
+            {'title': 'Remove duplicates', 'url': '/hms/admin/it-operations/cleanup/', 'url_name': 'records_cleanup', 'icon': 'person-x'},
+            {'title': 'Patient Attendance Report', 'url': '/hms/reports/patient-attendance/', 'url_name': 'patient_attendance_report', 'icon': 'person-lines-fill'},
+            {'title': 'Reports Hub', 'url': '/hms/reports/', 'url_name': 'reports_dashboard', 'icon': 'file-earmark-bar-graph'},
+            {'title': 'Pharmacy Dashboard', 'url': '/hms/pharmacy/', 'icon': 'capsule'},
+            {'title': 'Pharmacy Stock', 'url': '/hms/pharmacy/stock/', 'icon': 'box-seam'},
+            {'title': 'Drug Formulary', 'url': '/hms/drugs/', 'icon': 'capsule-pill'},
+            {'title': 'Stock Monitoring', 'url': '/hms/accountant/stock-management-monitoring/', 'icon': 'graph-up'},
+            {'title': 'Laboratory', 'url': '/hms/laboratory/', 'icon': 'clipboard2-pulse'},
+            {'title': 'Lab Tests Catalog', 'url': '/hms/lab-tests/', 'icon': 'flask'},
+            {'title': 'Imaging Catalog', 'url': '/hms/imaging/catalog/', 'icon': 'camera'},
             {'title': 'Chat Channel', 'url': '/hms/admin/chat/', 'icon': 'chat-dots'},
             {'title': 'System Health', 'url': '/hms/system-health/', 'icon': 'heart-pulse'},
             {'title': 'Backups', 'url': '/hms/admin/backups/', 'icon': 'database'},
@@ -1451,6 +1539,8 @@ MANUAL_CHARGE_ACCESS_ROLES = {
     'account_officer',
     'cashier',
     'receptionist',
+    'frontdesk',
+    'front_desk',
 }
 
 # Front desk may attach external reports/scans to a patient folder (not clinical documentation).
@@ -1610,6 +1700,16 @@ def user_has_waiver_admin_group(user):
             return True
     return False
 
+
+def user_can_approve_stock_receipt_correction(user):
+    """Only admins/superusers may approve supplier stock-receipt ledger corrections."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_superuser:
+        return True
+    if user_has_waiver_admin_group(user):
+        return True
+    return get_user_role(user) == 'admin'
 
 def user_has_waiver_finance_group(user):
     """True if user is in an account/finance Django group (normalized name)."""

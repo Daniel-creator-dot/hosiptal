@@ -79,6 +79,12 @@ class Command(BaseCommand):
                 # Appointment indexes
                 ("CREATE INDEX IF NOT EXISTS idx_appointment_date_status ON hospital_appointment(appointment_date, status, is_deleted) WHERE is_deleted = false;",
                  "DROP INDEX IF EXISTS idx_appointment_date_status;"),
+                
+                # Notification indexes (bell badge / API polling)
+                ("CREATE INDEX IF NOT EXISTS idx_notification_recipient_created ON hospital_notification(recipient_id, created DESC) WHERE is_deleted = false;",
+                 "DROP INDEX IF EXISTS idx_notification_recipient_created;"),
+                ("CREATE INDEX IF NOT EXISTS idx_notification_recipient_unread ON hospital_notification(recipient_id, is_read, is_deleted) WHERE is_deleted = false AND is_read = false;",
+                 "DROP INDEX IF EXISTS idx_notification_recipient_unread;"),
             ]
             
             for create_sql, drop_sql in indexes:

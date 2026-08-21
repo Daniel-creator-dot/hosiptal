@@ -106,7 +106,7 @@ class ImagingImageAdmin(admin.ModelAdmin):
     date_hierarchy = 'uploaded_at'
     
     def image_preview(self, obj):
-        if obj.image:
+        if obj.has_stored_file:
             return format_html('<img src="{}" style="max-width: 100px; max-height: 100px;" />', obj.image.url)
         return '-'
     image_preview.short_description = 'Preview'
@@ -115,12 +115,13 @@ class ImagingImageAdmin(admin.ModelAdmin):
 @admin.register(ImagingCatalog)
 class ImagingCatalogAdmin(admin.ModelAdmin):
     """Admin for Imaging Catalog - only actual imaging services"""
-    list_display = ['code', 'name', 'modality', 'body_part', 'price', 'is_active']
-    list_filter = ['modality', 'is_active', 'created']
+    list_display = ['code', 'name', 'modality', 'body_part', 'price', 'nhis_covered', 'is_active']
+    list_filter = ['modality', 'nhis_covered', 'is_active', 'created']
     search_fields = ['code', 'name', 'body_part', 'study_type']
-    list_editable = ['is_active', 'price']
+    list_editable = ['is_active', 'price', 'nhis_covered']
     readonly_fields = ['created', 'modified']
     ordering = ['modality', 'name']
+    actions = ['mark_nhis_covered', 'unmark_nhis_covered']
     
     fieldsets = (
         ('Imaging Study Information', {
@@ -129,10 +130,24 @@ class ImagingCatalogAdmin(admin.ModelAdmin):
         ('Pricing', {
             'fields': ('price',)
         }),
+        ('NHIS panel', {
+            'fields': ('nhis_covered',),
+            'description': 'NHIS patients can order this scan without cash pay when marked. Unmarked scans can still be added at cashier as patient cash.',
+        }),
         ('Status', {
             'fields': ('is_active',)
         }),
     )
+
+    def mark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=True)
+        self.message_user(request, f'{updated} imaging item(s) marked as NHIS panel.')
+    mark_nhis_covered.short_description = 'Mark selected scans as NHIS panel'
+
+    def unmark_nhis_covered(self, request, queryset):
+        updated = queryset.update(nhis_covered=False)
+        self.message_user(request, f'{updated} imaging item(s) removed from NHIS panel.')
+    unmark_nhis_covered.short_description = 'Remove selected scans from NHIS panel'
 
 
 @admin.register(ProcedureCatalog)

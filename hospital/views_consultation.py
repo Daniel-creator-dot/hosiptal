@@ -43,6 +43,20 @@ except Exception:
     ProcedureCatalog = None
 
 logger = logging.getLogger(__name__)
+
+
+def _documents_with_files(documents):
+    """Return only PatientDocument rows whose file exists in storage."""
+    with_files = []
+    for doc in documents:
+        try:
+            if getattr(doc, 'has_stored_file', False):
+                with_files.append(doc)
+        except (ValueError, AttributeError, OSError):
+            continue
+    return with_files
+
+
 try:
     from .forms import EncounterForm
 except ImportError:
@@ -64,7 +78,31 @@ from .utils_clinical_notes import (
     dedupe_clinical_notes_timeline,
     strip_billing_amounts_from_clinical_display,
 )
-from .consultation_status import encounter_has_diagnosis
+from .consultation_status import (
+    encounter_has_diagnosis,
+    encounter_has_preliminary_diagnosis,
+    encounter_has_final_diagnosis,
+    require_diagnosis_for_imaging_order,
+    FINAL_DIAGNOSIS_REQUIRED_MSG,
+)
+
+
+def _consultation_note_draft_session_key(encounter_id):
+    return f'consultation_note_draft_{encounter_id}'
+
+
+def _stash_consultation_note_draft(request, encounter_id, text):
+    if (text or '').strip():
+        request.session[_consultation_note_draft_session_key(encounter_id)] = text.strip()
+        request.session.modified = True
+
+
+def _clear_consultation_note_draft(request, encounter_id):
+    request.session.pop(_consultation_note_draft_session_key(encounter_id), None)
+
+
+def _get_consultation_note_draft(request, encounter_id):
+    return request.session.get(_consultation_note_draft_session_key(encounter_id), '') or ''
 
 
 def _encounter_types_outpatient_like():
@@ -433,6 +471,7 @@ def consultation_view(request, encounter_id):
     problems = []
     clinical_notes = []
     clinical_notes_calendar_data = []
+    encounter_problems = []
     diagnosis_code_map = {}
     # Additional variables that might be used
     available_procedures = []
@@ -521,14 +560,20 @@ def consultation_view(request, encounter_id):
             )
 
             if not consultation_charge_exists:
-                if is_review_visit(encounter):
-                    pass  # Review / follow-up: no consultation fee
+                from .utils_doctor_pricing import DoctorPricingService
+                if is_review_visit(encounter) and not DoctorPricingService.is_specialist_doctor(doctor):
+                    pass  # GP review / follow-up: no consultation fee
                 else:
-                    # 🎯 IMMEDIATE CONSULTATION CHARGE - This is when consultation starts
-                    consultation_type = 'general'  # Default to general
-                    if encounter.encounter_type in ['er', 'emergency']:
+                    # Charge when consultation starts (includes psychiatric new/subsequent)
+                    consultation_type = 'general'
+                    if encounter.encounter_type in ['er', 'emergency', 'specialist', 'gynae']:
                         consultation_type = 'specialist'
-                    elif doctor.department and 'specialist' in doctor.department.name.lower():
+                    elif DoctorPricingService.is_specialist_doctor(doctor):
+                        consultation_type = 'specialist'
+                    elif doctor.department and any(
+                        k in (doctor.department.name or '').lower()
+                        for k in ('specialist', 'psychiatr', 'psychiatry', 'mental')
+                    ):
                         if not is_gp_general_medicine_department(doctor.department):
                             consultation_type = 'specialist'
                     consultation_type = normalize_consultation_type_for_gp_department(
@@ -854,6 +899,7 @@ def consultation_view(request, encounter_id):
                 'route',
                 'instructions',
                 'created',
+                'drug_id',
                 'drug__id',
                 'drug__name',
                 'drug__strength',
@@ -870,6 +916,18 @@ def consultation_view(request, encounter_id):
             )
             .order_by('-created')[:_PAST_RX_LIMIT]
         )
+        try:
+            from .pharmacy_stock_utils import pharmacy_stock_qty_map_for_drugs
+            past_drug_ids = [rx.drug_id for rx in past_prescriptions if rx.drug_id]
+            past_stock = pharmacy_stock_qty_map_for_drugs(past_drug_ids)
+            for rx in past_prescriptions:
+                qty = int(past_stock.get(rx.drug_id, 0) or 0)
+                rx.stock_available_qty = qty
+                rx.in_stock_for_prescribe = qty > 0
+        except Exception:
+            for rx in past_prescriptions:
+                rx.stock_available_qty = None
+                rx.in_stock_for_prescribe = True
     except Exception as e:
         _logger.warning('Error loading past prescriptions for consultation: %s', e, exc_info=True)
         past_prescriptions = []
@@ -883,6 +941,16 @@ def consultation_view(request, encounter_id):
             imaging_catalog_ids = request.POST.getlist('imaging_catalog_ids')
             priority = request.POST.get('priority', 'routine')
             notes = (request.POST.get('clinical_indication') or request.POST.get('notes') or '').strip()
+
+            ok_dx, dx_msg = require_diagnosis_for_imaging_order(
+                encounter,
+                doctor=doctor,
+                diagnosis_name=(request.POST.get('diagnosis_name') or '').strip(),
+                icd10_code=(request.POST.get('icd10_code') or '').strip(),
+            )
+            if not ok_dx:
+                messages.error(request, dx_msg)
+                return redirect(f"{reverse('hospital:consultation_view', kwargs={'encounter_id': encounter_id})}?tab=imaging")
             
             if imaging_catalog_ids:
                 try:
@@ -1340,7 +1408,13 @@ def consultation_view(request, encounter_id):
                 request.POST.get('description', '')
                 or request.POST.get('notes', '')
             )
-            diagnosis_type = request.POST.get('diagnosis_type', 'primary')
+            diagnosis_type = (request.POST.get('diagnosis_type') or 'preliminary').strip().lower()
+            if diagnosis_type in ('provisional', 'working'):
+                diagnosis_type = 'preliminary'
+            if diagnosis_type not in (
+                'preliminary', 'final', 'primary', 'secondary', 'differential'
+            ):
+                diagnosis_type = 'preliminary'
             
             # Try to find DiagnosisCode
             diagnosis_code_obj = None
@@ -1386,23 +1460,33 @@ def consultation_view(request, encounter_id):
                     
                     # Update encounter diagnosis with name, not just code
                     diagnosis_display = problem or (diagnosis_code_obj.short_description if diagnosis_code_obj else icd10_code)
+                    stage_tag = ' [Final]' if diagnosis_type == 'final' else (
+                        ' [Preliminary]' if diagnosis_type == 'preliminary' else ''
+                    )
                     if icd10_code:
-                        encounter.diagnosis = f"{encounter.diagnosis or ''}\n{diagnosis_display} ({icd10_code})".strip()
+                        line = f'{diagnosis_display} ({icd10_code}){stage_tag}'
                     else:
-                        encounter.diagnosis = f"{encounter.diagnosis or ''}\n{diagnosis_display}".strip()
+                        line = f'{diagnosis_display}{stage_tag}'
+                    encounter.diagnosis = f'{encounter.diagnosis or ""}\n{line}'.strip()
                     encounter.save(update_fields=['diagnosis'])
                     
-                    messages.success(request, f'Diagnosis "{diagnosis_display}" added successfully.')
+                    stage_label = 'Final' if diagnosis_type == 'final' else 'Preliminary'
+                    messages.success(
+                        request,
+                        f'{stage_label} diagnosis "{diagnosis_display}" added successfully.',
+                    )
                     if is_ajax:
                         encounter.refresh_from_db(fields=['diagnosis'])
                         return JsonResponse({
                             'success': True,
-                            'message': f'Diagnosis "{diagnosis_display}" added.',
+                            'message': f'{stage_label} diagnosis "{diagnosis_display}" added.',
                             'encounter_diagnosis': encounter.diagnosis or '',
+                            'diagnosis_type': diagnosis_type,
                             'problem': {
                                 'id': pl.id,
                                 'description': pl.problem or diagnosis_display,
                                 'icd10_code': pl.icd10_code or '',
+                                'diagnosis_type': diagnosis_type,
                             }
                         })
                 except Exception as e:
@@ -1421,10 +1505,15 @@ def consultation_view(request, encounter_id):
             is_auto_save = request.POST.get('auto_save') == 'true' or \
                           request.META.get('HTTP_X_AUTO_SAVE') == 'true'
             
+            note_type = request.POST.get('note_type', 'consultation')
+            # Single-box clinical note: one field holds everything
+            clinical_note = request.POST.get('clinical_note', '').strip()
+
             if not is_auto_save and not encounter_has_diagnosis(encounter):
+                _stash_consultation_note_draft(request, encounter_id, clinical_note)
                 messages.error(
                     request,
-                    'Add at least one diagnosis before saving notes.',
+                    'Add a preliminary diagnosis before saving notes.',
                 )
                 return redirect(reverse('hospital:consultation_view', kwargs={'encounter_id': encounter_id}))
 
@@ -1432,10 +1521,6 @@ def consultation_view(request, encounter_id):
             if ClinicalNote is None:
                 messages.error(request, 'ClinicalNote model not available.')
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)
-            
-            note_type = request.POST.get('note_type', 'consultation')
-            # Single-box clinical note: one field holds everything
-            clinical_note = request.POST.get('clinical_note', '').strip()
             if not clinical_note:
                 notes = request.POST.get('notes', '')
                 subjective = request.POST.get('subjective', '')
@@ -1489,6 +1574,7 @@ def consultation_view(request, encounter_id):
                         notes=notes or ' ',
                         created_by=doctor
                     )
+                    _clear_consultation_note_draft(request, encounter_id)
                     messages.success(request, 'Clinical note saved successfully. You can continue editing and save again anytime.')
                     return redirect(reverse('hospital:consultation_view', kwargs={'encounter_id': encounter_id}) + '?note_saved=1')
                 
@@ -1545,11 +1631,14 @@ def consultation_view(request, encounter_id):
                 if is_prior_visit and getattr(doctor, 'profession', None) != 'doctor' and not request.user.is_superuser:
                     messages.error(request, 'Only doctors can edit notes from a prior visit.')
                     return redirect('hospital:consultation_view', encounter_id=encounter_id)
-                note.subjective = request.POST.get('subjective', '')
-                note.objective = request.POST.get('objective', '')
-                note.assessment = request.POST.get('assessment', '')
-                note.plan = request.POST.get('plan', '')
-                note.notes = request.POST.get('note_content', '') or note.notes
+                note.subjective = ''
+                note.objective = ''
+                note.assessment = ''
+                note.plan = ''
+                note.notes = (request.POST.get('note_content') or request.POST.get('clinical_note') or '').strip()
+                if not note.notes:
+                    messages.error(request, 'Please enter your clinical note before saving.')
+                    return redirect('hospital:consultation_view', encounter_id=encounter_id)
                 note.save(update_fields=['subjective', 'objective', 'assessment', 'plan', 'notes', 'modified'])
                 messages.success(
                     request,
@@ -1702,9 +1791,10 @@ def consultation_view(request, encounter_id):
                 and not encounter_has_diagnosis(encounter)
                 and not diagnosis
             ):
+                _stash_consultation_note_draft(request, encounter_id, clinical_note or notes)
                 messages.error(
                     request,
-                    'Add at least one diagnosis before saving notes.',
+                    'Add a preliminary diagnosis before saving notes.',
                 )
                 return redirect('hospital:consultation_view', encounter_id=encounter_id)
             
@@ -1775,6 +1865,7 @@ def consultation_view(request, encounter_id):
                                 notes=progress_notes_content,
                                 created_by=doctor
                             )
+                            _clear_consultation_note_draft(request, encounter_id)
                             messages.success(request, '✅ Consultation progress saved successfully. You can continue editing and save again anytime.')
                             return redirect(reverse('hospital:consultation_view', kwargs={'encounter_id': encounter_id}) + '?note_saved=1')
                     else:
@@ -1837,10 +1928,17 @@ def consultation_view(request, encounter_id):
                     messages.error(request, '❌ Chief Complaint is required to complete consultation. Please enter the chief complaint.')
                     return redirect('hospital:consultation_view', encounter_id=encounter_id)
 
-                if not encounter_has_diagnosis(encounter) and not diagnosis:
+                if not encounter_has_preliminary_diagnosis(encounter) and not diagnosis:
                     messages.error(
                         request,
-                        'Add at least one diagnosis before completing the consultation.',
+                        'Add a preliminary diagnosis before completing (and enter a final diagnosis after results).',
+                    )
+                    return redirect('hospital:consultation_view', encounter_id=encounter_id)
+
+                if not encounter_has_final_diagnosis(encounter) and not diagnosis:
+                    messages.error(
+                        request,
+                        FINAL_DIAGNOSIS_REQUIRED_MSG,
                     )
                     return redirect('hospital:consultation_view', encounter_id=encounter_id)
                 
@@ -1863,14 +1961,19 @@ def consultation_view(request, encounter_id):
                             try:
                                 from .models_diagnosis import DiagnosisCode
                                 
-                                # Check if diagnosis already exists for this encounter
+                                # Prefer promoting an existing row to final when the text matches;
+                                # otherwise create a new final diagnosis record.
                                 existing_diagnosis = Diagnosis.objects.filter(
                                     encounter=encounter,
-                                    diagnosis=diagnosis,
+                                    diagnosis=diagnosis.split('(')[0].strip() if '(' in diagnosis else diagnosis,
                                     is_deleted=False
                                 ).first()
                                 
-                                if not existing_diagnosis:
+                                if existing_diagnosis:
+                                    if (existing_diagnosis.diagnosis_type or '') != 'final':
+                                        existing_diagnosis.diagnosis_type = 'final'
+                                        existing_diagnosis.save(update_fields=['diagnosis_type', 'modified'])
+                                else:
                                     # Try to find matching DiagnosisCode
                                     diagnosis_code_obj = None
                                     # Extract ICD-10 code if present (format: "Diagnosis Name (B50.9)")
@@ -1887,14 +1990,14 @@ def consultation_view(request, encounter_id):
                                         except:
                                             pass
                                     
-                                    # Create Diagnosis record
+                                    # Create Diagnosis record as FINAL (post-results)
                                     Diagnosis.objects.create(
                                         encounter=encounter,
                                         patient=encounter.patient,
                                         icd10_code=code_match.group(1) if code_match else '',
                                         diagnosis_code=diagnosis_code_obj,
                                         diagnosis=diagnosis.split('(')[0].strip() if '(' in diagnosis else diagnosis,
-                                        diagnosis_type='primary',
+                                        diagnosis_type='final',
                                         diagnosed_by=doctor
                                     )
                                     
@@ -2161,13 +2264,31 @@ def consultation_view(request, encounter_id):
                     ).first()
                     
                     if not lab_order:
+                        from hospital.consultation_status import (
+                            LAB_DIAGNOSIS_REQUIRED_MSG,
+                            require_diagnosis_for_lab_order,
+                        )
+                        from hospital.lab_order_diagnosis import encounter_diagnosis_summary
+                        ok_dx, dx_msg = require_diagnosis_for_lab_order(
+                            encounter,
+                            doctor=doctor,
+                            diagnosis_name=(request.POST.get('diagnosis_name') or '').strip(),
+                            icd10_code=(request.POST.get('icd10_code') or '').strip(),
+                        )
+                        if not ok_dx:
+                            messages.error(request, dx_msg or LAB_DIAGNOSIS_REQUIRED_MSG)
+                            return redirect('hospital:consultation_view', encounter_id=encounter_id)
                         lab_order = Order.objects.create(
                             encounter=encounter,
                             order_type='lab',
                             status='pending',
                             requested_by=doctor,
-                            priority='routine'
+                            priority='routine',
+                            clinical_indication=encounter_diagnosis_summary(encounter),
                         )
+                    else:
+                        from hospital.lab_order_diagnosis import persist_lab_order_diagnosis
+                        persist_lab_order_diagnosis(lab_order, encounter)
                     
                     # Parse range if provided (e.g., "3.5-7.0")
                     range_low = ''
@@ -2587,6 +2708,11 @@ def consultation_view(request, encounter_id):
                     is_deleted=False
                 ).order_by('-created')
                 
+                encounter_problems = list(ProblemList.objects.filter(
+                    encounter=encounter,
+                    is_deleted=False,
+                ).order_by('-created'))
+
                 # Encounter-scoped notes (for this visit’s summary / latest consultation note only)
                 clinical_notes = list(ClinicalNote.objects.filter(
                     encounter=encounter,
@@ -2597,24 +2723,32 @@ def consultation_view(request, encounter_id):
                 problems = []
                 clinical_notes = []
                 clinical_notes_calendar_data = []
+                encounter_problems = []
         except (NameError, AttributeError, TypeError) as model_error:
             # Models not imported or not available
             _logger.warning(f"Models not available: {model_error}")
             problems = []
             clinical_notes = []
             clinical_notes_calendar_data = []
+            encounter_problems = []
         except Exception as db_error:
             # Database error when querying
             _logger.warning(f"Error querying problems/clinical notes: {db_error}")
             problems = []
             clinical_notes = []
             clinical_notes_calendar_data = []
+            encounter_problems = []
         
         # Get ICD-10 descriptions for the problems
+        problem_sources = []
         if problems:
+            problem_sources.extend(problems)
+        if encounter_problems:
+            problem_sources.extend(encounter_problems)
+        if problem_sources:
             try:
                 from .models_diagnosis import DiagnosisCode
-                icd10_codes = [p.icd10_code for p in problems if p.icd10_code]
+                icd10_codes = [p.icd10_code for p in problem_sources if p.icd10_code]
                 if icd10_codes:
                     diagnosis_codes = DiagnosisCode.objects.filter(
                         code__in=icd10_codes,
@@ -2631,15 +2765,16 @@ def consultation_view(request, encounter_id):
                 _logger.warning(f"Error loading diagnosis codes: {diag_error}")
         
         # Add diagnosis description to each problem
-        if problems and diagnosis_code_map:
-            for problem in problems:
-                try:
-                    if problem.icd10_code and problem.icd10_code in diagnosis_code_map:
-                        problem.icd10_description = diagnosis_code_map[problem.icd10_code]
-                    else:
+        for problem_list in (problems, encounter_problems):
+            if problem_list and diagnosis_code_map:
+                for problem in problem_list:
+                    try:
+                        if problem.icd10_code and problem.icd10_code in diagnosis_code_map:
+                            problem.icd10_description = diagnosis_code_map[problem.icd10_code]
+                        else:
+                            problem.icd10_description = None
+                    except Exception:
                         problem.icd10_description = None
-                except Exception:
-                    problem.icd10_description = None
                     
     except Exception as e:
         # Fallback if models are not available
@@ -2649,6 +2784,7 @@ def consultation_view(request, encounter_id):
         problems = []
         clinical_notes = []
         clinical_notes_calendar_data = []
+        encounter_problems = []
         diagnosis_code_map = {}
     
     # Vitals: include same-day sibling active encounters so nurse intake vitals appear in consulting
@@ -2676,7 +2812,9 @@ def consultation_view(request, encounter_id):
                 ).order_by('-created')
             )
             patient_clinical_notes = dedupe_clinical_notes_timeline(patient_clinical_notes)
+            from .utils_clinical_notes import clinical_note_combined_text
             for n in patient_clinical_notes:
+                n.combined_text = clinical_note_combined_text(n)
                 try:
                     created_local = timezone.localtime(n.created) if n.created else None
                 except Exception:
@@ -2698,8 +2836,8 @@ def consultation_view(request, encounter_id):
                             author = getattr(n.created_by, 'get_full_name', lambda: 'Staff')() or 'Staff'
                     except Exception:
                         pass
-                summary = (n.assessment or n.plan or n.notes or n.subjective or n.objective or '')[:80]
-                if len((n.assessment or '') + (n.plan or '') + (n.notes or '')) > 80:
+                summary = (n.combined_text or '')[:80]
+                if len(n.combined_text or '') > 80:
                     summary += '\u2026'
                 patient_clinical_notes_calendar_data.append({
                     'id': str(n.id),
@@ -2723,6 +2861,7 @@ def consultation_view(request, encounter_id):
                     'assessment': (n.assessment or ''),
                     'plan': (n.plan or ''),
                     'notes': (getattr(n, 'notes', None) or ''),
+                    'combined_text': getattr(n, 'combined_text', None) or clinical_note_combined_text(n),
                     'encounter_id': str(getattr(n, 'encounter_id', '') or ''),
                     'visit_date': (
                         n.encounter.started_at.isoformat()
@@ -2879,6 +3018,7 @@ def consultation_view(request, encounter_id):
     clinical_note_combined = strip_billing_amounts_from_clinical_display(
         clinical_note_combined
     )
+    has_saved_consultation_note = bool((clinical_note_combined or '').strip())
     consultation_summary = {
         'chief_complaint': encounter.chief_complaint or '',
         'diagnosis': encounter.diagnosis or '',
@@ -2915,11 +3055,32 @@ def consultation_view(request, encounter_id):
                 name__icontains='INVALID'
             ).first()
             if preselected_drug:
-                from .utils_billing import get_drug_price_for_prescription, get_patient_payer_info
-                _pinfo = get_patient_payer_info(encounter.patient, encounter)
-                preselected_drug_display_price = float(
-                    get_drug_price_for_prescription(preselected_drug, _pinfo.get('payer'))
+                from .pharmacy_stock_utils import (
+                    drug_is_available_to_prescribe,
+                    OUT_OF_STOCK_PRESCRIBE_MESSAGE,
                 )
+                from .services.nhis_drug_formulary import (
+                    nhis_prescribe_block_reason,
+                    payer_from_encounter,
+                )
+                nhis_block = nhis_prescribe_block_reason(
+                    drug=preselected_drug, payer=payer_from_encounter(encounter)
+                )
+                if nhis_block:
+                    messages.warning(request, nhis_block)
+                    preselected_drug = None
+                elif not drug_is_available_to_prescribe(preselected_drug):
+                    messages.warning(
+                        request,
+                        f'{preselected_drug.name}: {OUT_OF_STOCK_PRESCRIBE_MESSAGE}',
+                    )
+                    preselected_drug = None
+                else:
+                    from .utils_billing import get_drug_price_for_prescription, get_patient_payer_info
+                    _pinfo = get_patient_payer_info(encounter.patient, encounter)
+                    preselected_drug_display_price = float(
+                        get_drug_price_for_prescription(preselected_drug, _pinfo.get('payer'))
+                    )
         except Drug.DoesNotExist:
             preselected_drug = None
     
@@ -2931,7 +3092,27 @@ def consultation_view(request, encounter_id):
     has_insurance = encounter_payer_info.get('is_insurance_or_corporate', False)
     patient_billing_payer_name = encounter_payer_info.get('name', 'Cash') or 'Cash'
     from .services.insurance_exclusion_service import catalog_exclusion_info, is_insurance_billing_payer
+    from .services.nhis_drug_formulary import is_nhis_payer
+    from .insurance_lab_limit import insurance_lab_limit_template_context
     payer_is_insurance = is_insurance_billing_payer(patient_payer)
+    patient_is_nhis = is_nhis_payer(patient_payer)
+    insurance_lab_limit_ctx = insurance_lab_limit_template_context(encounter)
+
+    if patient_is_nhis:
+        from .services.nhis_drug_formulary import filter_catalog_items_for_payer
+        available_drugs = filter_catalog_items_for_payer(available_drugs, patient_payer)
+        available_lab_tests = filter_catalog_items_for_payer(available_lab_tests, patient_payer)
+        available_imaging_studies = filter_catalog_items_for_payer(available_imaging_studies, patient_payer)
+        imaging_by_modality = {}
+        try:
+            modality_display_map = dict(ImagingStudy.MODALITY_CHOICES)
+            for study in available_imaging_studies[:300]:
+                modality_display = modality_display_map.get(study.modality, study.modality.title())
+                imaging_by_modality.setdefault(modality_display, []).append(study)
+        except Exception:
+            for study in available_imaging_studies[:300]:
+                modality_display = getattr(study, 'modality', 'Other').title()
+                imaging_by_modality.setdefault(modality_display, []).append(study)
 
     encounter_payer_for_exclusions = patient_payer if payer_is_insurance else None
     if encounter_payer_for_exclusions:
@@ -2982,22 +3163,53 @@ def consultation_view(request, encounter_id):
             Q(patient=encounter.patient, encounter=encounter, document_type='imaging_report') |
             Q(imaging_study__order__encounter=encounter, document_type='imaging_report'),
             is_deleted=False
-        ).select_related('uploaded_by__user', 'imaging_study').order_by('-created').distinct()
+        ).exclude(file='').exclude(file__isnull=True).select_related(
+            'uploaded_by__user', 'imaging_study'
+        ).order_by('-created').distinct()
         
         # Get lab PDFs: by patient+encounter OR by lab_result in this encounter's orders
-        lab_pdf_docs = PatientDocument.objects.filter(
-            Q(patient=encounter.patient, encounter=encounter, document_type='lab_report') |
-            Q(lab_result__order__encounter=encounter, document_type='lab_report'),
-            is_deleted=False
-        ).select_related('uploaded_by__user', 'lab_result').order_by('-created').distinct()
-        # All other documents/images for this encounter (e.g. patient uploads, consent, other)
-        patient_encounter_documents = PatientDocument.objects.filter(
-            patient=encounter.patient,
-            encounter=encounter,
-            is_deleted=False
-        ).exclude(file='').exclude(file__isnull=True).exclude(
-            document_type__in=['imaging_report', 'lab_report']
-        ).select_related('uploaded_by__user').order_by('-created')
+        lab_pdf_docs = _documents_with_files(
+            PatientDocument.objects.filter(
+                Q(patient=encounter.patient, encounter=encounter, document_type='lab_report') |
+                Q(lab_result__order__encounter=encounter, document_type='lab_report'),
+                is_deleted=False,
+            ).exclude(file='').exclude(file__isnull=True).select_related(
+                'uploaded_by__user', 'lab_result'
+            ).order_by('-created').distinct()
+        )
+        imaging_pdf_docs = _documents_with_files(imaging_pdf_docs)
+        # Patient-folder uploads (nurse/frontdesk external reports) + other visit docs.
+        # Use patient_scope_ids so merged/linked charts are included. Do not require
+        # storage.exists() here — medical-records page lists by file name; doctors need
+        # the same files under Imaging even if the storage probe fails.
+        patient_encounter_documents = list(
+            PatientDocument.objects.filter(
+                patient_id__in=patient_scope_ids,
+                is_deleted=False,
+            )
+            .filter(
+                Q(encounter=encounter)
+                | Q(document_type='external_report')
+            )
+            .exclude(file='')
+            .exclude(file__isnull=True)
+            .exclude(document_type__in=['imaging_report', 'lab_report'])
+            .select_related('uploaded_by__user')
+            .order_by('-created')
+            .distinct()
+        )
+        # Prefer rows whose file is present on disk, but keep the rest so View still works
+        preferred = _documents_with_files(patient_encounter_documents)
+        if preferred:
+            preferred_ids = {d.pk for d in preferred}
+            # Keep storage-verified first, then any remaining with a file path
+            rest = [d for d in patient_encounter_documents if d.pk not in preferred_ids]
+            patient_encounter_documents = preferred + rest
+        else:
+            patient_encounter_documents = [
+                d for d in patient_encounter_documents
+                if getattr(getattr(d, 'file', None), 'name', None)
+            ]
     except Exception as e:
         _logger.warning(f"Error loading PDF documents: {e}")
     
@@ -3093,6 +3305,16 @@ def consultation_view(request, encounter_id):
     except Exception:
         under_prescribed_drugs = []
 
+    if patient_is_nhis:
+        expiring_drugs = [
+            item for item in expiring_drugs
+            if getattr(getattr(item, 'drug', None), 'nhis_covered', False)
+        ]
+        under_prescribed_drugs = [
+            d for d in under_prescribed_drugs
+            if getattr(d, 'nhis_covered', False)
+        ]
+
     consultation_page_config = {
         'isDoctor': getattr(doctor, 'profession', None) == 'doctor',
         'isNurse': getattr(doctor, 'profession', None) == 'nurse',
@@ -3108,6 +3330,22 @@ def consultation_view(request, encounter_id):
         'patient': encounter.patient,
         'doctor': doctor,
         'has_encounter_diagnosis': encounter_has_diagnosis(encounter),
+        'has_preliminary_diagnosis': encounter_has_preliminary_diagnosis(encounter),
+        'has_final_diagnosis': encounter_has_final_diagnosis(encounter),
+        'preliminary_diagnoses': [
+            d for d in (
+                list(Diagnosis.objects.filter(encounter=encounter, is_deleted=False).select_related('diagnosis_code').order_by('-diagnosis_date'))
+                if Diagnosis is not None else []
+            )
+            if (d.diagnosis_type or '') != 'final'
+        ] if Diagnosis is not None else [],
+        'final_diagnoses': [
+            d for d in (
+                list(Diagnosis.objects.filter(encounter=encounter, is_deleted=False).select_related('diagnosis_code').order_by('-diagnosis_date'))
+                if Diagnosis is not None else []
+            )
+            if (d.diagnosis_type or '') == 'final'
+        ] if Diagnosis is not None else [],
         'available_drugs': available_drugs,
         'available_lab_tests': available_lab_tests,
         'available_imaging_studies': available_imaging_studies,
@@ -3123,6 +3361,7 @@ def consultation_view(request, encounter_id):
         'past_prescriptions': past_prescriptions,
         'consultation_page_config': consultation_page_config,
         'problems': problems,
+        'encounter_problems': encounter_problems,
         'clinical_notes': clinical_notes,
         'patient_clinical_notes': patient_clinical_notes,
         'clinical_notes_calendar_data': clinical_notes_calendar_data,
@@ -3222,7 +3461,7 @@ def consultation_view(request, encounter_id):
                 'created': d.created.strftime('%b %d, %Y') if getattr(d, 'created', None) else '',
                 'file_url': (
                     reverse('hospital:patient_document_file', kwargs={'document_id': d.pk})
-                    if getattr(d, 'file', None) and d.file
+                    if getattr(d, 'has_stored_file', False)
                     else ''
                 ),
             }
@@ -3244,6 +3483,7 @@ def consultation_view(request, encounter_id):
         'patient_billing_payer_name': patient_billing_payer_name,  # Safe label for scripts (never None)
         'has_insurance': has_insurance,  # True for insurance or corporate (payer-adjusted pricing)
         'payer_is_insurance': payer_is_insurance,  # True only for NHIS/private — exclusions apply here, not corporate
+        **insurance_lab_limit_ctx,
         'pricing_deferred': pricing_deferred,  # True when pricing loaded via AJAX
         'drug_pricing_map': drug_pricing_map,  # Insurance prices for drugs {drug_id: price}
         'lab_test_pricing_map': lab_test_pricing_map,  # Insurance prices for lab tests {test_id: price}
@@ -3253,6 +3493,7 @@ def consultation_view(request, encounter_id):
         'lab_test_pricing_map_json': json.dumps({str(k): v for k, v in lab_test_pricing_map.items()}).replace('</', '<\\u002f'),
         'imaging_pricing_map_json': json.dumps({str(k): v for k, v in imaging_pricing_map.items()}).replace('</', '<\\u002f'),
         'imaging_pdf_docs': imaging_pdf_docs,  # PDF documents for imaging studies
+        'imaging_tab_file_count': len(imaging_pdf_docs or []) + len(patient_encounter_documents or []),
         'lab_pdf_docs': lab_pdf_docs,  # PDF documents for lab results
         'lab_results_with_attachments': lab_results_with_attachments,  # LabResult.attachment files (lab upload)
         'lab_results_with_attachments_pending': lab_results_with_attachments_pending,  # Not completed — extra strip in UI
@@ -3264,11 +3505,20 @@ def consultation_view(request, encounter_id):
         'expiring_drugs': expiring_drugs,  # Drugs expiring in 30 days - for doctor awareness when prescribing
         'under_prescribed_drugs': under_prescribed_drugs,  # Common tablets/injections quiet for last 3 weeks
         'consultation_read_only': consultation_read_only,  # True when consultation expired (view-only)
-        'can_edit_consultation_note': can_edit_consultation_note,  # True only if current doctor is the note author (or no note yet)
+        'can_edit_consultation_note': can_edit_consultation_note,
+        'has_saved_consultation_note': has_saved_consultation_note,
         'prefilled_context_editable': prefilled_context_editable,
         'consultation_note_author_name': consultation_note_author_name,  # Name of doctor who wrote the note (for nurses/other doctors)
         'assigned_doctor': assigned_doctor,  # Encounter's assigned provider (stays same when another doctor consults)
         'progress_notes_today_date': timezone.localdate(),  # For Progress Notes (Consultation) "today" highlight
+        'clinical_note_draft': _get_consultation_note_draft(request, encounter.id),
+        'ai_clinical_assistant_enabled': _ai_clinical_assistant_available_for_user(
+            request, encounter
+        ),
+        'ai_clinical_assistant_start_url': reverse(
+            'hospital:consultation_ai_assist_start', kwargs={'encounter_id': encounter.id}
+        ),
+        'patient_is_nhis': patient_is_nhis,
     }
     return render(request, 'hospital/consultation.html', context)
 
@@ -3301,6 +3551,12 @@ def consultation_pricing_api(request, encounter_id):
         available_imaging_studies = list(cached_img[:500]) if hasattr(cached_img, '__iter__') and not isinstance(cached_img, (list, tuple)) else (cached_img[:500] if isinstance(cached_img, (list, tuple)) else list(cached_img)[:500])
     except Exception:
         available_imaging_studies = []
+    from .utils_billing import get_patient_payer_info
+    from .services.nhis_drug_formulary import filter_catalog_items_for_payer
+    pricing_payer = get_patient_payer_info(encounter.patient, encounter).get('payer')
+    available_drugs = filter_catalog_items_for_payer(available_drugs, pricing_payer)
+    available_lab_tests = filter_catalog_items_for_payer(available_lab_tests, pricing_payer)
+    available_imaging_studies = filter_catalog_items_for_payer(available_imaging_studies, pricing_payer)
     drug_pricing_map, lab_test_pricing_map, imaging_pricing_map = _build_consultation_pricing_maps(
         encounter, available_drugs, available_lab_tests, available_imaging_studies
     )
@@ -3420,4 +3676,351 @@ def quick_consultation(request, patient_id):
         'doctor': doctor,
     }
     return render(request, 'hospital/quick_consultation.html', context)
+
+
+def _ai_clinical_assistant_available_for_user(request, encounter=None) -> bool:
+    """Feature flag + assigned-doctor/superuser gate for UI visibility."""
+    from .services.ai_clinical_assistant_service import is_feature_enabled
+
+    if not is_feature_enabled():
+        return False
+    if getattr(request.user, 'is_superuser', False):
+        return True
+    try:
+        staff = Staff.objects.get(user=request.user, is_active=True, is_deleted=False)
+        if staff.profession != 'doctor':
+            return False
+        return not encounter or not encounter.provider_id or encounter.provider_id == staff.id
+    except Staff.DoesNotExist:
+        return False
+
+
+def _ai_clinical_require_doctor_staff(request):
+    """Return (staff, error_response). error_response is JsonResponse or None."""
+    if getattr(request.user, 'is_superuser', False):
+        staff = Staff.objects.filter(user=request.user, is_active=True, is_deleted=False).first()
+        return staff, None
+    try:
+        staff = Staff.objects.get(user=request.user, is_active=True, is_deleted=False)
+    except Staff.DoesNotExist:
+        return None, JsonResponse({'ok': False, 'error': 'Staff profile required.'}, status=403)
+    if staff.profession != 'doctor':
+        return None, JsonResponse(
+            {'ok': False, 'error': 'Only doctors can use AI clinical assistance.'},
+            status=403,
+        )
+    return staff, None
+
+
+def _ai_clinical_get_encounter(encounter_id):
+    return get_object_or_404(
+        Encounter.objects.select_related(
+            'patient', 'provider', 'provider__user'
+        ),
+        pk=encounter_id,
+        is_deleted=False,
+    )
+
+
+def _ai_clinical_encounter_access_error(request, staff, encounter):
+    """Restrict AI access to the assigned doctor (or a superuser)."""
+    if getattr(request.user, 'is_superuser', False):
+        return None
+    if encounter.provider_id and (staff is None or encounter.provider_id != staff.id):
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'AI assistance is restricted to the clinician assigned to this encounter.',
+            },
+            status=403,
+        )
+    return None
+
+
+@login_required
+@role_required('doctor', 'admin', message='Access denied. Only doctors can use AI clinical assistance.')
+def consultation_ai_assist_start(request, encounter_id):
+    """Start an async AI clinical assistance run (JSON)."""
+    from .services.ai_clinical_assistant_service import (
+        AIClinicalAssistantError,
+        serialize_run_for_client,
+        start_assistance_run,
+    )
+    from .utils_audit import log_audit_action
+
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required.'}, status=405)
+
+    staff, err = _ai_clinical_require_doctor_staff(request)
+    if err:
+        return err
+
+    encounter = _ai_clinical_get_encounter(encounter_id)
+    access_err = _ai_clinical_encounter_access_error(request, staff, encounter)
+    if access_err:
+        return access_err
+    if encounter.consultation_expired():
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'This consultation has expired (read-only).',
+                'code': 'expired',
+            },
+            status=403,
+        )
+
+    try:
+        body = json.loads(request.body.decode('utf-8') or '{}') if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = {}
+    idempotency_key = (body.get('idempotency_key') or request.POST.get('idempotency_key') or '')[:64]
+
+    try:
+        run, created = start_assistance_run(
+            encounter=encounter,
+            user=request.user,
+            idempotency_key=idempotency_key,
+        )
+    except AIClinicalAssistantError as exc:
+        status = 429 if exc.code == 'rate_limited' else 400
+        if exc.code in {'disabled', 'queue_unavailable'}:
+            status = 503
+        elif exc.code == 'expired':
+            status = 403
+        log_audit_action(
+            request.user,
+            'access',
+            model_instance=encounter,
+            description='AI clinical assistance start denied',
+            metadata={'error_code': exc.code, 'feature': 'ai_clinical_assistant'},
+            severity='warning',
+            request=request,
+            success=False,
+            error_message=exc.code,
+        )
+        return JsonResponse({'ok': False, 'error': exc.message, 'code': exc.code}, status=status)
+
+    log_audit_action(
+        request.user,
+        'create' if created else 'access',
+        model_instance=run,
+        description='AI clinical assistance run started' if created else 'AI clinical assistance run reused',
+        metadata={
+            'feature': 'ai_clinical_assistant',
+            'encounter_id': str(encounter.id),
+            'run_id': str(run.id),
+            'status': run.status,
+            'model_name': run.model_name,
+            'prompt_version': run.prompt_version,
+            'schema_version': run.schema_version,
+            'created_new': created,
+        },
+        request=request,
+        success=True,
+    )
+    return JsonResponse({'ok': True, 'created': created, 'run': serialize_run_for_client(run)})
+
+
+@login_required
+@role_required('doctor', 'admin', message='Access denied. Only doctors can use AI clinical assistance.')
+def consultation_ai_assist_status(request, encounter_id, run_id):
+    """Poll status/result for an AI clinical assistance run (JSON)."""
+    from .models_ai_clinical import AIClinicalAssistanceRun
+    from .services.ai_clinical_assistant_service import serialize_run_for_client
+
+    staff, err = _ai_clinical_require_doctor_staff(request)
+    if err:
+        return err
+
+    encounter = _ai_clinical_get_encounter(encounter_id)
+    access_err = _ai_clinical_encounter_access_error(request, staff, encounter)
+    if access_err:
+        return access_err
+    run = get_object_or_404(AIClinicalAssistanceRun, pk=run_id, encounter=encounter)
+
+    # Scope: requester or superuser only
+    if (
+        not request.user.is_superuser
+        and run.requested_by_id
+        and run.requested_by_id != request.user.id
+    ):
+        return JsonResponse({'ok': False, 'error': 'Not authorized for this run.'}, status=403)
+
+    return JsonResponse({'ok': True, 'run': serialize_run_for_client(run)})
+
+
+@login_required
+@role_required('doctor', 'admin', message='Access denied. Only doctors can use AI clinical assistance.')
+def consultation_ai_assist_chat(request, encounter_id, run_id):
+    """List chat history or enqueue an encounter-grounded doctor question."""
+    from .models_ai_clinical import AIClinicalAssistanceRun
+    from .services.ai_clinical_assistant_service import (
+        AIClinicalAssistantError,
+        serialize_chat_messages,
+        start_chat_turn,
+    )
+    from .utils_audit import log_audit_action
+
+    staff, err = _ai_clinical_require_doctor_staff(request)
+    if err:
+        return err
+    encounter = _ai_clinical_get_encounter(encounter_id)
+    access_err = _ai_clinical_encounter_access_error(request, staff, encounter)
+    if access_err:
+        return access_err
+    run = get_object_or_404(
+        AIClinicalAssistanceRun.objects.select_related('encounter', 'encounter__patient'),
+        pk=run_id,
+        encounter=encounter,
+    )
+    if (
+        not request.user.is_superuser
+        and run.requested_by_id
+        and run.requested_by_id != request.user.id
+    ):
+        return JsonResponse({'ok': False, 'error': 'Not authorized for this run.'}, status=403)
+
+    if request.method == 'GET':
+        return JsonResponse(
+            {'ok': True, 'messages': serialize_chat_messages(run)}
+        )
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'GET or POST required.'}, status=405)
+
+    try:
+        body = json.loads(request.body.decode('utf-8') or '{}') if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = {}
+    question = body.get('question')
+    if not isinstance(question, str):
+        return JsonResponse({'ok': False, 'error': 'Enter a question.'}, status=400)
+
+    try:
+        doctor_message, assistant_message = start_chat_turn(
+            run=run,
+            user=request.user,
+            question=question,
+        )
+    except AIClinicalAssistantError as exc:
+        status = 429 if exc.code in {'rate_limited', 'chat_limit'} else 400
+        if exc.code in {'disabled', 'queue_unavailable'}:
+            status = 503
+        elif exc.code == 'expired':
+            status = 403
+        elif exc.code == 'chat_busy':
+            status = 409
+        log_audit_action(
+            request.user,
+            'access',
+            model_instance=run,
+            description='AI clinical chat question denied',
+            metadata={
+                'feature': 'ai_clinical_chat',
+                'run_id': str(run.id),
+                'error_code': exc.code,
+            },
+            severity='warning',
+            request=request,
+            success=False,
+            error_message=exc.code,
+        )
+        return JsonResponse(
+            {'ok': False, 'error': exc.message, 'code': exc.code},
+            status=status,
+        )
+
+    log_audit_action(
+        request.user,
+        'create',
+        model_instance=assistant_message,
+        description='AI clinical chat question submitted',
+        metadata={
+            'feature': 'ai_clinical_chat',
+            'run_id': str(run.id),
+            'doctor_message_id': str(doctor_message.id),
+            'assistant_message_id': str(assistant_message.id),
+            'question_length': len(question),
+        },
+        request=request,
+        success=True,
+    )
+    run.refresh_from_db()
+    return JsonResponse(
+        {
+            'ok': True,
+            'assistant_message_id': str(assistant_message.id),
+            'messages': serialize_chat_messages(run),
+        }
+    )
+
+
+@login_required
+@role_required('doctor', 'admin', message='Access denied. Only doctors can use AI clinical assistance.')
+def consultation_ai_assist_feedback(request, encounter_id, run_id):
+    """Record clinician copy/feedback events for provenance (JSON)."""
+    from .models_ai_clinical import AIClinicalAssistanceRun
+    from .services.ai_clinical_assistant_service import (
+        record_clinician_feedback,
+        serialize_run_for_client,
+    )
+    from .utils_audit import log_audit_action
+
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'POST required.'}, status=405)
+
+    staff, err = _ai_clinical_require_doctor_staff(request)
+    if err:
+        return err
+
+    encounter = _ai_clinical_get_encounter(encounter_id)
+    access_err = _ai_clinical_encounter_access_error(request, staff, encounter)
+    if access_err:
+        return access_err
+    run = get_object_or_404(AIClinicalAssistanceRun, pk=run_id, encounter=encounter)
+    if (
+        not request.user.is_superuser
+        and run.requested_by_id
+        and run.requested_by_id != request.user.id
+    ):
+        return JsonResponse({'ok': False, 'error': 'Not authorized for this run.'}, status=403)
+
+    try:
+        body = json.loads(request.body.decode('utf-8') or '{}') if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = {}
+
+    feedback = (body.get('feedback') or '')[:20]
+    note = (body.get('note') or '')[:500]
+    copied_sections = body.get('copied_sections')
+    inserted_draft = body.get('inserted_draft')
+    if feedback not in {'', 'helpful', 'not_helpful', 'unsafe'}:
+        return JsonResponse({'ok': False, 'error': 'Invalid feedback value.'}, status=400)
+    if copied_sections is not None and not isinstance(copied_sections, list):
+        return JsonResponse({'ok': False, 'error': 'copied_sections must be a list.'}, status=400)
+    if inserted_draft is not None and not isinstance(inserted_draft, bool):
+        return JsonResponse({'ok': False, 'error': 'inserted_draft must be boolean.'}, status=400)
+
+    record_clinician_feedback(
+        run,
+        feedback=feedback,
+        note=note,
+        copied_sections=copied_sections,
+        inserted_draft=inserted_draft,
+    )
+    log_audit_action(
+        request.user,
+        'update',
+        model_instance=run,
+        description='AI clinical assistance clinician feedback recorded',
+        metadata={
+            'feature': 'ai_clinical_assistant',
+            'run_id': str(run.id),
+            'feedback': feedback or None,
+            'inserted_draft': bool(inserted_draft) if inserted_draft is not None else None,
+            'copied_sections_count': len(copied_sections or []) if isinstance(copied_sections, list) else 0,
+        },
+        request=request,
+        success=True,
+    )
+    return JsonResponse({'ok': True, 'run': serialize_run_for_client(run)})
 

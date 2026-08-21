@@ -1475,3 +1475,195 @@ def get_staff_password_form(request, staff_id):
             'error': 'Staff member not found.'
         }, status=404)
 
+
+def _cleanup_confirm_ok(typed, expected):
+    return (typed or "").strip().casefold() == (expected or "").strip().casefold() and bool((expected or "").strip())
+
+
+def _validation_message(exc):
+    if hasattr(exc, "messages") and exc.messages:
+        return "; ".join(str(m) for m in exc.messages)
+    return str(exc)
+
+
+@login_required
+@user_passes_test(is_it_or_admin)
+def records_cleanup(request):
+    """Search patients and staff logins so IT can remove duplicates."""
+    from .models import Staff, Patient
+
+    q = (request.GET.get("q") or "").strip()
+    patients = []
+    staff_rows = []
+    if len(q) >= 2:
+        patients = list(
+            Patient.objects.filter(is_deleted=False)
+            .filter(
+                Q(first_name__icontains=q)
+                | Q(last_name__icontains=q)
+                | Q(mrn__icontains=q)
+                | Q(phone_number__icontains=q)
+                | Q(national_id__icontains=q)
+            )
+            .order_by("last_name", "first_name", "mrn")[:40]
+        )
+        User = get_user_model()
+        staff_qs = list(
+            Staff.objects.filter(is_deleted=False)
+            .select_related("user", "department")
+            .filter(
+                Q(user__username__icontains=q)
+                | Q(user__first_name__icontains=q)
+                | Q(user__last_name__icontains=q)
+                | Q(user__email__icontains=q)
+                | Q(employee_id__icontains=q)
+            )
+            .order_by("user__last_name", "user__first_name")[:40]
+        )
+        staff_user_ids = [s.user_id for s in staff_qs if s.user_id]
+        staff_rows = [{"staff": s, "user": s.user} for s in staff_qs]
+        extra_users = User.objects.filter(is_active=True).filter(
+            Q(username__icontains=q)
+            | Q(first_name__icontains=q)
+            | Q(last_name__icontains=q)
+            | Q(email__icontains=q)
+        )
+        if staff_user_ids:
+            extra_users = extra_users.exclude(id__in=staff_user_ids)
+        for u in extra_users[:20]:
+            staff_rows.append({"staff": None, "user": u})
+
+    return render(
+        request,
+        "hospital/admin/records_cleanup.html",
+        {
+            "q": q,
+            "patients": patients,
+            "staff_rows": staff_rows,
+        },
+    )
+
+
+@login_required
+@user_passes_test(is_it_or_admin)
+def it_delete_patient(request, patient_id):
+    """Confirm and soft-delete a duplicate/unwanted patient."""
+    from django.core.exceptions import ValidationError
+    from .models import Patient, Encounter, Invoice
+    from .services.records_cleanup_service import delete_patient_record
+
+    patient = get_object_or_404(Patient, pk=patient_id, is_deleted=False)
+    encounter_count = Encounter.objects.filter(patient=patient, is_deleted=False).count()
+    invoice_count = Invoice.objects.filter(patient=patient, is_deleted=False).count()
+
+    if request.method == "POST":
+        typed = request.POST.get("confirm_mrn") or ""
+        if not _cleanup_confirm_ok(typed, patient.mrn):
+            messages.error(request, "Type the patient MRN exactly to confirm removal.")
+        else:
+            try:
+                delete_patient_record(
+                    patient=patient,
+                    performed_by=request.user,
+                    reason=(request.POST.get("reason") or "").strip(),
+                    request=request,
+                )
+                messages.success(
+                    request,
+                    f'Removed patient {patient.full_name} ({patient.mrn}) from active records.',
+                )
+                return redirect("hospital:records_cleanup")
+            except ValidationError as exc:
+                messages.error(request, _validation_message(exc))
+
+    return render(
+        request,
+        "hospital/admin/confirm_delete_patient.html",
+        {
+            "patient": patient,
+            "encounter_count": encounter_count,
+            "invoice_count": invoice_count,
+        },
+    )
+
+
+@login_required
+@user_passes_test(is_it_or_admin)
+def it_delete_staff_account(request, staff_id):
+    """Confirm and deactivate/remove a duplicate staff login."""
+    from django.core.exceptions import ValidationError
+    from .models import Staff
+    from .services.records_cleanup_service import delete_login_account, is_protected_login
+
+    staff = get_object_or_404(Staff, pk=staff_id, is_deleted=False)
+    user = staff.user
+    if request.method == "POST":
+        typed = request.POST.get("confirm_username") or ""
+        expected = user.username if user else ""
+        if not _cleanup_confirm_ok(typed, expected):
+            messages.error(request, "Type the username exactly to confirm removal.")
+        else:
+            try:
+                delete_login_account(
+                    user=user,
+                    performed_by=request.user,
+                    reason=(request.POST.get("reason") or "").strip(),
+                    request=request,
+                )
+                messages.success(request, f'Removed login "{expected}" from the system.')
+                return redirect("hospital:records_cleanup")
+            except ValidationError as exc:
+                messages.error(request, _validation_message(exc))
+
+    return render(
+        request,
+        "hospital/admin/confirm_delete_account.html",
+        {
+            "target_user": user,
+            "staff": staff,
+            "is_protected": is_protected_login(user),
+            "is_self": bool(user and user.id == request.user.id),
+        },
+    )
+
+
+@login_required
+@user_passes_test(is_it_or_admin)
+def it_delete_user_account(request, user_id):
+    """Confirm and deactivate a login that may not have a staff profile."""
+    from django.core.exceptions import ValidationError
+    from .models import Staff
+    from .services.records_cleanup_service import delete_login_account, is_protected_login
+
+    User = get_user_model()
+    target = get_object_or_404(User, pk=user_id)
+    staff = Staff.objects.filter(user=target, is_deleted=False).first()
+    if request.method == "POST":
+        typed = request.POST.get("confirm_username") or ""
+        if not _cleanup_confirm_ok(typed, target.username):
+            messages.error(request, "Type the username exactly to confirm removal.")
+        else:
+            try:
+                delete_login_account(
+                    user=target,
+                    performed_by=request.user,
+                    reason=(request.POST.get("reason") or "").strip(),
+                    request=request,
+                )
+                messages.success(request, f'Removed login "{target.username}" from the system.')
+                return redirect("hospital:records_cleanup")
+            except ValidationError as exc:
+                messages.error(request, _validation_message(exc))
+
+    return render(
+        request,
+        "hospital/admin/confirm_delete_account.html",
+        {
+            "target_user": target,
+            "staff": staff,
+            "is_protected": is_protected_login(target),
+            "is_self": target.id == request.user.id,
+        },
+    )
+
+

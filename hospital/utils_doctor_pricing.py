@@ -69,13 +69,13 @@ class DoctorPricingService:
             'specialty': 'ENT Specialist',
             'show_price': True,
         },
-        # Gynaecology + Antenatal: two cashier prices — 260 (Gynae) and 235 (ANC).
+        # Gynaecology + Antenatal: base tariffs (+8 sustainability applied in _apply_sustainability…).
         # UI shows two specialty groups (see _expand_antenatal_doctor_cards_for_quick_visit in views).
         'dr. ali samba': {
-            'first_visit': Decimal('260.00'),  # Gynae / Special
+            'first_visit': Decimal('260.00'),  # Gynae / Special → 268 billed
             'subsequent_visit': Decimal('260.00'),
-            'anc_visit': Decimal('235.00'),  # Antenatal / ANC
-            'specialty': 'Gynaecology (Special) — 260 GHS',
+            'anc_visit': Decimal('235.00'),  # Antenatal / ANC → 243 billed
+            'specialty': 'Gynaecology (Special) — 268 GHS',
             'show_price': True,
         },
         # Physiotherapist - GHS 250 first time, GHS 150 subsequent
@@ -112,36 +112,60 @@ class DoctorPricingService:
             'specialty': 'General Surgeon',
             'show_price': True,
         },
-        # Psychiatrists (don't show prices)
+        # Psychiatrists — new 350 / subsequent 300 (+8 sustainability applied below)
         'dr. sheila appiah-pippim': {
             'first_visit': Decimal('350.00'),
             'subsequent_visit': Decimal('300.00'),
             'specialty': 'Psychiatrist',
-            'show_price': False,  # Don't show prices for psychiatrists
+            'show_price': True,
         },
         'dr. shelia appiah-pippim': {  # Alternative spelling
             'first_visit': Decimal('350.00'),
             'subsequent_visit': Decimal('300.00'),
             'specialty': 'Psychiatrist',
-            'show_price': False,
+            'show_price': True,
+        },
+        'sheila appiah-pippim': {
+            'first_visit': Decimal('350.00'),
+            'subsequent_visit': Decimal('300.00'),
+            'specialty': 'Psychiatrist',
+            'show_price': True,
         },
         'dr. rebecca abalo': {
             'first_visit': Decimal('350.00'),
             'subsequent_visit': Decimal('300.00'),
             'specialty': 'Psychiatrist',
-            'show_price': False,
+            'show_price': True,
+        },
+        'rebecca abalo': {
+            'first_visit': Decimal('350.00'),
+            'subsequent_visit': Decimal('300.00'),
+            'specialty': 'Psychiatrist',
+            'show_price': True,
         },
         'dr. lartey lorna': {
             'first_visit': Decimal('350.00'),
             'subsequent_visit': Decimal('300.00'),
             'specialty': 'Psychiatrist',
-            'show_price': False,
+            'show_price': True,
+        },
+        'lorna lartey': {
+            'first_visit': Decimal('350.00'),
+            'subsequent_visit': Decimal('300.00'),
+            'specialty': 'Psychiatrist',
+            'show_price': True,
         },
         'dr. mustapha dadzie': {
             'first_visit': Decimal('350.00'),
             'subsequent_visit': Decimal('300.00'),
             'specialty': 'Psychiatrist',
-            'show_price': False,
+            'show_price': True,
+        },
+        'mustapha dadzie': {
+            'first_visit': Decimal('350.00'),
+            'subsequent_visit': Decimal('300.00'),
+            'specialty': 'Psychiatrist',
+            'show_price': True,
         },
         # Paediatrician
         'dr. kojo ahor-essel': {
@@ -221,55 +245,56 @@ class DoctorPricingService:
         
         # Normalize name for matching
         normalized_name = cls.normalize_doctor_name(full_name)
-        
-        # Try exact match first
-        if normalized_name in cls.DOCTOR_PRICING:
-            pricing = cls.DOCTOR_PRICING[normalized_name].copy()
+        last_name = ''
+        if doctor_staff.user.last_name:
+            last_name = doctor_staff.user.last_name.lower().strip()
+
+        matched = cls._lookup_configured_pricing(normalized_name, last_name)
+        if matched:
+            pricing = matched.copy()
             pricing['is_specialist'] = True
-            return pricing
-        
-        # Match by specialization - Physiotherapist gets GHS 250 first time, GHS 150 subsequent
+            return cls._apply_sustainability_to_specialist_pricing(pricing)
+
+        # Match by specialization / department (covers psychiatrists not in the name list)
         specialization = (doctor_staff.specialization or '').lower()
         specialty_name = ''
+        dept_name = ''
         try:
             if hasattr(doctor_staff, 'specialist_profile') and doctor_staff.specialist_profile:
                 specialty_name = (doctor_staff.specialist_profile.specialty.name or '').lower()
         except Exception:
             pass
-        combined_spec = f'{specialization} {specialty_name}'
+        try:
+            if getattr(doctor_staff, 'department', None):
+                dept_name = (doctor_staff.department.name or '').lower()
+        except Exception:
+            pass
+        combined_spec = f'{specialization} {specialty_name} {dept_name}'
+        if any(x in combined_spec for x in ('psychiatr', 'psychiatry', 'mental health')):
+            return cls._apply_sustainability_to_specialist_pricing({
+                'first_visit': Decimal('350.00'),
+                'subsequent_visit': Decimal('300.00'),
+                'specialty': 'Psychiatrist',
+                'show_price': True,
+                'is_specialist': True,
+            })
         # Dental consultation (e.g. Dr Kumah) = GHS 150 so frontdesk input shows correct price
         if 'dental' in combined_spec:
-            return {
+            return cls._apply_sustainability_to_specialist_pricing({
                 'first_visit': Decimal('150.00'),
                 'subsequent_visit': Decimal('150.00'),
                 'specialty': 'Dental Surgeon',
                 'show_price': True,
                 'is_specialist': True,
-            }
+            })
         if 'physio' in combined_spec or 'physiotherapy' in combined_spec:
-            return {
+            return cls._apply_sustainability_to_specialist_pricing({
                 'first_visit': Decimal('250.00'),
                 'subsequent_visit': Decimal('150.00'),
                 'specialty': 'Physiotherapist',
                 'show_price': True,
                 'is_specialist': True,
-            }
-        
-        # Try partial matching (e.g., "Awah" matches "Dr. Awah")
-        for key, pricing in cls.DOCTOR_PRICING.items():
-            # Check if normalized name contains key or key contains normalized name
-            if key in normalized_name or normalized_name in key:
-                result = pricing.copy()
-                result['is_specialist'] = True
-                return result
-        
-        # Check by last name only (for cases like "Dr. Boakye")
-        last_name = doctor_staff.user.last_name.lower().strip() if doctor_staff.user.last_name else ''
-        for key, pricing in cls.DOCTOR_PRICING.items():
-            if last_name and last_name in key:
-                result = pricing.copy()
-                result['is_specialist'] = True
-                return result
+            })
         
         # Default pricing for other doctors
         return {
@@ -279,66 +304,99 @@ class DoctorPricingService:
             'show_price': False,  # Don't show prices for general doctors
             'is_specialist': False,
         }
-    
+
     @classmethod
-    def is_first_visit_to_doctor(cls, patient, doctor_staff):
+    def _lookup_configured_pricing(cls, normalized_name, last_name=''):
+        """Match DOCTOR_PRICING keys after stripping Dr. from both sides."""
+        if normalized_name:
+            for key, pricing in cls.DOCTOR_PRICING.items():
+                if cls.normalize_doctor_name(key) == normalized_name:
+                    return pricing
+            for key, pricing in cls.DOCTOR_PRICING.items():
+                nk = cls.normalize_doctor_name(key)
+                if nk and (nk in normalized_name or normalized_name in nk):
+                    return pricing
+        last = cls.normalize_doctor_name(last_name or '')
+        if last and len(last) >= 4:
+            for key, pricing in cls.DOCTOR_PRICING.items():
+                if last in cls.normalize_doctor_name(key):
+                    return pricing
+        return None
+
+    @classmethod
+    def is_specialist_doctor(cls, doctor_staff):
+        """True when this doctor uses specialist first/subsequent consultation tariffs."""
+        if not doctor_staff:
+            return False
+        return bool(cls.get_doctor_pricing_info(doctor_staff).get('is_specialist'))
+
+    @classmethod
+    def _apply_sustainability_to_specialist_pricing(cls, pricing):
         """
-        Check if this is the patient's first visit to this specific doctor
-        
-        Args:
-            patient: Patient object
-            doctor_staff: Staff object representing the doctor
-            
-        Returns:
-            bool: True if this is the first visit, False otherwise
+        Specialist / gynae / ANC consultation tariffs include GHS 8 Sustainability and Insurance.
+        """
+        if not pricing or not pricing.get('is_specialist'):
+            return pricing
+        from hospital.utils_billing import SUSTAINABILITY_FEE
+        out = pricing.copy()
+        for key in ('first_visit', 'subsequent_visit', 'anc_visit'):
+            if key in out and out[key] is not None:
+                amt = Decimal(str(out[key]))
+                if amt > 0:
+                    out[key] = (amt + SUSTAINABILITY_FEE).quantize(Decimal('0.01'))
+        return out
+
+    @classmethod
+    def is_first_visit_to_doctor(cls, patient, doctor_staff, exclude_encounter=None):
+        """
+        Check if this is the patient's first visit to this specific doctor.
+        exclude_encounter: the visit being billed now (must not count as a prior visit).
         """
         if not patient or not doctor_staff:
             return True
         
         from .models import Encounter
         
-        # Check if patient has any previous encounters with this doctor
-        previous_encounters = Encounter.objects.filter(
+        previous = Encounter.objects.filter(
             patient=patient,
             provider=doctor_staff,
             is_deleted=False
-        ).exclude(status='cancelled').count()
-        
-        return previous_encounters == 0
+        ).exclude(status='cancelled')
+        exclude_id = getattr(exclude_encounter, 'pk', None) or exclude_encounter
+        if exclude_id:
+            previous = previous.exclude(pk=exclude_id)
+        return not previous.exists()
     
     @classmethod
-    def get_consultation_fee(cls, patient, doctor_staff, encounter_type=None, is_review_visit=False):
+    def get_consultation_fee(
+        cls,
+        patient,
+        doctor_staff,
+        encounter_type=None,
+        is_review_visit=False,
+        encounter=None,
+    ):
         """
-        Get the appropriate consultation fee for a patient visiting a doctor
-        
-        Args:
-            patient: Patient object
-            doctor_staff: Staff object representing the doctor
-            encounter_type: Optional encounter type (e.g., 'antenatal' for ANC pricing)
-            is_review_visit: bool indicating if this is a review visit (no charge)
-            
-        Returns:
-            Decimal: Consultation fee amount
+        Get the appropriate consultation fee for a patient visiting a doctor.
+        Specialists (e.g. psychiatric) use first vs subsequent even on a follow-up visit.
         """
-        if is_review_visit:
+        if is_review_visit and not cls.is_specialist_doctor(doctor_staff):
             return Decimal('0.00')
         
         pricing_info = cls.get_doctor_pricing_info(doctor_staff)
         
-        # Special handling for Dr. Ali Samba - ANC visits
+        # Antenatal is always 235 + 8 sustainability = 243
         if encounter_type and 'antenatal' in encounter_type.lower():
-            full_name = (doctor_staff.user.get_full_name() or '').lower() if doctor_staff.user else ''
-            if 'ali' in full_name and 'samba' in full_name:
-                if 'anc_visit' in pricing_info:
-                    return pricing_info['anc_visit']
+            from hospital.utils_billing import ANC_VISIT
+            return ANC_VISIT
         
-        # Check if first visit
-        is_first = cls.is_first_visit_to_doctor(patient, doctor_staff)
+        is_first = cls.is_first_visit_to_doctor(
+            patient, doctor_staff, exclude_encounter=encounter
+        )
         
         if is_first:
             return pricing_info['first_visit']
-        else:
-            return pricing_info['subsequent_visit']
+        return pricing_info['subsequent_visit']
     
     @classmethod
     def get_doctor_display_info(cls, doctor_staff):

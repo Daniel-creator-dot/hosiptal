@@ -139,13 +139,13 @@ class AutocompleteSearch {
         switch(e.key) {
             case 'ArrowDown':
                 e.preventDefault();
-                this.selectedIndex = Math.min(this.selectedIndex + 1, items.length - 1);
+                this.selectedIndex = this._nextEnabledIndex(items, 1);
                 this.highlightItem(items);
                 break;
                 
             case 'ArrowUp':
                 e.preventDefault();
-                this.selectedIndex = Math.max(this.selectedIndex - 1, -1);
+                this.selectedIndex = this._nextEnabledIndex(items, -1);
                 this.highlightItem(items);
                 break;
                 
@@ -153,6 +153,10 @@ class AutocompleteSearch {
                 // Only intercept Enter if user is selecting a suggestion.
                 // Otherwise allow the form submit to proceed.
                 if (this.selectedIndex >= 0 && items[this.selectedIndex] && !items[this.selectedIndex].classList.contains('autocomplete-no-results')) {
+                    if (items[this.selectedIndex].classList.contains('autocomplete-item-disabled')) {
+                        e.preventDefault();
+                        return;
+                    }
                     e.preventDefault();
                     items[this.selectedIndex].click();
                 } else {
@@ -164,6 +168,22 @@ class AutocompleteSearch {
                 this.hideDropdown();
                 break;
         }
+    }
+
+    _nextEnabledIndex(items, direction) {
+        if (!items || !items.length) return -1;
+        let idx = this.selectedIndex;
+        for (let i = 0; i < items.length; i++) {
+            idx += direction;
+            if (idx < -1) idx = items.length - 1;
+            if (idx >= items.length) idx = -1;
+            if (idx < 0) return -1;
+            if (!items[idx].classList.contains('autocomplete-item-disabled')
+                && !items[idx].classList.contains('autocomplete-no-results')) {
+                return idx;
+            }
+        }
+        return this.selectedIndex;
     }
     
     handleFocus() {
@@ -242,10 +262,17 @@ class AutocompleteSearch {
         const html = this.results.map((item, index) => {
             const displayText = this.getDisplayText(item);
             const highlightText = this.highlightMatch(displayText, this.input.value.trim());
+            const unavailable = this.options.disableUnavailable && item && item.available === false;
+            const disabledClass = unavailable ? ' autocomplete-item-disabled' : '';
+            const reason = unavailable
+                ? (item.unavailable_reason || 'Out of stock — see pharmacist for alternative')
+                : '';
+            const titleAttr = reason ? ` title="${String(reason).replace(/"/g, '&quot;')}"` : '';
             return `
-                <div class="autocomplete-item" data-index="${index}" data-value="${this.getValue(item)}">
+                <div class="autocomplete-item${disabledClass}" data-index="${index}" data-value="${this.getValue(item)}" data-unavailable="${unavailable ? '1' : '0'}"${titleAttr}>
                     ${highlightText}
                     ${this.getSubtext(item)}
+                    ${unavailable ? `<div class="autocomplete-unavailable-note">${reason}</div>` : ''}
                 </div>
             `;
         }).join('');
@@ -255,11 +282,17 @@ class AutocompleteSearch {
         // Add click handlers
         this.dropdown.querySelectorAll('.autocomplete-item').forEach(item => {
             item.addEventListener('click', () => {
+                if (item.classList.contains('autocomplete-item-disabled') || item.dataset.unavailable === '1') {
+                    return;
+                }
                 const index = parseInt(item.dataset.index);
                 this.selectItem(this.results[index]);
             });
             
             item.addEventListener('mouseenter', () => {
+                if (item.classList.contains('autocomplete-item-disabled')) {
+                    return;
+                }
                 this.selectedIndex = parseInt(item.dataset.index);
                 this.highlightItem(this.dropdown.querySelectorAll('.autocomplete-item'));
             });
@@ -314,6 +347,9 @@ class AutocompleteSearch {
     }
     
     selectItem(item) {
+        if (this.options.disableUnavailable && item && item.available === false) {
+            return;
+        }
         if (this.options.onSelect) {
             this.options.onSelect(item, this.input);
         } else {
@@ -372,6 +408,25 @@ if (!document.getElementById('autocomplete-styles')) {
         .autocomplete-item:hover,
         .autocomplete-item-active {
             background-color: #f3f4f6;
+        }
+
+        .autocomplete-item-disabled {
+            opacity: 0.62;
+            cursor: not-allowed;
+            background-color: #fafafa;
+            color: #6b7280;
+        }
+
+        .autocomplete-item-disabled:hover,
+        .autocomplete-item-disabled.autocomplete-item-active {
+            background-color: #fafafa;
+        }
+
+        .autocomplete-unavailable-note {
+            font-size: 0.8rem;
+            color: #b91c1c;
+            font-weight: 600;
+            margin-top: 4px;
         }
         
         .autocomplete-item:last-child {

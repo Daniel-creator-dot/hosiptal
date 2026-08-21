@@ -113,6 +113,107 @@ def ensure_corporate_payer(payer_or_name):
     )
 
 
+def propagate_payer_display_name_change(old_name, new_name, *, payer=None):
+    """
+    After a company/insurance rename, push the new display name to front desk and
+    other areas that still store or show a snapshot of the name.
+
+    Updates:
+    - Patient.insurance_company CharField (legacy snapshot on patient detail / badges)
+    - Patients linked via primary_insurance FK
+    - InsuranceCompany twin rows (front-desk insurance dropdown)
+    - CorporateAccount / AccountingCorporateAccount company_name (bills / AR)
+    """
+    from .models import Patient
+
+    old_name = (old_name or '').strip()
+    new_name = (new_name or '').strip()
+    stats = {
+        'patients_by_snapshot': 0,
+        'patients_by_fk': 0,
+        'insurance_companies': 0,
+        'corporate_accounts': 0,
+        'accounting_corporate_accounts': 0,
+    }
+
+    if not new_name:
+        return stats
+
+    if not old_name or old_name.lower() == new_name.lower():
+        if payer is not None:
+            stats['patients_by_fk'] = Patient.objects.filter(primary_insurance=payer).exclude(
+                insurance_company=new_name
+            ).update(insurance_company=new_name)
+        return stats
+
+    stats['patients_by_snapshot'] = Patient.objects.filter(
+        insurance_company__iexact=old_name
+    ).update(insurance_company=new_name)
+
+    if payer is not None:
+        stats['patients_by_fk'] = Patient.objects.filter(primary_insurance=payer).exclude(
+            insurance_company=new_name
+        ).update(insurance_company=new_name)
+
+    try:
+        from .models_insurance_companies import InsuranceCompany
+
+        for company in InsuranceCompany.objects.filter(name__iexact=old_name, is_deleted=False):
+            clash = (
+                InsuranceCompany.objects.filter(name__iexact=new_name, is_deleted=False)
+                .exclude(pk=company.pk)
+                .exists()
+            )
+            if clash:
+                continue
+            company.name = new_name
+            company.save(update_fields=['name', 'modified'])
+            stats['insurance_companies'] += 1
+    except Exception:
+        logger.exception('propagate rename: InsuranceCompany sync failed')
+
+    try:
+        from .models_enterprise_billing import CorporateAccount
+
+        for ca in CorporateAccount.objects.filter(company_name__iexact=old_name, is_deleted=False):
+            clash = (
+                CorporateAccount.objects.filter(company_name__iexact=new_name, is_deleted=False)
+                .exclude(pk=ca.pk)
+                .exists()
+            )
+            if clash:
+                continue
+            ca.company_name = new_name
+            ca.save(update_fields=['company_name', 'modified'])
+            stats['corporate_accounts'] += 1
+    except Exception:
+        logger.exception('propagate rename: CorporateAccount sync failed')
+
+    try:
+        from .models_accounting_advanced import AccountingCorporateAccount
+
+        for acc in AccountingCorporateAccount.objects.filter(
+            company_name__iexact=old_name, is_deleted=False
+        ):
+            clash = (
+                AccountingCorporateAccount.objects.filter(
+                    company_name__iexact=new_name, is_deleted=False
+                )
+                .exclude(pk=acc.pk)
+                .exists()
+            )
+            if clash:
+                continue
+            acc.company_name = new_name
+            acc.save(update_fields=['company_name', 'modified'])
+            stats['accounting_corporate_accounts'] += 1
+    except Exception:
+        logger.exception('propagate rename: AccountingCorporateAccount sync failed')
+
+    logger.info('Propagated payer/company rename %r -> %r: %s', old_name, new_name, stats)
+    return stats
+
+
 def sync_open_invoices_to_primary_payer_for_date(patient, target_date=None, request=None):
     """
     After primary_insurance changes, set invoice.payer for open invoices for this patient when:
@@ -175,6 +276,69 @@ def sync_open_invoices_to_primary_payer_for_date(patient, target_date=None, requ
                 f'{count} open bill(s) for this visit date ({target_date.isoformat()}) now bill to the updated payer.',
             )
     return count
+
+
+def switch_patient_to_cash_payer(patient, request=None):
+    """
+    Explicitly move a patient (and same-MRN billing twins) to cash/self-pay.
+
+    Clears insurance/corporate enrollments and the insurance_company snapshot so
+    get_patient_payer_info does not immediately flip the patient back to insurance.
+    Also re-routes today's / active-visit open invoices to the Cash payer.
+    """
+    from .models import Patient, Payer
+    from .utils_billing import _patient_billing_scope_ids
+
+    if not patient:
+        raise ValueError('patient is required')
+
+    payer, _ = Payer.objects.get_or_create(
+        name='Cash',
+        defaults={'payer_type': 'cash', 'is_active': True},
+    )
+    if (getattr(payer, 'payer_type', '') or '').strip().lower() != 'cash' or not payer.is_active:
+        payer.payer_type = 'cash'
+        payer.is_active = True
+        payer.save(update_fields=['payer_type', 'is_active', 'modified'])
+
+    scope_ids = _patient_billing_scope_ids(patient) or [patient.pk]
+
+    try:
+        from .models_insurance_companies import PatientInsurance
+
+        PatientInsurance.objects.filter(
+            patient_id__in=scope_ids,
+            is_deleted=False,
+            status='active',
+        ).update(status='cancelled', is_primary=False)
+    except Exception:
+        logger.exception('Failed to cancel insurance enrollments for cash switch (%s)', patient.mrn)
+
+    try:
+        from .models_enterprise_billing import CorporateEmployee
+
+        CorporateEmployee.objects.filter(
+            patient_id__in=scope_ids,
+            is_deleted=False,
+            is_active=True,
+        ).update(is_active=False, termination_date=timezone.localdate())
+    except Exception:
+        logger.exception('Failed to deactivate corporate enrollments for cash switch (%s)', patient.mrn)
+
+    Patient.objects.filter(pk__in=scope_ids, is_deleted=False).update(
+        primary_insurance_id=payer.pk,
+        insurance_company='',
+    )
+    patient.primary_insurance = payer
+    patient.insurance_company = ''
+    try:
+        patient.refresh_from_db()
+    except Exception:
+        pass
+
+    sync_open_invoices_to_primary_payer_for_date(patient, request=request)
+    logger.info('Patient %s (scope %s) switched to Cash payer', patient.mrn, scope_ids)
+    return payer
 
 
 def coalesce_billing_ref(cleaned_data, prior, field_name):
@@ -565,26 +729,19 @@ def apply_patient_payer_from_form(request, patient, form, billing_ref_prior=None
         receiving_point = (form.cleaned_data.get('receiving_point') or '').strip()
 
         try:
-            payer, _ = Payer.objects.get_or_create(
-                name='Cash',
-                defaults={
-                    'payer_type': 'cash',
-                    'is_active': True,
-                },
-            )
-            patient.primary_insurance = payer
-            update_fields = ['primary_insurance']
+            switch_patient_to_cash_payer(patient, request=request)
             if receiving_point:
+                try:
+                    patient.refresh_from_db()
+                except Exception:
+                    pass
                 note_line = f'Cash receiving point: {receiving_point}'
                 patient.notes = (
                     f'{patient.notes}\n{note_line}'.strip()
                     if (patient.notes or '').strip()
                     else note_line
                 )
-                update_fields.append('notes')
-            patient.save(update_fields=update_fields)
-
-            sync_open_invoices_to_primary_payer_for_date(patient, request=request)
+                patient.save(update_fields=['notes'])
 
             logger.info('Patient %s primary payer set to Cash', patient.mrn)
             if request is not None:

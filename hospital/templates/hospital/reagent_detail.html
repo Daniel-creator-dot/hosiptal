@@ -1,0 +1,149 @@
+{% extends 'hospital/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ reagent.name }} - Lab stock{% endblock %}
+{% block page_title %}{{ reagent.name }}{% endblock %}
+{% block page_subtitle %}{{ reagent.item_code }} · {{ reagent.get_category_display }}{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <a href="{% url 'hospital:lab_reagent_dashboard' %}" class="btn btn-outline-secondary btn-sm mb-3">Reagent stock</a>
+    <a href="{% url 'hospital:inventory:issue_consumables' %}" class="btn btn-outline-secondary btn-sm mb-3">Procurement issue to lab / staff</a>
+    <a href="{% url 'hospital:issue_lab_consumables' %}" class="btn btn-outline-secondary btn-sm mb-3">EDTA / visit settings</a>
+
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-body">
+                    <div class="display-6 fw-semibold">{{ reagent.quantity_on_hand }} <small class="fs-6 text-muted">{{ reagent.unit }}</small></div>
+                    <p class="text-muted mb-0">On hand{% if reagent.location %} · {{ reagent.location }}{% endif %}</p>
+                    {% if reagent.deduct_per_lab_visit %}
+                    <span class="badge bg-primary mt-2">Deducts {{ reagent.qty_per_lab_visit }} {{ reagent.unit }} per completed lab</span>
+                    {% endif %}
+                    {% if reagent.stock_tracking == 'measurable' %}
+                    <span class="badge bg-info text-dark mt-2">Measurable kit{% if reagent.qty_per_box %} · {{ reagent.qty_per_box }}/box{% endif %}</span>
+                    {% elif reagent.stock_tracking == 'immeasurable' %}
+                    <span class="badge bg-warning text-dark mt-2">Chemistry{% if reagent.tests_per_kit %} · {{ reagent.tests_per_kit }} tests/kit{% endif %}</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if can_manage %}
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white fw-semibold">EDTA / every completed lab</div>
+                <div class="card-body">
+                    <p class="small text-muted">Use this for EDTA tubes. One deduction for each completed lab test.</p>
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="save_visit_settings">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" name="deduct_per_lab_visit" id="deduct_per_lab_visit"
+                                   {% if reagent.deduct_per_lab_visit %}checked{% endif %}>
+                            <label class="form-check-label" for="deduct_per_lab_visit">Deduct for every completed lab</label>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="qty_per_lab_visit">Quantity per completed lab</label>
+                            <input type="number" class="form-control" name="qty_per_lab_visit" id="qty_per_lab_visit"
+                                   step="0.01" min="0.01" value="{{ reagent.qty_per_lab_visit }}">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </form>
+                </div>
+            </div>
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white fw-semibold">Kit / chemistry settings</div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="save_stock_tracking">
+                        <div class="mb-3">
+                            <label class="form-label" for="stock_tracking">Tracking</label>
+                            <select class="form-select" name="stock_tracking" id="stock_tracking">
+                                <option value="untracked" {% if reagent.stock_tracking == 'untracked' %}selected{% endif %}>Not tracked</option>
+                                <option value="measurable" {% if reagent.stock_tracking == 'measurable' %}selected{% endif %}>Measurable (kit)</option>
+                                <option value="immeasurable" {% if reagent.stock_tracking == 'immeasurable' %}selected{% endif %}>Immeasurable (chemistry)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Pieces per box</label>
+                            <input type="number" class="form-control" name="qty_per_box" min="1" value="{{ reagent.qty_per_box|default:'' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tests per kit</label>
+                            <input type="number" class="form-control" name="tests_per_kit" min="1" value="{{ reagent.tests_per_kit|default:'' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Qty used per completed test</label>
+                            <input type="number" class="form-control" name="qty_consumed_per_test" step="0.0001" min="0" value="{{ reagent.qty_consumed_per_test }}">
+                            <div class="form-text">0 means do not auto-deduct (FBC diluent until yield is set).</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Volume note</label>
+                            <input type="text" class="form-control" name="reagent_volume_note" value="{{ reagent.reagent_volume_note }}">
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary">Save tracking</button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white fw-semibold">Stock control</div>
+                <div class="card-body">
+                    <p class="small text-muted mb-2">
+                        Procurement receives boxes into the store, then issues them to the laboratory.
+                        Completing a linked test deducts lab on-hand. Lab does not receive or give out stock here.
+                    </p>
+                    <a href="{% url 'hospital:inventory:issue_consumables' %}" class="btn btn-success">
+                        Open procurement issue page
+                    </a>
+                </div>
+            </div>
+            {% if linked_tests %}
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white fw-semibold">Linked lab tests</div>
+                <div class="card-body py-2">
+                    <ul class="mb-0">
+                        {% for t in linked_tests %}
+                        <li><a href="{% url 'hospital:lab_test_detail' t.pk %}">{{ t.name }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-semibold">Movements</div>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>When</th>
+                                <th>Type</th>
+                                <th class="text-end">Qty</th>
+                                <th>Who / why</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for t in transactions %}
+                            <tr>
+                                <td class="small">{{ t.created }}</td>
+                                <td>{{ t.get_transaction_type_display }}</td>
+                                <td class="text-end">{{ t.quantity }}</td>
+                                <td class="small">
+                                    {{ t.purpose|default:t.notes }}
+                                    {% if t.patient %}<div class="text-muted">{{ t.patient.full_name }}</div>{% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-muted text-center p-4">No movements yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

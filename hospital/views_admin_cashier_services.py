@@ -21,24 +21,60 @@ def _normalize_billing_code(raw):
     return s.strip('-')
 
 
+def _lookup_service_price_tiers(billing_code):
+    """Return (cash, insurance, corporate) from flexible pricing when configured."""
+    from django.utils import timezone
+    from .models import ServiceCode
+    from .models_flexible_pricing import PricingCategory, ServicePrice
+
+    service_code = ServiceCode.objects.filter(code=billing_code, is_deleted=False).first()
+    if not service_code:
+        return None
+    today = timezone.now().date()
+
+    def _tier(category_type):
+        category = PricingCategory.objects.filter(
+            category_type=category_type, is_active=True, is_deleted=False
+        ).order_by('priority').first()
+        if not category:
+            return None
+        return ServicePrice.get_price(service_code, category, today)
+
+    cash = _tier('cash')
+    insurance = _tier('insurance')
+    corporate = _tier('corporate')
+    if cash is None and insurance is None and corporate is None:
+        return None
+    return cash, insurance, corporate
+
+
 def _admin_price_book_display_rows():
     """
     Single list for the admin table: built-in catalogue (code) first, then DB rows.
     Each row is a dict so the template can treat built-ins (no pk) like extras.
     """
-    from .views_centralized_cashier import BUILTIN_ADDABLE_SERVICES, SERVICE_CODE_MAP
+    from .views_centralized_cashier import ADDABLE_SERVICES, SERVICE_CODE_MAP
 
     rows = []
-    for item_key, label, cash_amt, ins_amt in BUILTIN_ADDABLE_SERVICES:
+    for item_key, label, cash_amt, ins_amt in ADDABLE_SERVICES:
+        billing_code = SERVICE_CODE_MAP.get(item_key, item_key)
+        tiers = _lookup_service_price_tiers(billing_code)
+        if tiers:
+            db_cash, db_ins, db_corp = tiers
+            cash_amt = db_cash if db_cash is not None else cash_amt
+            ins_amt = db_ins if db_ins is not None else ins_amt
+            corp_amt = db_corp
+        else:
+            corp_amt = None
         rows.append(
             {
                 'is_builtin': True,
                 'item_key': item_key,
                 'label': label,
-                'billing_code': SERVICE_CODE_MAP.get(item_key, item_key),
+                'billing_code': billing_code,
                 'amount_cash': cash_amt,
                 'amount_insurance': ins_amt,
-                'amount_corporate': None,
+                'amount_corporate': corp_amt,
                 'is_active': True,
                 'pk': None,
             }

@@ -44,7 +44,18 @@
                                 <a href="#" id="clearDrugSelection" class="ms-2">Change</a></small>
                         </div>
                         <small class="form-text text-muted">Type at least 2 characters to see search results. Click a drug to select.
-                            Insurance exclusions are set on the drug record (not here) — use <strong>Insurance settings</strong> after selecting a drug.</small>
+                            Tick <strong>NHIS formulary</strong> below if this medicine should be available when doctors prescribe for NHIS patients.</small>
+                    </div>
+                    <div class="mt-3 p-3 rounded border" id="nhisCoveredBox" style="display:none; background:#ecfdf5;">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="nhis_covered" name="nhis_covered">
+                            <label class="form-check-label" for="nhis_covered">
+                                <strong>Add this drug to the NHIS formulary</strong>
+                            </label>
+                            <div class="form-text mb-0" id="nhisCoveredHint">
+                                Doctors prescribing for NHIS patients will then be able to select this drug.
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">2</span> Batch, location &amp; quantity</div>
@@ -77,14 +88,30 @@
                     <div class="rx-form-section-title mt-4"><span class="badge rounded-pill bg-secondary">3</span> Supplier cost &amp; pricing</div>
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <label class="form-label">Supplier (vendor)</label>
+                            <label class="form-label">Supplier (vendor) <span class="text-danger supplier-required-mark" style="display:none;">*</span></label>
                             <select class="form-select form-control-modern" name="supplier" id="supplierSelect" title="Who this batch was received from">
                                 <option value="">— Not specified —</option>
                                 {% for s in suppliers %}
                                 <option value="{{ s.pk }}">{{ s.name }}</option>
+                                {% empty %}
+                                <option value="" disabled>No active suppliers — add one under Procurement → Suppliers</option>
                                 {% endfor %}
                             </select>
-                            <small class="form-text text-muted">Optional. Use when quantities come from a specific vendor (accounts can cross-check).</small>
+                            <small class="form-text text-muted">
+                                Required with invoice number so accounts can pay against this invoice.
+                                {% if not suppliers %}
+                                <a href="{% url 'hospital:suppliers_list' %}">Manage suppliers</a>.
+                                {% endif %}
+                            </small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Supplier invoice number <span class="text-danger" id="invoiceRequiredMark" style="display:none;">*</span></label>
+                            <input type="text" name="supplier_invoice_number" id="supplierInvoiceInput"
+                                   class="form-control form-control-modern"
+                                   placeholder="e.g. INV-2026-00412" autocomplete="off">
+                            <small class="form-text text-muted">
+                                Required when a supplier is selected. Registered on the supplier account so accountants can look up paid / not paid status.
+                            </small>
                         </div>
                     </div>
                     <div class="row mb-3">
@@ -174,6 +201,33 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
             drugInsuranceSettingsLink.style.display = 'none';
         }
     }
+
+    function syncNhisBox(alreadyCovered) {
+        const box = document.getElementById('nhisCoveredBox');
+        const cb = document.getElementById('nhis_covered');
+        const hint = document.getElementById('nhisCoveredHint');
+        if (!box || !cb) return;
+        box.style.display = 'block';
+        if (alreadyCovered) {
+            cb.checked = true;
+            cb.disabled = true;
+            if (hint) hint.textContent = 'This drug is already on the NHIS formulary.';
+        } else {
+            cb.disabled = false;
+            cb.checked = false;
+            if (hint) hint.textContent = 'Doctors prescribing for NHIS patients will then be able to select this drug.';
+        }
+    }
+
+    function hideNhisBox() {
+        const box = document.getElementById('nhisCoveredBox');
+        const cb = document.getElementById('nhis_covered');
+        if (box) box.style.display = 'none';
+        if (cb) {
+            cb.checked = false;
+            cb.disabled = false;
+        }
+    }
     
     let drugSearchTimeout;
     
@@ -220,10 +274,12 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
                              data-details="${[d.strength, d.form, d.generic_name].filter(Boolean).join(' ')}"
                              data-form="${d.form || ''}"
                              data-unit-price="${(d.unit_price != null ? d.unit_price : d.price) || '0'}"
-                             data-cost-price="${d.cost_price != null ? d.cost_price : '0'}">
+                             data-cost-price="${d.cost_price != null ? d.cost_price : '0'}"
+                             data-nhis-covered="${d.nhis_covered ? '1' : '0'}">
                             <strong>${d.name || d.text}</strong>
                             ${(d.generic_name && d.generic_name !== 'N/A') ? `<br><small class="text-muted">${d.generic_name}</small>` : ''}
                             ${(d.strength || d.form) ? `<br><small>${d.strength || ''} ${d.form || ''}</small>` : ''}
+                            ${d.nhis_covered ? '<br><small class="text-success">NHIS formulary</small>' : ''}
                         </div>
                     `).join('');
                 }
@@ -296,9 +352,16 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
         drugSelectedDetails.textContent = p.details ? (' - ' + p.details) : '';
         drugSelectedInfo.style.display = 'block';
         setDrugInsuranceLink(p.id);
+        syncNhisBox(!!p.nhis_covered);
         updateTabletBadge(p.details || '');
         applyDrugPrices(p.unitPrice, p.costPrice);
         drugSearchInput.required = false;
+        if (p.preferred_supplier_id) {
+            var supplierSelect = document.getElementById('supplierSelect');
+            if (supplierSelect) {
+                supplierSelect.value = String(p.preferred_supplier_id);
+            }
+        }
     }
 
     function syncReorderFromQuantity() {
@@ -402,6 +465,7 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
             drugSelectedDetails.textContent = option.dataset.details ? ' - ' + option.dataset.details : '';
             drugSelectedInfo.style.display = 'block';
             setDrugInsuranceLink(option.dataset.id);
+            syncNhisBox(option.dataset.nhisCovered === '1');
             updateTabletBadge(option.dataset.form || option.dataset.details || '');
             applyDrugPrices(option.dataset.unitPrice, option.dataset.costPrice);
             if (costModeManual) costModeManual.checked = true;
@@ -420,6 +484,7 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
             drugIdHidden.value = '';
             drugSelectedInfo.style.display = 'none';
             setDrugInsuranceLink('');
+            hideNhisBox();
             updateTabletBadge('');
             if (unitPriceDisplay) unitPriceDisplay.value = '';
             if (costPriceInput) {
@@ -450,6 +515,22 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
             alert('Please select a drug from the search.');
             return false;
         }
+        const supplierSelect = document.getElementById('supplierSelect');
+        const invoiceInput = document.getElementById('supplierInvoiceInput');
+        const hasSupplier = supplierSelect && (supplierSelect.value || '').trim();
+        const hasInvoice = invoiceInput && (invoiceInput.value || '').trim();
+        if (hasSupplier && !hasInvoice) {
+            e.preventDefault();
+            alert('Enter the supplier invoice number so accounts can register and pay against this invoice.');
+            if (invoiceInput) invoiceInput.focus();
+            return false;
+        }
+        if (hasInvoice && !hasSupplier) {
+            e.preventDefault();
+            alert('Select a supplier so this invoice number can be registered on the supplier account.');
+            if (supplierSelect) supplierSelect.focus();
+            return false;
+        }
         if (totalCostInput) {
             totalCostInput.readOnly = false;
             if (!isFromTotalMode()) {
@@ -476,6 +557,25 @@ window.__PHARMACY_STOCK_PREFILL = {{ prefill_drug_json|safe }};
             }
         }
     });
+
+    (function syncSupplierInvoiceRequired() {
+        const supplierSelect = document.getElementById('supplierSelect');
+        const invoiceInput = document.getElementById('supplierInvoiceInput');
+        const invoiceMark = document.getElementById('invoiceRequiredMark');
+        const supplierMarks = document.querySelectorAll('.supplier-required-mark');
+        function refresh() {
+            const hasSupplier = supplierSelect && (supplierSelect.value || '').trim();
+            const hasInvoice = invoiceInput && (invoiceInput.value || '').trim();
+            if (invoiceInput) invoiceInput.required = !!hasSupplier;
+            if (invoiceMark) invoiceMark.style.display = hasSupplier ? 'inline' : 'none';
+            supplierMarks.forEach(function (el) {
+                el.style.display = hasInvoice ? 'inline' : 'none';
+            });
+        }
+        if (supplierSelect) supplierSelect.addEventListener('change', refresh);
+        if (invoiceInput) invoiceInput.addEventListener('input', refresh);
+        refresh();
+    })();
 })();
 </script>
 {% endblock %}

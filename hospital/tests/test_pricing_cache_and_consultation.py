@@ -24,7 +24,7 @@ from hospital.utils_billing import (
     }
 )
 class ConsultationPricingFromDbTests(TestCase):
-    """Cash general OPD stays at policy flat (150); engine may still expose catalog cash ServicePrice."""
+    """Cash general OPD stays at policy flat (158); engine may still expose catalog cash ServicePrice."""
 
     def setUp(self):
         cache.clear()

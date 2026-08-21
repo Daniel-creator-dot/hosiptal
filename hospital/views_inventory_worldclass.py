@@ -24,6 +24,92 @@ from .models_inventory_advanced import (
 from .models import Staff, Department
 from .models_procurement import Store
 from hospital.utils_pagination import get_pagination_html
+from hospital.utils_roles import is_procurement_staff
+
+
+def _process_store_issue(request, item):
+    """Issue store stock to staff/ward or to the laboratory. Returns (success_message)."""
+    from django.core.exceptions import ValidationError
+    from hospital.services.inventory_accountability_service import InventoryAccountabilityService
+    from hospital.services.lab_reagent_usage_service import issue_store_stock_to_lab
+    from hospital.models_lab_management import LabReagent
+    from decimal import Decimal as D
+
+    if not is_procurement_staff(request.user):
+        raise ValidationError('Only procurement / stores can issue items to staff and laboratories.')
+
+    staff = getattr(request.user, 'staff', None)
+    if not staff:
+        raise ValidationError(
+            'Your account is not linked to a staff profile. Ask admin to link it before issuing stock.'
+        )
+
+    qty = int(request.POST.get('quantity') or 0)
+    destination = (request.POST.get('destination') or 'staff').strip().lower()
+    if destination not in ('staff', 'lab'):
+        destination = 'staff'
+
+    recipient_staff_id = (request.POST.get('recipient_staff_id') or '').strip()
+    issued_to = None
+    recipient_name = (request.POST.get('recipient_name') or '').strip()
+    if recipient_staff_id:
+        issued_to = get_object_or_404(Staff, pk=recipient_staff_id, is_deleted=False)
+        if not recipient_name:
+            recipient_name = str(issued_to)
+    department_name = (request.POST.get('department_name') or '').strip()
+    if request.POST.get('department_id'):
+        dept = Department.objects.filter(
+            pk=request.POST.get('department_id'), is_deleted=False
+        ).first()
+        if dept:
+            department_name = department_name or dept.name
+
+    if destination == 'lab':
+        txn, lab_qty = issue_store_stock_to_lab(
+            inventory_item=item,
+            quantity=qty,
+            performed_by=staff,
+            notes=request.POST.get('notes') or '',
+            recipient_name=recipient_name,
+        )
+        item.refresh_from_db()
+        return (
+            f'Issued {qty} {item.unit_of_measure} of {item.item_name} to the laboratory '
+            f'({lab_qty} added to lab stock). Store remaining {item.quantity_on_hand}. '
+            f'({txn.transaction_number})'
+        )
+
+    if not issued_to and not recipient_name and not department_name:
+        raise ValidationError(
+            'Select the staff member who received the items (or type their name / department).'
+        )
+    if not issued_to and not recipient_name:
+        # Department-only still allowed, but label it clearly
+        recipient_name = department_name
+
+    txn = InventoryAccountabilityService.issue_to_department(
+        inventory_item=item,
+        quantity=qty,
+        staff=staff,
+        department_name=department_name,
+        recipient_name=recipient_name,
+        issued_to_staff=issued_to,
+        notes=request.POST.get('notes') or '',
+        reason=request.POST.get('reason') or 'Issue to staff',
+    )
+    store_type = (getattr(getattr(item, 'store', None), 'store_type', '') or '').lower()
+    if store_type in ('lab', 'laboratory'):
+        for reagent in LabReagent.objects.filter(inventory_item_id=item.id, is_deleted=False):
+            reagent.quantity_on_hand = max(
+                D('0'), D(str(reagent.quantity_on_hand or 0)) - D(str(qty))
+            )
+            reagent.save(update_fields=['quantity_on_hand', 'modified'])
+    item.refresh_from_db()
+    return (
+        f'Gave {qty} {item.unit_of_measure} of {item.item_name} to '
+        f'{recipient_name or department_name}. Remaining {item.quantity_on_hand}. '
+        f'({txn.transaction_number})'
+    )
 
 
 # ==================== MAIN INVENTORY DASHBOARD ====================
@@ -507,33 +593,44 @@ def inventory_items_list(request):
 
 @login_required
 def inventory_item_detail(request, item_id):
-    """Detailed view of inventory item with transaction history"""
+    """Detailed view of inventory item with transaction history + issue-to-staff."""
+    from django.core.exceptions import ValidationError
+    from hospital.models_lab_management import LabReagent
+
     item = get_object_or_404(
         InventoryItem.objects.select_related('store', 'category', 'preferred_supplier'),
         id=item_id,
         is_deleted=False
     )
-    
+
+    if request.method == 'POST' and (request.POST.get('action') or '') == 'issue_to_staff':
+        try:
+            msg = _process_store_issue(request, item)
+            messages.success(request, msg)
+        except (ValidationError, ValueError, TypeError) as exc:
+            messages.error(request, str(exc))
+        return redirect('hospital:inventory:item_detail', item_id=item.id)
+
     # Get transaction history
     transactions = InventoryTransaction.objects.filter(
         inventory_item=item,
         is_deleted=False
     ).select_related('performed_by', 'approved_by').order_by('-transaction_date')[:50]
-    
+
     # Get batches
     batches = InventoryBatch.objects.filter(
         inventory_item=item,
         is_deleted=False,
         quantity_remaining__gt=0
     ).order_by('expiry_date')
-    
+
     # Get active alerts
     alerts = StockAlert.objects.filter(
         inventory_item=item,
         is_resolved=False,
         is_deleted=False
     ).order_by('-created')
-    
+
     # Calculate statistics
     thirty_days_ago = timezone.now() - timedelta(days=30)
     usage_last_30_days = InventoryTransaction.objects.filter(
@@ -542,16 +639,23 @@ def inventory_item_detail(request, item_id):
         transaction_date__gte=thirty_days_ago,
         is_deleted=False
     ).aggregate(total=Sum('quantity'))['total'] or 0
-    
+
     # Average daily usage
     avg_daily_usage = usage_last_30_days / 30 if usage_last_30_days > 0 else 0
-    
+
     # Days of stock remaining
     if avg_daily_usage > 0:
         days_of_stock = item.quantity_on_hand / avg_daily_usage
     else:
         days_of_stock = None
-    
+
+    recipient_staff = (
+        Staff.objects.filter(is_deleted=False, user__is_active=True)
+        .select_related('user')
+        .order_by('user__first_name', 'user__last_name')[:400]
+    )
+    departments = Department.objects.filter(is_deleted=False).order_by('name')
+
     context = {
         'item': item,
         'transactions': transactions,
@@ -561,9 +665,115 @@ def inventory_item_detail(request, item_id):
         'avg_daily_usage': round(avg_daily_usage, 2),
         'days_of_stock': round(days_of_stock, 1) if days_of_stock else None,
         'total_value': item.get_total_value(),
+        'recipient_staff': recipient_staff,
+        'departments': departments,
+        'can_issue': is_procurement_staff(request.user),
+        'is_lab_item': LabReagent.objects.filter(
+            inventory_item_id=item.id, is_deleted=False
+        ).exists(),
     }
-    
+
     return render(request, 'hospital/inventory/item_detail.html', context)
+
+
+@login_required
+def issue_consumables(request):
+    """
+    Give facility consumables (toilet rolls, gloves, etc.) to nurses / staff / departments.
+    Reduces InventoryItem.quantity_on_hand via InventoryAccountabilityService.issue_to_department.
+    """
+    from django.core.exceptions import ValidationError
+    from hospital.models_lab_management import LabReagent
+
+    store_id = (request.GET.get('store') or request.POST.get('store') or '').strip()
+    q = (request.GET.get('q') or '').strip()
+
+    if request.method == 'POST' and (request.POST.get('action') or '') == 'issue_to_staff':
+        try:
+            item = get_object_or_404(
+                InventoryItem,
+                pk=request.POST.get('item_id'),
+                is_deleted=False,
+                is_active=True,
+            )
+            msg = _process_store_issue(request, item)
+            messages.success(request, msg)
+            redirect_url = reverse('hospital:inventory:issue_consumables')
+            if store_id:
+                redirect_url += f'?store={store_id}'
+            if q:
+                redirect_url += ('&' if store_id else '?') + f'q={q}'
+            return redirect(redirect_url)
+        except (ValidationError, ValueError, TypeError) as exc:
+            messages.error(request, str(exc))
+            return redirect('hospital:inventory:issue_consumables')
+
+    items = (
+        InventoryItem.objects.filter(
+            is_deleted=False,
+            is_active=True,
+            quantity_on_hand__gt=0,
+        )
+        .filter(
+            Q(category__code__in=['SUPPLY', 'GEN', 'LAB', 'FURN'])
+            | Q(store__store_type__in=['lab', 'main', 'general', 'ward', 'ot'])
+            | Q(drug__isnull=True)
+            | Q(item_name__icontains='toilet')
+            | Q(item_name__icontains='tissue')
+            | Q(item_name__icontains='paper roll')
+            | Q(item_name__icontains='gauze')
+            | Q(item_name__icontains='glove')
+        )
+        .select_related('store', 'category')
+        .order_by('item_name', 'store__name')
+    )
+    if store_id:
+        try:
+            uuid.UUID(str(store_id))
+            items = items.filter(store_id=store_id)
+        except (ValueError, TypeError):
+            store_id = ''
+    if q:
+        items = items.filter(
+            Q(item_name__icontains=q)
+            | Q(item_code__icontains=q)
+            | Q(description__icontains=q)
+        )
+
+    recent_issues = (
+        InventoryTransaction.objects.filter(
+            transaction_type='issue',
+            is_deleted=False,
+        )
+        .filter(
+            Q(inventory_item__category__code__in=['SUPPLY', 'GEN'])
+            | Q(inventory_item__drug__isnull=True)
+        )
+        .select_related('inventory_item', 'store', 'performed_by', 'performed_by__user')
+        .order_by('-transaction_date')[:25]
+    )
+
+    context = {
+        'items': items[:200],
+        'stores': Store.objects.filter(is_deleted=False, is_active=True).order_by('name'),
+        'selected_store_id': store_id or '',
+        'q': q,
+        'recipient_staff': (
+            Staff.objects.filter(is_deleted=False, user__is_active=True)
+            .select_related('user')
+            .order_by('user__first_name', 'user__last_name')[:400]
+        ),
+        'departments': Department.objects.filter(is_deleted=False).order_by('name'),
+        'recent_issues': recent_issues,
+        'can_issue': is_procurement_staff(request.user),
+        'lab_item_ids': {
+            str(rid)
+            for rid in LabReagent.objects.filter(
+                is_deleted=False, inventory_item_id__isnull=False
+            ).values_list('inventory_item_id', flat=True)
+        },
+    }
+    return render(request, 'hospital/inventory/issue_consumables.html', context)
 
 
 # ==================== STOCK ALERTS ====================

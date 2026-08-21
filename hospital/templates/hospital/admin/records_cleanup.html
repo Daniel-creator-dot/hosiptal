@@ -1,0 +1,87 @@
+{% extends 'hospital/base.html' %}
+
+{% block title %}Remove duplicates - IT Operations{% endblock %}
+{% block page_title %}Remove duplicate accounts and patients{% endblock %}
+{% block page_subtitle %}IT Operations can take duplicate logins and extra patient records out of the live system.{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <a href="{% url 'hospital:it_operations_dashboard' %}" class="btn btn-outline-secondary btn-sm">IT Operations</a>
+        <a href="{% url 'hospital:staff_list_it' %}" class="btn btn-outline-secondary btn-sm">Staff list</a>
+        <a href="{% url 'hospital:user_management' %}" class="btn btn-outline-secondary btn-sm">All users</a>
+        <a href="{% url 'hospital:patient_list' %}" class="btn btn-outline-secondary btn-sm">Patients</a>
+    </div>
+
+    <div class="alert alert-warning">
+        Records are <strong>removed from daily use</strong> (patients disappear from search; logins cannot sign in).
+        Clinical history is kept. Type the MRN or username on the next screen to confirm.
+        Administrator accounts and your own login cannot be deleted.
+    </div>
+
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label">Search name, MRN, phone, username, or employee ID</label>
+                    <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="e.g. Ama Mensah or PMC-1234 or nurse.ama" minlength="2">
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary">Search</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if q and q|length < 2 %}
+    <div class="alert alert-info">Enter at least 2 characters.</div>
+    {% endif %}
+
+    {% if q and q|length >= 2 %}
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-semibold">Patients ({{ patients|length }})</div>
+                <div class="list-group list-group-flush">
+                    {% for p in patients %}
+                    <div class="list-group-item d-flex justify-content-between align-items-start gap-2">
+                        <div>
+                            <a href="{% url 'hospital:patient_detail' p.pk %}"><strong>{{ p.full_name }}</strong></a>
+                            <div class="small text-muted">{{ p.mrn }}{% if p.phone_number %} · {{ p.phone_number }}{% endif %}{% if p.date_of_birth %} · {{ p.date_of_birth|date:"d/m/Y" }}{% endif %}</div>
+                        </div>
+                        <a href="{% url 'hospital:it_delete_patient' p.pk %}" class="btn btn-sm btn-outline-danger">Remove</a>
+                    </div>
+                    {% empty %}
+                    <div class="list-group-item text-muted">No matching patients.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-semibold">Staff / logins ({{ staff_rows|length }})</div>
+                <div class="list-group list-group-flush">
+                    {% for row in staff_rows %}
+                    <div class="list-group-item d-flex justify-content-between align-items-start gap-2">
+                        <div>
+                            <strong>{% if row.user %}{{ row.user.get_full_name|default:row.user.username }}{% else %}—{% endif %}</strong>
+                            {% if row.user %}<div class="small text-muted">@{{ row.user.username }}{% if row.staff.employee_id %} · {{ row.staff.employee_id }}{% endif %}{% if row.staff.department %} · {{ row.staff.department.name }}{% endif %}</div>{% endif %}
+                            {% if row.user and not row.user.is_active %}<span class="badge bg-secondary">Inactive</span>{% endif %}
+                            {% if row.user and row.user.is_superuser %}<span class="badge bg-warning text-dark">Protected</span>{% endif %}
+                        </div>
+                        {% if row.staff %}
+                        <a href="{% url 'hospital:it_delete_staff_account' row.staff.pk %}" class="btn btn-sm btn-outline-danger">Remove</a>
+                        {% elif row.user %}
+                        <a href="{% url 'hospital:it_delete_user_account' row.user.id %}" class="btn btn-sm btn-outline-danger">Remove</a>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <div class="list-group-item text-muted">No matching logins.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

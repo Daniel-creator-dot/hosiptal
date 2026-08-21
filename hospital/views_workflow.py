@@ -6,6 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.utils import timezone
 from django.db.models import Q
+from django.urls import reverse
 from datetime import timedelta
 from .models import Patient, Encounter, VitalSign, Staff, Order
 from .models_workflow import PatientFlowStage, WorkflowTemplate, Bill, PaymentRequest
@@ -93,7 +94,10 @@ def patient_flow(request, encounter_id):
     current_stage = stages.filter(status__in=['pending', 'in_progress']).first()
     
     # Check if vitals exist
-    has_vitals = encounter.vitals.filter(is_deleted=False).exists()
+    latest_vital = (
+        encounter.vitals.filter(is_deleted=False).order_by('-recorded_at').first()
+    )
+    has_vitals = latest_vital is not None
     
     # Add helper properties to stages
     stages_list = list(stages)
@@ -120,6 +124,7 @@ def patient_flow(request, encounter_id):
         'stages': stages_list,
         'current_stage': current_stage,
         'has_vitals': has_vitals,
+        'latest_vital': latest_vital,
         # Statistics
         'total_stages': total_stages,
         'completed_count': completed_count,
@@ -197,33 +202,46 @@ from .decorators import role_required
 @login_required
 @role_required('doctor', 'nurse', 'midwife', 'admin', message='Access denied. Front desk staff cannot record vital signs.')
 def record_vitals(request, encounter_id):
-    """Record vital signs with automated validation - Only medical staff (doctors, nurses, midwives)"""
+    """Record or edit vital signs — doctors, nurses, midwives, admins."""
+    from .services.vital_signs_validator import VitalSignsValidator
+    from decimal import Decimal
+    from django.conf import settings as django_settings
+
     encounter = get_object_or_404(Encounter, pk=encounter_id, is_deleted=False)
-    
+
+    def safe_int(value, default=None):
+        if not value or value == '':
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    def safe_decimal(value, default=None):
+        if not value or value == '':
+            return default
+        try:
+            return Decimal(str(value))
+        except (ValueError, TypeError):
+            return default
+
+    def resolve_editing_vital(vital_id_raw):
+        if not vital_id_raw:
+            return None
+        return get_object_or_404(
+            VitalSign,
+            pk=vital_id_raw,
+            encounter=encounter,
+            is_deleted=False,
+        )
+
+    editing_vital = None
     if request.method == 'POST':
-        from .models import VitalSign
-        from .services.vital_signs_validator import VitalSignsValidator
-        from decimal import Decimal
-        
-        # Helper functions for safe type conversion
-        def safe_int(value, default=None):
-            """Safely convert string to int, returning None for empty strings"""
-            if not value or value == '':
-                return default
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                return default
-        
-        def safe_decimal(value, default=None):
-            """Safely convert string to Decimal, returning None for empty strings"""
-            if not value or value == '':
-                return default
-            try:
-                return Decimal(str(value))
-            except (ValueError, TypeError):
-                return default
-        
+        editing_vital = resolve_editing_vital(request.POST.get('vital_id'))
+    else:
+        editing_vital = resolve_editing_vital(request.GET.get('vital_id'))
+
+    if request.method == 'POST':
         vital_data = {
             'systolic_bp': safe_int(request.POST.get('systolic_bp')),
             'diastolic_bp': safe_int(request.POST.get('diastolic_bp')),
@@ -232,61 +250,79 @@ def record_vitals(request, encounter_id):
             'spo2': safe_int(request.POST.get('spo2')),
             'respiratory_rate': safe_int(request.POST.get('respiratory_rate')),
         }
-        
-        # Validate vital signs
+
         patient = encounter.patient
         try:
             validation_results = VitalSignsValidator.validate_all_vitals(
                 vital_data,
                 patient.age,
-                patient.gender
+                patient.gender,
             )
-        except:
+        except Exception:
             validation_results = {'overall': {'is_ok': True}}
-        
-        # Get current staff
+
         current_staff = None
         if hasattr(request.user, 'staff_profile'):
             current_staff = request.user.staff
         elif hasattr(request.user, 'staff'):
             current_staff = request.user.staff
 
+        prior_strip = ''
+        if editing_vital:
+            prior_strip = (editing_vital.poc_glucose_strip_type or '').strip().lower()
+
         strip_type = (request.POST.get('poc_glucose_strip_type') or '').strip().lower()
         blood_glucose_val = safe_decimal(request.POST.get('blood_glucose'))
-        # If nurse enters a glucose reading but forgets strip type, default to RBS so GHS fee is billed.
+        # New records: glucose without strip type defaults to RBS so fee is billed.
+        # Edits: do not auto-default if a strip was already billed (avoid double charge).
         if strip_type not in ('rbs', 'fbs') and blood_glucose_val is not None:
-            strip_type = 'rbs'
-        poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
+            if prior_strip in ('rbs', 'fbs'):
+                strip_type = prior_strip
+            elif not editing_vital:
+                strip_type = 'rbs'
+        # Keep previously billed strip type locked on edit
+        if prior_strip in ('rbs', 'fbs'):
+            poc_glucose_strip_type = prior_strip
+            strip_type = prior_strip
+        else:
+            poc_glucose_strip_type = strip_type if strip_type in ('rbs', 'fbs') else ''
 
-        # Create vital sign record with enhanced fields
-        vital = VitalSign.objects.create(
-            encounter=encounter,
-            # Core vitals
-            systolic_bp=vital_data['systolic_bp'],
-            diastolic_bp=vital_data['diastolic_bp'],
-            pulse=vital_data['pulse'],
-            temperature=vital_data['temperature'],
-            spo2=vital_data['spo2'],
-            respiratory_rate=vital_data['respiratory_rate'],
-            # Extended vitals
-            weight=safe_decimal(request.POST.get('weight')),
-            height=safe_decimal(request.POST.get('height')),
-            blood_glucose=blood_glucose_val,
-            poc_glucose_strip_type=poc_glucose_strip_type,
-            # Clinical assessment
-            consciousness_level=request.POST.get('consciousness_level', 'alert'),
-            pain_score=safe_int(request.POST.get('pain_score')),
-            supplemental_oxygen=request.POST.get('supplemental_oxygen') == 'true',
-            oxygen_flow_rate=safe_decimal(request.POST.get('oxygen_flow_rate')),
-            # Additional context
-            position=request.POST.get('position', ''),
-            capillary_refill=safe_int(request.POST.get('capillary_refill')),
-            notes=request.POST.get('notes', ''),
-            recorded_by=current_staff,
-        )
-        # Scores are auto-calculated in model's save() method
+        field_values = {
+            'systolic_bp': vital_data['systolic_bp'],
+            'diastolic_bp': vital_data['diastolic_bp'],
+            'pulse': vital_data['pulse'],
+            'temperature': vital_data['temperature'],
+            'spo2': vital_data['spo2'],
+            'respiratory_rate': vital_data['respiratory_rate'],
+            'weight': safe_decimal(request.POST.get('weight')),
+            'height': safe_decimal(request.POST.get('height')),
+            'blood_glucose': blood_glucose_val,
+            'poc_glucose_strip_type': poc_glucose_strip_type,
+            'consciousness_level': request.POST.get('consciousness_level', 'alert'),
+            'pain_score': safe_int(request.POST.get('pain_score')),
+            'supplemental_oxygen': request.POST.get('supplemental_oxygen') == 'true',
+            'oxygen_flow_rate': safe_decimal(request.POST.get('oxygen_flow_rate')),
+            'position': request.POST.get('position', ''),
+            'capillary_refill': safe_int(request.POST.get('capillary_refill')),
+            'notes': request.POST.get('notes', ''),
+        }
 
-        if strip_type in ('rbs', 'fbs'):
+        is_edit = editing_vital is not None
+        if is_edit:
+            vital = editing_vital
+            for key, value in field_values.items():
+                setattr(vital, key, value)
+            vital.save()
+        else:
+            vital = VitalSign.objects.create(
+                encounter=encounter,
+                recorded_by=current_staff,
+                **field_values,
+            )
+
+        # Bill glucose strip only when newly selected (never re-bill on edit of already-billed strip)
+        should_bill_strip = strip_type in ('rbs', 'fbs') and prior_strip not in ('rbs', 'fbs')
+        if should_bill_strip:
             from .services.auto_billing_service import AutoBillingService
 
             bill_result = AutoBillingService.bill_poc_glucose_strip(
@@ -309,82 +345,96 @@ def record_vitals(request, encounter_id):
                     bill_result.get('message') or 'POC glucose strip could not be added to the bill.',
                 )
 
-        ensure_patient_flow_stages(encounter)
+        if not is_edit:
+            ensure_patient_flow_stages(encounter)
 
-        # Complete vitals stage and move to consultation (doctor)
-        vitals_stage = PatientFlowStage.objects.filter(
-            encounter=encounter,
-            stage_type='vitals',
-            status__in=['pending', 'in_progress']
-        ).first()
-        
-        if vitals_stage:
-            # Get current staff (nurse) if available
-            current_staff = None
-            if hasattr(request.user, 'staff_profile'):
-                current_staff = request.user.staff
-            elif hasattr(request.user, 'staff'):
-                current_staff = request.user.staff
-            
-            # Complete vitals stage
-            vitals_stage.complete(current_staff)
-            
-            # Auto-create and auto-start consultation stage (doctor) if it doesn't exist
-            consultation_stage = PatientFlowStage.objects.filter(
+            vitals_stage = PatientFlowStage.objects.filter(
                 encounter=encounter,
-                stage_type='consultation',
-                is_deleted=False
+                stage_type='vitals',
+                status__in=['pending', 'in_progress'],
             ).first()
-            
-            if not consultation_stage:
-                # Use get_or_create to prevent duplicates (race condition safe)
-                consultation_stage, created = PatientFlowStage.objects.get_or_create(
+
+            if vitals_stage:
+                vitals_stage.complete(current_staff)
+
+                consultation_stage = PatientFlowStage.objects.filter(
                     encounter=encounter,
                     stage_type='consultation',
                     is_deleted=False,
-                    defaults={
-                        'status': 'pending',
-                        'notes': 'Auto-created after vital signs recorded'
-                    }
+                ).first()
+
+                if not consultation_stage:
+                    consultation_stage, _created = PatientFlowStage.objects.get_or_create(
+                        encounter=encounter,
+                        stage_type='consultation',
+                        is_deleted=False,
+                        defaults={
+                            'status': 'pending',
+                            'notes': 'Auto-created after vital signs recorded',
+                        },
+                    )
+
+                if consultation_stage and consultation_stage.status == 'pending':
+                    consultation_stage.start(None)
+
+            overall = validation_results.get('overall', {})
+            if overall.get('is_ok'):
+                messages.success(
+                    request,
+                    overall.get(
+                        'message',
+                        'Vital signs recorded successfully. Patient moved to consultation.',
+                    ),
                 )
-            
-            # Auto-start consultation stage (move to doctor)
-            if consultation_stage and consultation_stage.status == 'pending':
-                consultation_stage.start(None)  # Will be assigned when doctor starts
-            
-            # Update queue entry if exists - allow nurse to assign doctor
-            from .models_queue import QueueEntry
-            queue_entry = QueueEntry.objects.filter(
-                encounter=encounter,
-                is_deleted=False
-            ).first()
-            
-            if queue_entry:
-                # If doctor is already assigned by front desk, keep it
-                # Otherwise, nurse can assign one (handled in separate view)
-                pass
-        
-        # Show validation message
+            elif 'critical' in overall.get('status', ''):
+                messages.error(
+                    request,
+                    overall.get(
+                        'message',
+                        '⚠️ Critical vital signs recorded - Immediate attention required! Patient moved to consultation.',
+                    ),
+                )
+            else:
+                messages.warning(
+                    request,
+                    overall.get(
+                        'message',
+                        '⚠️ Abnormal vital signs recorded - Review required. Patient moved to consultation.',
+                    ),
+                )
+            return redirect('hospital:patient_flow', encounter_id=encounter.pk)
+
         overall = validation_results.get('overall', {})
         if overall.get('is_ok'):
-            messages.success(request, overall.get('message', 'Vital signs recorded successfully. Patient moved to consultation.'))
+            messages.success(request, 'Vital signs updated successfully.')
         elif 'critical' in overall.get('status', ''):
-            messages.error(request, overall.get('message', '⚠️ Critical vital signs recorded - Immediate attention required! Patient moved to consultation.'))
+            messages.error(
+                request,
+                overall.get(
+                    'message',
+                    '⚠️ Critical vital signs updated - Immediate attention required!',
+                ),
+            )
         else:
-            messages.warning(request, overall.get('message', '⚠️ Abnormal vital signs recorded - Review required. Patient moved to consultation.'))
-        
-        # Redirect to patient flow
-        return redirect('hospital:patient_flow', encounter_id=encounter.pk)
-    
-    # Get previous vitals for comparison
+            messages.warning(
+                request,
+                overall.get('message', '⚠️ Abnormal vital signs updated - Review required.'),
+            )
+        return redirect(
+            f"{reverse('hospital:record_vitals', args=[encounter.pk])}?vital_id={vital.pk}"
+        )
+
     previous_vitals = encounter.vitals.filter(is_deleted=False).order_by('-recorded_at')[:10]
-    
-    from django.conf import settings as django_settings
 
     context = {
         'encounter': encounter,
         'previous_vitals': previous_vitals,
+        'editing_vital': editing_vital,
         'poc_glucose_strip_ghs': django_settings.POC_GLUCOSE_STRIP_GHS,
+        'strip_already_billed': bool(
+            editing_vital
+            and (editing_vital.poc_glucose_strip_type or '').strip().lower() in ('rbs', 'fbs')
+        ),
     }
     return render(request, 'hospital/record_vitals_worldclass.html', context)
 

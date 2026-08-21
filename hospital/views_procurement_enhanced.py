@@ -250,36 +250,27 @@ def mark_request_received_worldclass(request, pk):
         proc_request.status = 'received'
         proc_request.save()
         
-        # Determine target store based on item type
-        # Pharmacy items go to Drug Store (DRUGS), Lab items to Lab Store (LAB), others to Main Store (MAIN)
         from hospital.services.inventory_accountability_service import InventoryAccountabilityService
+        from hospital.services.inventory_account_mapping import (
+            ensure_inventory_item_category,
+            get_default_inventory_category,
+            procurement_item_is_lab_reagent,
+            resolve_procurement_target_store,
+        )
         
         for item in proc_request.items.filter(is_deleted=False):
-            # Determine target store
-            if item.drug or (proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'pharmacy'):
-                # Pharmacy items go to Drug Store (DRUGS)
-                target_store = Store.objects.filter(code='DRUGS', is_deleted=False).first()
-                if not target_store:
-                    target_store = Store.objects.filter(store_type='pharmacy', is_deleted=False).first()
-            elif proc_request.requested_by_store and proc_request.requested_by_store.store_type == 'lab':
-                # Lab items go to Lab Store (LAB)
-                target_store = Store.objects.filter(code='LAB', is_deleted=False).first()
-                if not target_store:
-                    target_store = Store.objects.filter(store_type='lab', is_deleted=False).first()
-            else:
-                # Other items go to Main Store (MAIN)
-                target_store = Store.objects.filter(code='MAIN', is_deleted=False).first()
-                if not target_store:
-                    target_store = Store.objects.filter(store_type='main', is_deleted=False).first()
-            
+            target_store = resolve_procurement_target_store(
+                proc_request, item, staff=staff
+            )
             if not target_store:
-                # Fallback: create main store if doesn't exist
-                target_store = Store.objects.create(
-                    name='Main Store',
-                    code='MAIN',
-                    store_type='main',
-                    manager=staff
-                )
+                raise ValueError('Could not resolve target store for receiving.')
+
+            is_lab_reagent = procurement_item_is_lab_reagent(item)
+            default_category = get_default_inventory_category(
+                store=target_store,
+                drug=item.drug,
+                is_lab_reagent=is_lab_reagent,
+            )
             
             # Check if item exists in inventory
             inv_item, created = InventoryItem.objects.get_or_create(
@@ -290,6 +281,7 @@ def mark_request_received_worldclass(request, pk):
                     'item_code': item.item_code,
                     'description': item.description,
                     'drug': item.drug,
+                    'category': default_category,
                     'quantity_on_hand': 0,
                     'unit_cost': item.estimated_unit_price,
                     'unit_of_measure': item.unit_of_measure,
@@ -297,6 +289,12 @@ def mark_request_received_worldclass(request, pk):
                     'reorder_quantity': item.quantity,
                     'preferred_supplier': item.preferred_supplier
                 }
+            )
+            ensure_inventory_item_category(
+                inv_item,
+                store=target_store,
+                drug=item.drug,
+                is_lab_reagent=is_lab_reagent,
             )
             
             # Use accountability service to receive from supplier

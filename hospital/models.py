@@ -1964,12 +1964,44 @@ class LabTest(BaseModel):
     is_active = models.BooleanField(default=True)
     exclude_from_insurance = models.BooleanField(
         default=False,
-        help_text='When set, insurance patients must pay cash for this lab test at the cashier (corporate billing unchanged)',
+        help_text='When set, all insurance patients must pay cash for this lab test (corporate billing unchanged). Leave off to exclude selected companies only.',
     )
     insurance_exclusion_reason = models.CharField(
         max_length=255,
         blank=True,
         help_text='Reason shown to prescribers, lab and cashier when this test is insurance-excluded',
+    )
+    nhis_covered = models.BooleanField(
+        default=False,
+        help_text='When set, this lab test is on the NHIS panel and can be ordered for NHIS patients without cash pay',
+    )
+    STOCK_TRACKING_CHOICES = [
+        ('untracked', 'Not tracked'),
+        ('measurable', 'Measurable (kit / cassette)'),
+        ('immeasurable', 'Immeasurable (chemistry reagent)'),
+    ]
+    stock_tracking = models.CharField(
+        max_length=20,
+        choices=STOCK_TRACKING_CHOICES,
+        default='untracked',
+        db_index=True,
+        help_text='Measurable kits count pieces per box. Immeasurable chemistry reagents count remaining tests per kit.',
+    )
+    kit_name = models.CharField(max_length=200, blank=True)
+    qty_per_box = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Pieces in one box for measurable (kit) tests.',
+    )
+    tests_per_kit = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Number of tests one chemistry kit yields (immeasurable).',
+    )
+    reagent_volume_note = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Kit volume notes, e.g. R1: 4x35ml R2: 2x18ml.',
     )
     
     # Reagent requirements (many-to-many relationship)
@@ -1981,6 +2013,7 @@ class LabTest(BaseModel):
             models.Index(fields=['is_active', 'is_deleted']),
             models.Index(fields=['name']),
             models.Index(fields=['code']),
+            models.Index(fields=['is_active', 'nhis_covered'], name='hospital_lb_is_acti_nhis_idx'),
         ]
     
     def __str__(self):
@@ -2224,6 +2257,10 @@ class Drug(BaseModel):
         blank=True,
         help_text='Reason shown to pharmacy and cashier when this drug is insurance-excluded',
     )
+    nhis_covered = models.BooleanField(
+        default=False,
+        help_text='When set, this drug is on the NHIS formulary and can be prescribed for NHIS patients',
+    )
 
     class Meta:
         ordering = ['name']
@@ -2233,6 +2270,7 @@ class Drug(BaseModel):
             models.Index(fields=['category']),
             models.Index(fields=['name']),
             models.Index(fields=['is_active', 'category']),
+            models.Index(fields=['is_active', 'nhis_covered'], name='hospital_dr_is_acti_nhis_idx'),
         ]
     
     def __str__(self):
@@ -2271,6 +2309,13 @@ class PharmacyStock(BaseModel):
         blank=True,
         related_name='pharmacy_stock_batches',
         help_text='Vendor this batch was received from (optional; for accounts / procurement)',
+    )
+    supplier_invoice_number = models.CharField(
+        max_length=120,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Supplier invoice # for this batch — used on supplier accounts when recording payment',
     )
 
     class Meta:
@@ -2806,15 +2851,16 @@ class Invoice(BaseModel):
 
     def _sync_pharmacy_after_totals_saved(self, receipt=None, verified_by_user=None):
         """
-        When invoice is fully settled, move prescription dispensing and prescribe (walk-in)
-        sales out of pending. Safe to call after save(); does not call update_totals().
+        When pharmacy charges are settled (full invoice paid, or drug amount covered
+        while other services remain open), move prescription dispensing and prescribe
+        (walk-in) sales out of pending. Safe to call after save(); does not call
+        update_totals().
         """
         from decimal import Decimal as _D
 
         try:
-            bal = self.balance or _D('0')
             tot = self.total_amount or _D('0')
-            if bal > _D('0') or tot <= _D('0'):
+            if tot <= _D('0') and (self.balance or _D('0')) > _D('0'):
                 return
             if getattr(self, 'status', None) == 'cancelled' or getattr(self, 'is_deleted', False):
                 return
@@ -2822,14 +2868,25 @@ class Invoice(BaseModel):
                 link_pharmacy_dispensing_when_invoice_paid,
                 link_walkin_sales_when_invoice_paid,
             )
+            from hospital.utils_invoice_line import invoice_pharmacy_lines_are_settled
 
-            link_pharmacy_dispensing_when_invoice_paid(
-                self,
-                receipt=receipt,
-                verified_by_user=verified_by_user,
-                refresh_invoice=False,
-            )
-            link_walkin_sales_when_invoice_paid(self, receipt=receipt, refresh_invoice=False)
+            bal = self.balance or _D('0')
+            # Full settle: also sync walk-in sales. Pharmacy-only settle: Rx dispensing.
+            if bal <= _D('0') and tot > _D('0'):
+                link_pharmacy_dispensing_when_invoice_paid(
+                    self,
+                    receipt=receipt,
+                    verified_by_user=verified_by_user,
+                    refresh_invoice=False,
+                )
+                link_walkin_sales_when_invoice_paid(self, receipt=receipt, refresh_invoice=False)
+            elif invoice_pharmacy_lines_are_settled(self):
+                link_pharmacy_dispensing_when_invoice_paid(
+                    self,
+                    receipt=receipt,
+                    verified_by_user=verified_by_user,
+                    refresh_invoice=False,
+                )
         except Exception:
             import logging
 
@@ -3283,6 +3340,21 @@ class InvoiceLine(BaseModel):
         )
         result = exclusion_service.evaluate()
         if not result.is_excluded:
+            try:
+                from .utils_invoice_line import resolve_imaging_catalog_for_invoice_line
+                from .services.nhis_drug_formulary import nhis_uncovered_patient_pay_reason
+                catalog = resolve_imaging_catalog_for_invoice_line(self)
+                reason = nhis_uncovered_patient_pay_reason(payer=payer, imaging_catalog=catalog)
+                if reason:
+                    self.is_insurance_excluded = True
+                    self.patient_pay_cash = True
+                    self.insurance_exclusion_rule = None
+                    self.insurance_enforcement_action = 'patient_pay'
+                    self.insurance_exclusion_reason = reason
+                    return
+            except Exception:
+                pass
+        if not result.is_excluded:
             return
 
         self.insurance_exclusion_rule = result.rule
@@ -3536,5 +3608,11 @@ except ImportError:
 # Supplier payable sub-ledger (after PharmacyStock, Supplier, etc.)
 try:
     from . import models_supplier_payables  # noqa
+except ImportError:
+    pass
+
+# AI Clinical Copilot run records
+try:
+    from . import models_ai_clinical  # noqa
 except ImportError:
     pass

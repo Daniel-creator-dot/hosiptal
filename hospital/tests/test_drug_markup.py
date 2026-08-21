@@ -1,4 +1,4 @@
-"""Drug payer markup: insurance 30%, corporate 50%, cash none."""
+"""Drug payer markup: insurance 30%, corporate 50%, cash none. All billed prices include +10% Sustainability and Insurance."""
 import uuid
 from decimal import Decimal
 from types import SimpleNamespace
@@ -11,6 +11,7 @@ from hospital.utils_billing import (
     DRUG_INSURANCE_MARKUP,
     get_drug_markup_for_payer,
     get_drug_price_for_prescription,
+    with_service_sustainability,
 )
 
 
@@ -56,14 +57,14 @@ class DrugMarkupTests(TestCase):
 
     def test_cash_payer_no_markup(self):
         price = get_drug_price_for_prescription(self.drug, payer=self.cash_payer)
-        self.assertEqual(price, self.base_price)
+        self.assertEqual(price, with_service_sustainability(self.base_price))
 
     def test_no_payer_no_markup(self):
         price = get_drug_price_for_prescription(self.drug, payer=None)
-        self.assertEqual(price, self.base_price)
+        self.assertEqual(price, with_service_sustainability(self.base_price))
 
     def test_insurance_payers_30_percent_markup(self):
-        expected = self.base_price * (1 + DRUG_INSURANCE_MARKUP)
+        expected = with_service_sustainability(self.base_price * (1 + DRUG_INSURANCE_MARKUP))
         for payer in (self.nhis_payer, self.private_payer):
             with self.subTest(payer_type=payer.payer_type):
                 price = get_drug_price_for_prescription(self.drug, payer=payer)
@@ -74,6 +75,6 @@ class DrugMarkupTests(TestCase):
         self.assertEqual(price, expected)
 
     def test_corporate_payer_50_percent_markup(self):
-        expected = self.base_price * (1 + DRUG_CORPORATE_MARKUP)
+        expected = with_service_sustainability(self.base_price * (1 + DRUG_CORPORATE_MARKUP))
         price = get_drug_price_for_prescription(self.drug, payer=self.corporate_payer)
         self.assertEqual(price, expected)

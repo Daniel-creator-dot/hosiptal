@@ -101,12 +101,36 @@ def apply_screening_template(request, encounter_id, template_id):
     try:
         with transaction.atomic():
             if lab_tests:
+                from .consultation_status import require_diagnosis_for_lab_order
+                from .lab_order_diagnosis import encounter_diagnosis_summary
+                screening_dx = (request.POST.get('diagnosis_name') or '').strip() or f'Screening: {template.name}'
+                ok_dx, dx_msg = require_diagnosis_for_lab_order(
+                    encounter,
+                    doctor=doctor,
+                    diagnosis_name=screening_dx,
+                )
+                if not ok_dx:
+                    messages.error(request, dx_msg)
+                    return redirect('hospital:encounter_detail', pk=encounter_id)
+                from hospital.insurance_lab_limit import (
+                    annotate_insurance_extra_labs,
+                    extra_reason_and_diagnosis_from_request,
+                    require_insurance_lab_limit_from_request,
+                )
+                ok_lim, lim_msg = require_insurance_lab_limit_from_request(
+                    request, encounter, len(lab_tests)
+                )
+                if not ok_lim:
+                    messages.error(request, lim_msg)
+                    return redirect('hospital:encounter_detail', pk=encounter_id)
+                extra_reason, extra_diagnosis = extra_reason_and_diagnosis_from_request(request)
                 lab_order = Order.objects.create(
                     encounter=encounter,
                     order_type='lab',
                     status='pending',
                     priority='routine',
                     notes=f'Screening: {template.name}',
+                    clinical_indication=encounter_diagnosis_summary(encounter),
                     requested_by=doctor,
                     requested_at=timezone.now(),
                 )
@@ -121,6 +145,7 @@ def apply_screening_template(request, encounter_id, template_id):
                             test=test,
                             status='pending',
                         )
+                annotate_insurance_extra_labs(lab_order, encounter, extra_reason, extra_diagnosis)
 
             if imaging_items:
                 imaging_order = Order.objects.create(

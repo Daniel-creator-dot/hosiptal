@@ -37,10 +37,13 @@ def api_search_drugs_by_category(request):
     payer = _payer_from_encounter_id(request.GET.get('encounter_id', '').strip())
     
     # Build queryset
+    from hospital.services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
     drugs = Drug.objects.filter(
         is_active=True,
         is_deleted=False
     )
+    drugs = restrict_drug_queryset_for_payer(drugs, payer)
     
     # Filter by category if provided
     if category:
@@ -91,9 +94,16 @@ def api_search_drugs_by_category(request):
                 
                 drug_data['stock_available'] = int(stock_sum)
                 drug_data['has_stock'] = stock_sum > 0
+                drug_data['available'] = stock_sum > 0
+                if stock_sum <= 0:
+                    from .pharmacy_stock_utils import OUT_OF_STOCK_PRESCRIBE_MESSAGE
+                    drug_data['unavailable_reason'] = OUT_OF_STOCK_PRESCRIBE_MESSAGE
             except Exception:
                 drug_data['stock_available'] = 0
                 drug_data['has_stock'] = False
+                drug_data['available'] = False
+                from .pharmacy_stock_utils import OUT_OF_STOCK_PRESCRIBE_MESSAGE
+                drug_data['unavailable_reason'] = OUT_OF_STOCK_PRESCRIBE_MESSAGE
 
         drug_data.update(catalog_exclusion_info(item=drug, payer=payer))
         results.append(drug_data)

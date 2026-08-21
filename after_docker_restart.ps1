@@ -7,7 +7,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Change to project directory
-Set-Location D:\chm
+Set-Location C:\chm
 
 Write-Host "Step 1: Running fix and import script..." -ForegroundColor Yellow
 python fix_and_import_jerry.py

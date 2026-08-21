@@ -104,7 +104,15 @@ class VisitPayerSyncService:
                         pass
             
             # Step 2: Get or create appropriate payer
-            if payer:
+            explicit = (payer_type or '').strip().lower() if payer_type else ''
+            if explicit == 'cash':
+                # Honor an explicit cash switch (front desk / visit update). Do not keep
+                # leftover insurance enrollments — that is why insurance→cash appeared stuck.
+                from hospital.patient_payer import switch_patient_to_cash_payer
+
+                final_payer = switch_patient_to_cash_payer(patient)
+                determined_payer_type = 'cash'
+            elif payer:
                 # Use provided payer
                 final_payer = payer
             elif determined_payer_type == 'cash':
@@ -179,24 +187,26 @@ class VisitPayerSyncService:
                 )
                 determined_payer_type = 'cash'
 
-            # Never replace a persisted non-cash primary payer with Cash (stale sync / missing enrollment timing)
-            patient.refresh_from_db(fields=['primary_insurance_id'])
-            if patient.primary_insurance_id:
-                pi = patient.primary_insurance
-                if (
-                    pi
-                    and not getattr(pi, 'is_deleted', False)
-                    and getattr(pi, 'payer_type', None) != 'cash'
-                    and final_payer.payer_type == 'cash'
-                ):
-                    self.logger.warning(
-                        'Keeping patient %s primary payer %s (%s); sync would have set Cash',
-                        patient.mrn,
-                        pi.name,
-                        pi.payer_type,
-                    )
-                    final_payer = pi
-                    determined_payer_type = pi.payer_type
+            # Never auto-replace a persisted non-cash primary with inferred Cash
+            # (registration race / missing enrollment). Explicit payer_type='cash' is honored above.
+            if explicit != 'cash':
+                patient.refresh_from_db(fields=['primary_insurance_id'])
+                if patient.primary_insurance_id:
+                    pi = patient.primary_insurance
+                    if (
+                        pi
+                        and not getattr(pi, 'is_deleted', False)
+                        and getattr(pi, 'payer_type', None) != 'cash'
+                        and final_payer.payer_type == 'cash'
+                    ):
+                        self.logger.warning(
+                            'Keeping patient %s primary payer %s (%s); sync would have set Cash',
+                            patient.mrn,
+                            pi.name,
+                            pi.payer_type,
+                        )
+                        final_payer = pi
+                        determined_payer_type = pi.payer_type
             
             # Step 3: Update patient's primary insurance if needed
             if patient.primary_insurance != final_payer:

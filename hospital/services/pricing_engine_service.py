@@ -24,20 +24,36 @@ class PricingEngineService:
 
     @staticmethod
     def _apply_lab_imaging_markup(price, service_code, payer):
-        """Apply 30% markup for lab and imaging/scan when payer is insurance or corporate."""
+        """
+        Payer markup + 10% Sustainability and Insurance (GL 4115) for lab, scans, and ward fees.
+
+        Lab/imaging: insurance/corporate/NHIS get 30% on catalog, then × 1.10.
+        Ward/admission package: × 1.10 only (no extra payer markup).
+        Consultations and other services are left unchanged (they already use the GHS 8 fee).
+        """
         if not price or price <= 0:
             return price
-        if not payer or getattr(payer, 'payer_type', None) not in ('insurance', 'private', 'nhis', 'corporate'):
-            return price
-        if not service_code:
-            return price
-        code = (getattr(service_code, 'code', None) or '').strip().upper()
-        category = (getattr(service_code, 'category', None) or '').lower()
-        is_lab = code.startswith('LAB-') or 'laboratory' in category or 'lab' in category
-        is_imaging = code.startswith('IMG-') or 'imaging' in category or 'radiology' in category or 'scan' in category
-        if not (is_lab or is_imaging):
-            return price
-        return (price * (1 + LAB_IMAGING_INSURANCE_CORPORATE_MARKUP)).quantize(Decimal('0.01'))
+        from hospital.utils_billing import (
+            is_lab_or_imaging_service_code,
+            is_ward_fee_service_code,
+            with_service_sustainability,
+        )
+
+        price = Decimal(str(price))
+        if is_lab_or_imaging_service_code(service_code):
+            if payer and getattr(payer, 'payer_type', None) in (
+                'insurance',
+                'private',
+                'nhis',
+                'corporate',
+            ):
+                price = (price * (1 + LAB_IMAGING_INSURANCE_CORPORATE_MARKUP)).quantize(
+                    Decimal('0.01')
+                )
+            return with_service_sustainability(price)
+        if is_ward_fee_service_code(service_code):
+            return with_service_sustainability(price)
+        return price
     
     def get_service_price(self, service_code, patient, payer=None):
         """

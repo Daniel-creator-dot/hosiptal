@@ -594,6 +594,8 @@ def finalize_bills_list_analytics(qs, *, mode, grouped_by_patient, view_mode, sh
 
 def _invoice_as_bill_adapter(inv, deposit_available=None, channels_by_invoice=None):
     """Adapt Invoice to bill-like object for template display."""
+    from .utils_billing import patient_billing_member_id_display
+
     inv.update_totals()
     bill_type, type_label = _invoice_bill_type_display(inv)
     if inv.balance is not None:
@@ -607,6 +609,10 @@ def _invoice_as_bill_adapter(inv, deposit_available=None, channels_by_invoice=No
     if _invoice_is_cash_bill(inv):
         ch = (channels_by_invoice or {}).get(inv.id, '') if channels_by_invoice is not None else ''
         payer_display = ch.strip() if ch else 'Cash'
+    billing_member_id = patient_billing_member_id_display(
+        getattr(inv, 'patient', None),
+        getattr(inv, 'payer', None),
+    )
     obj = SimpleNamespace(
         bill_number=inv.invoice_number,
         patient=inv.patient,
@@ -622,6 +628,7 @@ def _invoice_as_bill_adapter(inv, deposit_available=None, channels_by_invoice=No
         deposit_available=dep,
         credit_overpay=credit_overpay,
         payer_display=payer_display,
+        billing_member_id=billing_member_id,
     )
     obj.get_status_display = lambda val=_STATUS_DISPLAY.get(inv.status, inv.status): val
     obj.get_bill_type_display = lambda: type_label
@@ -772,6 +779,16 @@ def bills_list(request):
             )
             paid_by_patient = _batch_invoice_amount_paid(invoices_all_payers, batch_pids)
             deposit_by_patient = _batch_patient_deposit_available(batch_pids)
+            from .utils_billing import batch_patient_billing_member_ids, patient_billing_member_id_display
+            patients_by_id = {
+                p.pk: p
+                for p in Patient.objects.filter(pk__in=batch_pids, is_deleted=False)
+            }
+            payer_obj_by_patient = {}
+            for inv in invoices_all_payers.filter(patient_id__in=batch_pids).select_related('payer'):
+                if inv.patient_id and inv.payer_id and inv.patient_id not in payer_obj_by_patient:
+                    payer_obj_by_patient[inv.patient_id] = inv.payer
+            member_ids = batch_patient_billing_member_ids(patients_by_id, payer_obj_by_patient)
 
             grouped_rows = []
             for patient_id, row in pending_groups:
@@ -782,7 +799,7 @@ def bills_list(request):
                 status = 'paid' if total_bal <= 0 else (
                     'partially_paid' if total_bal < total_amt else 'issued'
                 )
-                patient = Patient.objects.get(pk=patient_id)
+                patient = patients_by_id.get(patient_id) or Patient.objects.get(pk=patient_id)
                 names = payer_by_patient.get(patient_id) or set()
                 ch = channels_by_patient.get(patient_id, '')
                 payer_display = _compose_payer_column_for_patient(names, ch)
@@ -817,6 +834,10 @@ def bills_list(request):
                     credit_overpay=credit_overpay,
                     is_invoice_fallback=True,
                     is_grouped=True,
+                    billing_member_id=member_ids.get(patient_id)
+                    or patient_billing_member_id_display(
+                        patient, payer_obj_by_patient.get(patient_id)
+                    ),
                 )
                 obj.get_status_display = lambda val=_STATUS_DISPLAY.get(status, status): val
                 obj.get_bill_type_display = lambda: row_type_label
@@ -919,6 +940,7 @@ def bills_list(request):
         bills_page = paginator.get_page(page)
         inv_ids_page = [b.invoice_id for b in bills_page if getattr(b, 'invoice_id', None)]
         ch_by_inv_page = _batch_payment_channel_labels_by_invoice(inv_ids_page)
+        from .utils_billing import patient_billing_member_id_display
         for b in bills_page:
             setattr(b, 'amount_paid', None)
             setattr(b, 'deposit_available', None)
@@ -929,6 +951,14 @@ def bills_list(request):
                 setattr(b, 'payer_display', ch.strip() if ch else 'Cash')
             else:
                 setattr(b, 'payer_display', None)
+            setattr(
+                b,
+                'billing_member_id',
+                patient_billing_member_id_display(
+                    getattr(b, 'patient', None),
+                    getattr(inv, 'payer', None) if inv else None,
+                ),
+            )
 
     ba = finalize_bills_list_analytics(
         invoices if showing_invoices_fallback else bills,
@@ -1240,6 +1270,16 @@ def bills_by_normal_invoice(request):
             )
             paid_by_patient = _batch_invoice_amount_paid(invoices_all_payers, batch_pids)
             deposit_by_patient = _batch_patient_deposit_available(batch_pids)
+            from .utils_billing import batch_patient_billing_member_ids, patient_billing_member_id_display
+            patients_by_id = {
+                p.pk: p
+                for p in Patient.objects.filter(pk__in=batch_pids, is_deleted=False)
+            }
+            payer_obj_by_patient = {}
+            for inv in invoices_all_payers.filter(patient_id__in=batch_pids).select_related('payer'):
+                if inv.patient_id and inv.payer_id and inv.patient_id not in payer_obj_by_patient:
+                    payer_obj_by_patient[inv.patient_id] = inv.payer
+            member_ids = batch_patient_billing_member_ids(patients_by_id, payer_obj_by_patient)
 
             grouped_rows = []
             for patient_id, row in pending_groups:
@@ -1250,7 +1290,7 @@ def bills_by_normal_invoice(request):
                 status = 'paid' if total_bal <= 0 else (
                     'partially_paid' if total_bal < total_amt else 'issued'
                 )
-                patient = Patient.objects.get(pk=patient_id)
+                patient = patients_by_id.get(patient_id) or Patient.objects.get(pk=patient_id)
                 names = payer_by_patient.get(patient_id) or set()
                 ch = channels_by_patient.get(patient_id, '')
                 payer_display = _compose_payer_column_for_patient(names, ch)
@@ -1285,6 +1325,10 @@ def bills_by_normal_invoice(request):
                     credit_overpay=credit_overpay,
                     is_invoice_fallback=True,
                     is_grouped=True,
+                    billing_member_id=member_ids.get(patient_id)
+                    or patient_billing_member_id_display(
+                        patient, payer_obj_by_patient.get(patient_id)
+                    ),
                 )
                 obj.get_status_display = lambda val=_STATUS_DISPLAY.get(status, status): val
                 obj.get_bill_type_display = lambda: row_type_label
@@ -1434,6 +1478,7 @@ def bills_by_normal_invoice(request):
     bills_page = paginator.get_page(page)
     inv_ids_page = [b.invoice_id for b in bills_page if getattr(b, 'invoice_id', None)]
     ch_by_inv_page = _batch_payment_channel_labels_by_invoice(inv_ids_page)
+    from .utils_billing import patient_billing_member_id_display
     for b in bills_page:
         setattr(b, 'amount_paid', None)
         setattr(b, 'deposit_available', None)
@@ -1444,6 +1489,14 @@ def bills_by_normal_invoice(request):
             setattr(b, 'payer_display', ch.strip() if ch else 'Cash')
         else:
             setattr(b, 'payer_display', None)
+        setattr(
+            b,
+            'billing_member_id',
+            patient_billing_member_id_display(
+                getattr(b, 'patient', None),
+                getattr(inv, 'payer', None) if inv else None,
+            ),
+        )
 
     ba = finalize_bills_list_analytics(
         bills,
@@ -2008,17 +2061,25 @@ def company_bill_list(request):
     status_filter = request.GET.get('status', '')
     date_from = request.GET.get('date_from', '')
     date_to = request.GET.get('date_to', '')
-    
+
+    from .utils_billing import corporate_payer_ids_matching_company_search
+
     if company_filter:
+        matching_payer_ids = corporate_payer_ids_matching_company_search(company_filter)
         statements = statements.filter(
             Q(corporate_account__company_name__icontains=company_filter) |
-            Q(payer__name__icontains=company_filter)
+            Q(payer__name__icontains=company_filter) |
+            Q(payer_id__in=matching_payer_ids)
         )
         try:
-            corporate_receivables = corporate_receivables.filter(payer__name__icontains=company_filter)
+            corporate_receivables = corporate_receivables.filter(
+                Q(payer__name__icontains=company_filter) | Q(payer_id__in=matching_payer_ids)
+            )
         except Exception:
             pass  # Table doesn't exist, skip filtering
-        corporate_invoices = corporate_invoices.filter(payer__name__icontains=company_filter)
+        corporate_invoices = corporate_invoices.filter(
+            Q(payer__name__icontains=company_filter) | Q(payer_id__in=matching_payer_ids)
+        )
     
     if status_filter:
         statements = statements.filter(status=status_filter)
@@ -2128,37 +2189,188 @@ def company_bill_list(request):
     _enrich_company_bill_rows_with_patient_display(all_statements, corporate_invoices)
     _tag_company_bill_row_kinds(all_statements)
 
-    # Group by company (case-insensitive); parent row shows rolled-up totals, children expandable
+    # Umbrella grouping: ECG + Power Distribution, Anointed variants, etc. → one company row
+    from .utils_billing import (
+        consolidated_corporate_company_group,
+        all_corporate_payer_ids_for_consolidation_group_key,
+        corporate_payer_reference_lookup,
+        format_corporate_reference_label,
+    )
+
     by_key = defaultdict(list)
     key_display = {}
     for stmt in all_statements:
         label = _company_display_name_for_statement(stmt)
-        gk = label.strip().lower() or 'n/a'
+        gk, display = consolidated_corporate_company_group(label)
         if gk not in key_display:
-            key_display[gk] = label
+            key_display[gk] = display
         by_key[gk].append(stmt)
 
-    group_rows = []
-    for gk in sorted(by_key.keys(), key=lambda k: max(_company_bill_statement_sort_date(s) for s in by_key[k]), reverse=True):
-        children = sorted(by_key[gk], key=_company_bill_statement_sort_date, reverse=True)
-        g_tc = sum(_company_bill_decimal(getattr(s, 'total_charges', None)) for s in children)
-        g_tp = sum(_company_bill_decimal(getattr(s, 'total_payments', None)) for s in children)
-        g_cl = sum(_company_bill_decimal(getattr(s, 'closing_balance', None)) for s in children)
-        _ppid = None
+    # Prefetch invoice lines for expandable group detail (limited to payers on this page later)
+    all_child_payer_ids = set()
+    for children in by_key.values():
         for ch in children:
             pid = getattr(ch, 'payer_id', None)
             if pid is not None:
-                _ppid = pid
+                all_child_payer_ids.add(pid)
+    ref_lookup = corporate_payer_reference_lookup(list(all_child_payer_ids))
+
+    invoices_by_payer = defaultdict(list)
+    try:
+        # Load every nonzero invoice for payers on this list (no global cap — a cap
+        # dropped older umbrella invoices from the expanded group view).
+        for inv in corporate_invoices.filter(payer_id__in=all_child_payer_ids).select_related(
+            'patient', 'payer'
+        ).order_by('-issued_at'):
+            invoices_by_payer[inv.payer_id].append(inv)
+    except Exception:
+        pass
+
+    group_rows = []
+    for gk in sorted(
+        by_key.keys(),
+        key=lambda k: max(_company_bill_statement_sort_date(s) for s in by_key[k]),
+        reverse=True,
+    ):
+        children = sorted(by_key[gk], key=_company_bill_statement_sort_date, reverse=True)
+        rollup_payer_ids = {
+            getattr(ch, 'payer_id', None)
+            for ch in children
+            if getattr(ch, 'is_invoice_summary', False) and getattr(ch, 'payer_id', None)
+        }
+        # Header totals: include all invoice roll-ups; skip statement/receivable lines for the
+        # same payer already covered by an open-invoice roll-up (avoids double-count).
+        g_tc = Decimal('0.00')
+        g_tp = Decimal('0.00')
+        g_cl = Decimal('0.00')
+        suppressed_row_count = 0
+        suppressed_closing = Decimal('0.00')
+        count_open = 0
+        count_stmt = 0
+        count_recv = 0
+        count_other = 0
+        for ch in children:
+            is_rollup = getattr(ch, 'is_invoice_summary', False)
+            pid = getattr(ch, 'payer_id', None)
+            suppressed = (
+                not is_rollup
+                and pid is not None
+                and pid in rollup_payer_ids
+            )
+            if getattr(ch, 'is_invoice_summary', False):
+                count_open += 1
+            elif getattr(ch, 'is_receivable', False):
+                count_recv += 1
+            elif isinstance(ch, MonthlyStatement):
+                count_stmt += 1
+            else:
+                count_other += 1
+            if suppressed:
+                suppressed_row_count += 1
+                suppressed_closing += _company_bill_decimal(getattr(ch, 'closing_balance', None))
+                continue
+            g_tc += _company_bill_decimal(getattr(ch, 'total_charges', None))
+            g_tp += _company_bill_decimal(getattr(ch, 'total_payments', None))
+            g_cl += _company_bill_decimal(getattr(ch, 'closing_balance', None))
+
+        # Prefer canonical umbrella payer (matching display name), else any child payer
+        merged_ids = all_corporate_payer_ids_for_consolidation_group_key(gk)
+        _ppid = None
+        display_name = key_display[gk]
+        for mid in merged_ids:
+            try:
+                p = Payer.objects.filter(pk=mid).only('id', 'name').first()
+            except Exception:
+                p = None
+            if p and (p.name or '').strip().lower() == display_name.strip().lower():
+                _ppid = mid
                 break
+        if _ppid is None:
+            for ch in children:
+                pid = getattr(ch, 'payer_id', None)
+                if pid is not None:
+                    _ppid = pid
+                    break
+        if _ppid is None and merged_ids:
+            _ppid = merged_ids[0]
+
+        group_payer_ids = sorted(
+            {getattr(ch, 'payer_id', None) for ch in children if getattr(ch, 'payer_id', None)},
+            key=lambda u: str(u),
+        )
+
+        # Detail pack covers every alias payer under this umbrella
+        detail_q = ''
+        if _ppid is not None:
+            pack_params = {'pack_group': gk}
+            id_csv = ','.join(str(i) for i in (merged_ids or group_payer_ids) if i)
+            if id_csv:
+                pack_params['include_payers'] = id_csv
+            detail_q = '?' + urlencode(pack_params)
+
+        # Prefer consolidation-merged ids so expand shows every umbrella invoice
+        expand_payer_ids = list(merged_ids) if merged_ids else group_payer_ids
+        invoices_for_group = []
+        for pid in expand_payer_ids:
+            invoices_for_group.extend(invoices_by_payer.get(pid, []))
+        # Stable newest-first across merged payers
+        invoices_for_group.sort(
+            key=lambda inv: inv.issued_at or timezone.now(),
+            reverse=True,
+        )
+        first_rollup_payer_id = None
+        for ch in children:
+            if getattr(ch, 'is_invoice_summary', False) and getattr(ch, 'payer_id', None):
+                first_rollup_payer_id = ch.payer_id
+                break
+
+        # Enrich child rows with reference labels
+        for ch in children:
+            pid = getattr(ch, 'payer_id', None)
+            ref = ref_lookup.get(pid) if pid else None
+            setattr(ch, 'reference_label', format_corporate_reference_label(ref) if ref else '')
+            setattr(ch, 'company_code', (ref or {}).get('company_code', '') if ref else '')
+
+        # Group-level reference: first non-empty among children / merged payers
+        group_ref_label = ''
+        group_company_code = ''
+        for pid in ([_ppid] if _ppid else []) + list(merged_ids) + group_payer_ids:
+            if not pid:
+                continue
+            ref = ref_lookup.get(pid) or {}
+            if not group_company_code and ref.get('company_code'):
+                group_company_code = ref['company_code']
+            if not group_ref_label:
+                lab = format_corporate_reference_label(ref)
+                if lab:
+                    group_ref_label = lab
+            if group_company_code and group_ref_label:
+                break
+
         group_rows.append(
             {
-                'company_name': key_display[gk],
+                'company_name': display_name,
+                'group_key': gk,
                 'total_charges': g_tc,
                 'total_payments': g_tp,
                 'closing_balance': g_cl,
                 'row_count': len(children),
                 'children': children,
                 'primary_payer_id': _ppid,
+                'detail_pack_query': detail_q,
+                'rollup_payer_ids': rollup_payer_ids,
+                'group_has_invoice_rollup': bool(rollup_payer_ids),
+                'count_open_invoice_rollup': count_open,
+                'count_monthly_statement': count_stmt,
+                'count_receivable': count_recv,
+                'count_other': count_other,
+                'suppressed_row_count': suppressed_row_count,
+                'suppressed_closing_balance': suppressed_closing,
+                'invoices_for_group': invoices_for_group,
+                'first_rollup_payer_id': first_rollup_payer_id,
+                'merged_payer_count': max(len(merged_ids), len(group_payer_ids)),
+                'reference_label': group_ref_label,
+                'company_code': group_company_code,
             }
         )
 
@@ -2274,42 +2486,110 @@ def _group_invoice_lines_by_category(lines):
     return [(cat, list(grp)) for cat, grp in groupby(sorted_lines, key=invoice_line_display_category)]
 
 
-def _corporate_bill_pack_invoices_with_lines(payer, *, date_from=None, date_to=None):
+def _corporate_bill_pack_invoices_with_lines(payer=None, *, payers=None, date_from=None, date_to=None):
     """
-    Invoices and line items for a corporate payer (detail page and Excel/CSV exports).
+    Invoices and line items for one or more corporate payers (detail page and Excel/CSV exports).
     Returns (invoices_with_lines, total_charges, total_balance).
+
+    Does not call update_totals() per invoice (that was slow and could time out mid-pack,
+    so only part of the umbrella appeared on screen).
     """
+    from django.db.models import Prefetch
+
+    payer_list = list(payers) if payers else ([payer] if payer is not None else [])
+    payer_list = [p for p in payer_list if p is not None]
+    if not payer_list:
+        return [], Decimal('0.00'), Decimal('0.00')
+
+    line_qs = InvoiceLine.objects.filter(
+        is_deleted=False,
+        waived_at__isnull=True,
+    ).select_related('service_code')
+
     invoices = (
-        Invoice.all_objects.filter(payer=payer, is_deleted=False)
+        Invoice.all_objects.filter(payer__in=payer_list, is_deleted=False)
         .exclude(status='cancelled')
         .filter(_corporate_invoice_nonzero_q())
-        .select_related('patient', 'encounter')
-        .order_by('-issued_at')
+        .select_related('patient', 'encounter', 'payer')
+        .prefetch_related(Prefetch('lines', queryset=line_qs))
+        .order_by('-issued_at', '-created')
     )
     if date_from:
         invoices = invoices.filter(issued_at__date__gte=date_from)
     if date_to:
         invoices = invoices.filter(issued_at__date__lte=date_to)
+
     invoices_with_lines = []
     for inv in invoices:
-        inv.update_totals()
-        try:
-            from hospital.utils_invoice_line import heal_invoice_zero_line_prices
-            heal_invoice_zero_line_prices(inv)
-        except Exception:
-            pass
         _tot = inv.total_amount or Decimal('0')
         _bal = inv.balance if inv.balance is not None else _tot
         if _tot == 0 and _bal == 0:
             continue
-        lines = list(
-            inv.lines.filter(is_deleted=False).filter(waived_at__isnull=True).select_related('service_code')
-        )
+        lines = list(inv.lines.all())
         lines_by_category = _group_invoice_lines_by_category(lines)
-        invoices_with_lines.append({'invoice': inv, 'lines_by_category': lines_by_category, 'lines': lines})
+        invoices_with_lines.append(
+            {'invoice': inv, 'lines_by_category': lines_by_category, 'lines': lines}
+        )
     total_charges = sum((x['invoice'].total_amount or Decimal('0')) for x in invoices_with_lines)
     total_balance = sum((x['invoice'].balance or Decimal('0')) for x in invoices_with_lines)
     return invoices_with_lines, total_charges, total_balance
+
+
+def _resolve_corporate_pack_payers(request, payer_id):
+    """
+    Resolve primary payer plus any umbrella aliases for a corporate bill pack.
+
+    Always expands to the full consolidation umbrella for the primary payer so Detail /
+    Excel / CSV show every invoice that rolls into the Company Bills combined total —
+    even when pack_group/include_payers is missing from the URL.
+    """
+    from .utils_billing import (
+        consolidated_corporate_company_group,
+        all_corporate_payer_ids_for_consolidation_group_key,
+    )
+
+    primary = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
+    pack_group = (request.GET.get('pack_group') or '').strip().lower()
+    include_raw = (request.GET.get('include_payers') or '').strip()
+    primary_key, _ = consolidated_corporate_company_group(primary.name)
+
+    ids = {primary.pk}
+    ids |= set(all_corporate_payer_ids_for_consolidation_group_key(primary_key))
+
+    if pack_group:
+        ids |= set(all_corporate_payer_ids_for_consolidation_group_key(pack_group))
+    if include_raw:
+        for raw in include_raw.split(','):
+            raw = raw.strip()
+            if raw:
+                ids.add(raw)
+
+    # Canonical group key is always the primary payer's umbrella
+    pack_group = primary_key or pack_group
+
+    payers = list(
+        Payer.objects.filter(
+            pk__in=ids, payer_type='corporate', is_deleted=False
+        ).order_by('name')
+    )
+    if not payers:
+        payers = [primary]
+
+    include_csv = ','.join(str(p.pk) for p in payers) if len(payers) > 1 else ''
+    return primary, payers, pack_group, include_csv
+
+
+def _corporate_pack_query_string(pack_group='', include_payers='', date_from='', date_to=''):
+    parts = []
+    if pack_group:
+        parts.append(('pack_group', pack_group))
+    if include_payers:
+        parts.append(('include_payers', include_payers))
+    if date_from:
+        parts.append(('date_from', date_from))
+    if date_to:
+        parts.append(('date_to', date_to))
+    return ('?' + urlencode(parts)) if parts else ''
 
 
 def _invoice_line_category_sums_by_payer(date_from, date_to, payer_types):
@@ -2450,22 +2730,71 @@ def _statement_line_category_sums_by_corporate_account(date_from, date_to):
 @login_required
 @role_required('accountant', 'senior_account_officer')
 def corporate_bill_detail_by_payer(request, payer_id):
-    """Show individual corporate bill: all invoices for this payer with full line items (labs, scans, drugs, etc.)."""
-    payer = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
-    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(payer)
+    """Show corporate bill pack: invoices for this payer and umbrella aliases (ECG + Power Distribution, etc.)."""
+    from .utils_billing import consolidated_corporate_company_group
+
+    payer, payers_in_pack, pack_group, include_csv = _resolve_corporate_pack_payers(request, payer_id)
+    date_from = (request.GET.get('date_from') or '').strip()
+    date_to = (request.GET.get('date_to') or '').strip()
+    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(
+        payers=payers_in_pack,
+        date_from=date_from or None,
+        date_to=date_to or None,
+    )
     patient_invoice_groups = _corporate_invoices_grouped_by_patient(invoices_with_lines)
+    for pg in patient_invoice_groups:
+        pg['total_paid'] = (pg.get('total_charges') or Decimal('0')) - (pg.get('total_balance') or Decimal('0'))
+    total_paid = sum(
+        (
+            (x['invoice'].total_amount or Decimal('0')) - (x['invoice'].balance or Decimal('0'))
+            for x in invoices_with_lines
+        ),
+        Decimal('0'),
+    )
+    sum_client_billed = sum((g.get('total_charges') or Decimal('0') for g in patient_invoice_groups), Decimal('0'))
+    sum_client_balance = sum((g.get('total_balance') or Decimal('0') for g in patient_invoice_groups), Decimal('0'))
+    sum_client_paid = sum((g.get('total_paid') or Decimal('0') for g in patient_invoice_groups), Decimal('0'))
+    pack_reconciliation_ok = (
+        abs(sum_client_billed - total_charges) <= Decimal('0.05')
+        and abs(sum_client_balance - total_balance) <= Decimal('0.05')
+        and abs(sum_client_paid - total_paid) <= Decimal('0.05')
+    )
+    _, umbrella_display = consolidated_corporate_company_group(payer.name)
+    pack_is_multi = len(payers_in_pack) > 1
+    preserve_pack_query = _corporate_pack_query_string(pack_group=pack_group, include_payers=include_csv)
+    pack_export_query = _corporate_pack_query_string(
+        pack_group=pack_group,
+        include_payers=include_csv,
+        date_from=date_from,
+        date_to=date_to,
+    )
     context = {
         'payer': payer,
+        'payers_in_pack': payers_in_pack,
+        'pack_is_multi_payer': pack_is_multi,
+        'umbrella_company_name': umbrella_display if pack_is_multi else payer.name,
+        'pack_group_for_form': pack_group,
+        'include_payers_for_form': include_csv,
+        'preserve_pack_query': preserve_pack_query,
+        'pack_export_query': pack_export_query,
+        'filter_date_from': date_from,
+        'filter_date_to': date_to,
+        'pack_date_filter_active': bool(date_from or date_to),
         'invoices_with_lines': invoices_with_lines,
         'patient_invoice_groups': patient_invoice_groups,
         'total_charges': total_charges,
         'total_balance': total_balance,
+        'total_paid': total_paid,
         'invoice_count': len(invoices_with_lines),
+        'sum_client_billed': sum_client_billed,
+        'sum_client_paid': sum_client_paid,
+        'sum_client_balance': sum_client_balance,
+        'pack_reconciliation_ok': pack_reconciliation_ok,
     }
     return render(request, 'hospital/billing/corporate_bill_detail_by_payer.html', context)
 
 
-def _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance):
+def _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance, *, payers_in_pack=None):
     """Write one corporate bill pack (invoices + line items) onto an openpyxl worksheet."""
     from openpyxl.styles import Font, Alignment, PatternFill
 
@@ -2473,11 +2802,16 @@ def _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_c
     header_font = Font(bold=True, color='FFFFFF')
     header_fill = PatternFill(start_color='0D9488', end_color='0D9488', fill_type='solid')
     inv_header_fill = PatternFill(start_color='64748B', end_color='64748B', fill_type='solid')
+    pack_payers = list(payers_in_pack) if payers_in_pack else ([payer] if payer else [])
 
     row = 1
     ws.cell(row=row, column=1, value='Corporate bill pack').font = title_font
     row += 1
-    ws.cell(row=row, column=1, value=f'Payer: {payer.name}')
+    if len(pack_payers) > 1:
+        names = '; '.join((p.name or '') for p in pack_payers)
+        ws.cell(row=row, column=1, value=f'Combined payers ({len(pack_payers)}): {names}')
+    else:
+        ws.cell(row=row, column=1, value=f'Payer: {payer.name if payer else "—"}')
     row += 1
     ws.cell(row=row, column=1, value=f'Generated: {timezone.now().strftime("%Y-%m-%d %H:%M")}')
     row += 1
@@ -2500,12 +2834,14 @@ def _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_c
             pname = patient.full_name if patient else '—'
             mrn = getattr(patient, 'mrn', None) or '—'
             issued = inv.issued_at.strftime('%Y-%m-%d') if inv.issued_at else '—'
+            payer_label = getattr(getattr(inv, 'payer', None), 'name', None) or ''
+            payer_bit = f'  |  Payer {payer_label}' if payer_label and len(pack_payers) > 1 else ''
 
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
             c = ws.cell(
                 row=row,
                 column=1,
-                value=f'Invoice {inv.invoice_number}  |  {pname}  |  {issued}  |  MRN {mrn}',
+                value=f'Invoice {inv.invoice_number}  |  {pname}  |  {issued}  |  MRN {mrn}{payer_bit}',
             )
             c.font = Font(bold=True, color='FFFFFF')
             c.fill = inv_header_fill
@@ -2558,18 +2894,26 @@ def corporate_bill_pack_export_excel(request, payer_id):
             status=500,
         )
 
-    payer = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
-    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(payer)
+    payer, payers_in_pack, pack_group, include_csv = _resolve_corporate_pack_payers(request, payer_id)
+    date_from = (request.GET.get('date_from') or '').strip() or None
+    date_to = (request.GET.get('date_to') or '').strip() or None
+    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(
+        payers=payers_in_pack, date_from=date_from, date_to=date_to
+    )
 
     wb = Workbook()
     ws = wb.active
     ws.title = 'Corporate bill pack'
-    _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance)
+    _write_corporate_bill_pack_worksheet(
+        ws, payer, invoices_with_lines, total_charges, total_balance, payers_in_pack=payers_in_pack
+    )
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    base = slugify(payer.name)[:80] or 'corporate_bill_pack'
+    from .utils_billing import consolidated_corporate_company_group
+    _, display = consolidated_corporate_company_group(payer.name)
+    base = slugify(display if len(payers_in_pack) > 1 else payer.name)[:80] or 'corporate_bill_pack'
     fname = f'{base}_{timezone.now().strftime("%Y%m%d")}.xlsx'
     response = HttpResponse(
         buf.getvalue(),
@@ -2597,10 +2941,24 @@ def company_bills_list_export_excel(request):
     date_from = request.GET.get('date_from', '') or None
     date_to = request.GET.get('date_to', '') or None
 
+    from .utils_billing import (
+        consolidated_corporate_company_group,
+        corporate_payer_ids_matching_company_search,
+    )
+
     payers = Payer.objects.filter(payer_type='corporate', is_deleted=False)
     if company_filter:
-        payers = payers.filter(name__icontains=company_filter)
-    payers = payers.order_by('name')
+        matching_ids = corporate_payer_ids_matching_company_search(company_filter)
+        payers = payers.filter(Q(name__icontains=company_filter) | Q(pk__in=matching_ids))
+    payers = list(payers.order_by('name'))
+
+    # One sheet per umbrella company (ECG + Power Distribution together, etc.)
+    umbrella_payers = defaultdict(list)
+    umbrella_display = {}
+    for payer in payers:
+        gk, display = consolidated_corporate_company_group(payer.name)
+        umbrella_payers[gk].append(payer)
+        umbrella_display[gk] = display
 
     wb = Workbook()
     summary_ws = wb.active
@@ -2609,6 +2967,11 @@ def company_bills_list_export_excel(request):
     header_fill = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
     summary_ws.cell(row=1, column=1, value='Company bills export (filtered)').font = Font(bold=True, size=14)
     summary_ws.cell(row=2, column=1, value=f'Generated: {timezone.now().strftime("%Y-%m-%d %H:%M")}')
+    summary_ws.cell(
+        row=2,
+        column=3,
+        value='Same-name / alias payers are merged under one company umbrella',
+    )
     if date_from or date_to:
         summary_ws.cell(row=3, column=1, value=f'Invoice date range: {date_from or "…"} to {date_to or "…"}')
     row = 5
@@ -2624,9 +2987,11 @@ def company_bills_list_export_excel(request):
     grand_invoices = 0
     used_titles = set()
 
-    for payer in payers:
+    for gk in sorted(umbrella_payers.keys(), key=lambda k: umbrella_display.get(k, k).lower()):
+        pack_payers = umbrella_payers[gk]
+        display = umbrella_display[gk]
         invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(
-            payer, date_from=date_from, date_to=date_to
+            payers=pack_payers, date_from=date_from, date_to=date_to
         )
         if not invoices_with_lines:
             continue
@@ -2634,13 +2999,13 @@ def company_bills_list_export_excel(request):
         grand_balance += total_balance
         grand_invoices += len(invoices_with_lines)
 
-        summary_ws.cell(row=row, column=1, value=payer.name)
+        summary_ws.cell(row=row, column=1, value=display)
         summary_ws.cell(row=row, column=2, value=len(invoices_with_lines))
         summary_ws.cell(row=row, column=3, value=float(total_charges))
         summary_ws.cell(row=row, column=4, value=float(total_balance))
         row += 1
 
-        base_title = (slugify(payer.name)[:28] or 'company').replace('-', ' ').title()[:31]
+        base_title = (slugify(display)[:28] or 'company').replace('-', ' ').title()[:31]
         sheet_title = base_title
         n = 2
         while sheet_title in used_titles:
@@ -2649,7 +3014,14 @@ def company_bills_list_export_excel(request):
             n += 1
         used_titles.add(sheet_title)
         ws = wb.create_sheet(title=sheet_title)
-        _write_corporate_bill_pack_worksheet(ws, payer, invoices_with_lines, total_charges, total_balance)
+        _write_corporate_bill_pack_worksheet(
+            ws,
+            pack_payers[0],
+            invoices_with_lines,
+            total_charges,
+            total_balance,
+            payers_in_pack=pack_payers,
+        )
 
     row += 1
     summary_ws.cell(row=row, column=1, value='TOTAL').font = Font(bold=True)
@@ -2678,13 +3050,22 @@ def company_bills_list_export_excel(request):
 @role_required('accountant', 'senior_account_officer')
 def corporate_bill_pack_export_csv(request, payer_id):
     """Download corporate bill pack as CSV (UTF-8, Excel-friendly)."""
-    payer = get_object_or_404(Payer, pk=payer_id, payer_type='corporate', is_deleted=False)
-    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(payer)
+    from .utils_billing import consolidated_corporate_company_group
+
+    payer, payers_in_pack, pack_group, include_csv = _resolve_corporate_pack_payers(request, payer_id)
+    date_from = (request.GET.get('date_from') or '').strip() or None
+    date_to = (request.GET.get('date_to') or '').strip() or None
+    invoices_with_lines, total_charges, total_balance = _corporate_bill_pack_invoices_with_lines(
+        payers=payers_in_pack, date_from=date_from, date_to=date_to
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Corporate bill pack'])
-    writer.writerow(['Payer', payer.name])
+    if len(payers_in_pack) > 1:
+        writer.writerow(['Combined payers', '; '.join(p.name for p in payers_in_pack)])
+    else:
+        writer.writerow(['Payer', payer.name])
     writer.writerow(['Generated', timezone.now().strftime('%Y-%m-%d %H:%M')])
     writer.writerow(['Invoice count', len(invoices_with_lines)])
     writer.writerow(['Total charges (GHS)', str(total_charges)])
@@ -2695,7 +3076,10 @@ def corporate_bill_pack_export_csv(request, payer_id):
         writer.writerow(['No invoices in this pack.'])
     else:
         writer.writerow(
-            ['Invoice #', 'Patient', 'Invoice date', 'MRN', 'Category', 'Service', 'Qty', 'Unit (GHS)', 'Line total (GHS)']
+            [
+                'Invoice #', 'Patient', 'Invoice date', 'MRN', 'Payer',
+                'Category', 'Service', 'Qty', 'Unit (GHS)', 'Line total (GHS)',
+            ]
         )
         for item in invoices_with_lines:
             inv = item['invoice']
@@ -2704,6 +3088,7 @@ def corporate_bill_pack_export_csv(request, payer_id):
             mrn = getattr(patient, 'mrn', None) or '—'
             issued = inv.issued_at.strftime('%Y-%m-%d') if inv.issued_at else '—'
             inv_no = inv.invoice_number
+            inv_payer = getattr(getattr(inv, 'payer', None), 'name', None) or payer.name
             for category, cat_lines in item['lines_by_category']:
                 for line in cat_lines:
                     writer.writerow(
@@ -2712,6 +3097,7 @@ def corporate_bill_pack_export_csv(request, payer_id):
                             pname,
                             issued,
                             mrn,
+                            inv_payer,
                             category,
                             (line.description or '').replace('\r\n', ' ').replace('\n', ' '),
                             str(line.quantity or 0),
@@ -2719,13 +3105,18 @@ def corporate_bill_pack_export_csv(request, payer_id):
                             str(line.display_line_total or 0),
                         ]
                     )
-            writer.writerow([inv_no, pname, issued, mrn, '', 'Invoice total (GHS)', '', '', str(inv.total_amount or 0)])
-            writer.writerow([inv_no, pname, issued, mrn, '', 'Balance due (GHS)', '', '', str(inv.balance or 0)])
+            writer.writerow(
+                [inv_no, pname, issued, mrn, inv_payer, '', 'Invoice total (GHS)', '', '', str(inv.total_amount or 0)]
+            )
+            writer.writerow(
+                [inv_no, pname, issued, mrn, inv_payer, '', 'Balance due (GHS)', '', '', str(inv.balance or 0)]
+            )
             writer.writerow([])
-        writer.writerow(['', '', '', '', '', 'Pack total charges (GHS)', '', '', str(total_charges)])
-        writer.writerow(['', '', '', '', '', 'Pack balance due (GHS)', '', '', str(total_balance)])
+        writer.writerow(['', '', '', '', '', '', 'Pack total charges (GHS)', '', '', str(total_charges)])
+        writer.writerow(['', '', '', '', '', '', 'Pack balance due (GHS)', '', '', str(total_balance)])
 
-    base = slugify(payer.name)[:80] or 'corporate_bill_pack'
+    _, display = consolidated_corporate_company_group(payer.name)
+    base = slugify(display if len(payers_in_pack) > 1 else payer.name)[:80] or 'corporate_bill_pack'
     fname = f'{base}_{timezone.now().strftime("%Y%m%d")}.csv'
     response = HttpResponse('\ufeff' + output.getvalue(), content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="{fname}"'
@@ -2927,6 +3318,12 @@ def _insurance_visit_groups_for_payer(claim_items):
     """
     Under one payer: group claim items by visit (invoice / encounter), combine amounts.
     """
+    from .utils_billing import (
+        _normalize_stored_insurance_id,
+        claim_item_insurance_id_display,
+        patient_billing_member_id_display,
+    )
+
     deduped = _dedupe_insurance_claim_items_by_invoice_line(list(claim_items))
     buckets = defaultdict(list)
     for c in deduped:
@@ -2961,6 +3358,12 @@ def _insurance_visit_groups_for_payer(claim_items):
         status_label = dict(InsuranceClaimItem.CLAIM_STATUS_CHOICES).get(
             rolled_status, rolled_status.replace('_', ' ').title()
         )
+        insurance_id_display = claim_item_insurance_id_display(first) or patient_billing_member_id_display(
+            first.patient, first.payer
+        )
+        for claim in items:
+            snap = _normalize_stored_insurance_id(getattr(claim, 'patient_insurance_id', None))
+            claim.insurance_id_display = snap or insurance_id_display
         groups.append(
             {
                 'patient': first.patient,
@@ -2978,6 +3381,7 @@ def _insurance_visit_groups_for_payer(claim_items):
                 'claim_status': rolled_status,
                 'claim_status_label': status_label,
                 'claims': items,
+                'insurance_id_display': insurance_id_display,
             }
         )
     groups.sort(

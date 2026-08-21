@@ -496,9 +496,18 @@ Prescription Assistant — Chatbot overlay for doctors. Chat-style UI with typin
         if (data.suggested_drugs && data.suggested_drugs.length) {
             html += '<div class="pharmacist-drugs">';
             data.suggested_drugs.forEach(function(d) {
-                html += '<div class="chatbot-drug-card" data-drug-id="' + escapeHtml(d.id) + '" data-name="' + escapeHtml(d.name) + '" data-strength="' + escapeHtml(d.strength || '') + '" data-form="' + escapeHtml(d.form || '') + '">';
-                html += '<div><div class="pharmacist-drug-name">' + escapeHtml(d.name) + '</div><div class="pharmacist-drug-meta">' + escapeHtml((d.strength || '') + ' · ' + (d.form || '')) + '</div></div>';
-                html += '<button type="button" class="btn-add-rx-overlay">Add to Rx</button></div>';
+                var inStock = d.has_stock !== false && d.available !== false && (d.stock_available == null || d.stock_available > 0);
+                html += '<div class="chatbot-drug-card" data-drug-id="' + escapeHtml(d.id) + '" data-name="' + escapeHtml(d.name) + '" data-strength="' + escapeHtml(d.strength || '') + '" data-form="' + escapeHtml(d.form || '') + '" data-in-stock="' + (inStock ? '1' : '0') + '">';
+                html += '<div><div class="pharmacist-drug-name">' + escapeHtml(d.name) + '</div><div class="pharmacist-drug-meta">' + escapeHtml((d.strength || '') + ' · ' + (d.form || '')) + '</div>';
+                if (!inStock) {
+                    html += '<div class="small text-danger mt-1">Out of stock — see pharmacist for alternative</div>';
+                }
+                html += '</div>';
+                if (inStock) {
+                    html += '<button type="button" class="btn-add-rx-overlay">Add to Rx</button></div>';
+                } else {
+                    html += '<button type="button" class="btn-add-rx-overlay" disabled>See pharmacist</button></div>';
+                }
             });
             html += '</div>';
         }
@@ -512,8 +521,13 @@ Prescription Assistant — Chatbot overlay for doctors. Chat-style UI with typin
         messagesEl.appendChild(div);
         div.querySelectorAll('.btn-add-rx-overlay').forEach(function(btn) {
             btn.addEventListener('click', function() {
+                if (this.disabled) return;
                 var card = this.closest('.chatbot-drug-card');
                 if (!card) return;
+                if (card.getAttribute('data-in-stock') === '0') {
+                    alert('Out of stock — see pharmacist for alternative');
+                    return;
+                }
                 var drugId = card.getAttribute('data-drug-id');
                 var name = card.getAttribute('data-name');
                 var strength = card.getAttribute('data-strength') || '';

@@ -742,47 +742,76 @@ class ProcurementRequest(BaseModel):
     
     def mark_as_received(self, staff):
         """Mark items as received and update inventory (+ PharmacyStock for drugs)."""
-        if self.status not in ['ordered', 'payment_processed']:
-            raise ValueError("Request must be ordered or payment processed before receiving")
-        
-        # Update inventory for each item
+        if self.status not in ['ordered', 'payment_processed', 'accounts_approved']:
+            raise ValueError("Request must be approved, ordered, or payment processed before receiving")
+        if not staff:
+            raise ValueError("Staff profile is required to receive inventory")
+
+        from hospital.services.inventory_accountability_service import InventoryAccountabilityService
+        from hospital.services.inventory_account_mapping import (
+            ensure_inventory_item_category,
+            get_default_inventory_category,
+            procurement_item_is_lab_reagent,
+            resolve_procurement_target_store,
+        )
+
         for item in self.items.filter(is_deleted=False):
-            # Get or create inventory item
-            lookup_kwargs = {
-                'store': self.requested_by_store,
-                'item_code': item.item_code if item.item_code else item.item_name,
-                'is_deleted': False
-            }
-            
-            inventory_item = InventoryItem.objects.filter(**lookup_kwargs).first()
-            
-            if inventory_item:
-                # Update quantity and cost (weighted average)
-                total_qty = inventory_item.quantity_on_hand + item.quantity
-                total_cost = (inventory_item.quantity_on_hand * inventory_item.unit_cost) + (item.quantity * item.estimated_unit_price)
-                inventory_item.quantity_on_hand = total_qty
-                inventory_item.unit_cost = total_cost / total_qty if total_qty > 0 else inventory_item.unit_cost
-                inventory_item.save()
-            else:
-                # Create new inventory item
-                InventoryItem.objects.create(
-                    store=self.requested_by_store,
-                    item_name=item.item_name,
-                    item_code=item.item_code if item.item_code else item.item_name,
-                    drug=item.drug,
-                    quantity_on_hand=item.quantity,
-                    unit_cost=item.estimated_unit_price,
-                    unit_of_measure=item.unit_of_measure,
-                    preferred_supplier=item.preferred_supplier,
-                )
+            remaining = max(0, int(item.quantity or 0) - int(item.received_quantity or 0))
+            if remaining <= 0:
+                continue
+
+            target_store = resolve_procurement_target_store(self, item, staff=staff)
+            if not target_store:
+                raise ValueError(f'Could not resolve target store for {item.item_name}')
+
+            is_lab_reagent = procurement_item_is_lab_reagent(item)
+            default_category = get_default_inventory_category(
+                store=target_store,
+                drug=item.drug,
+                is_lab_reagent=is_lab_reagent,
+            )
+            item_code = item.item_code if item.item_code else item.item_name
+
+            inventory_item, _created = InventoryItem.objects.get_or_create(
+                store=target_store,
+                item_code=item_code,
+                is_deleted=False,
+                defaults={
+                    'item_name': item.item_name,
+                    'description': item.description,
+                    'drug': item.drug,
+                    'category': default_category,
+                    'quantity_on_hand': 0,
+                    'unit_cost': item.estimated_unit_price,
+                    'unit_of_measure': item.unit_of_measure,
+                    'preferred_supplier': item.preferred_supplier,
+                },
+            )
+            ensure_inventory_item_category(
+                inventory_item,
+                store=target_store,
+                drug=item.drug,
+                is_lab_reagent=is_lab_reagent,
+            )
+
+            InventoryAccountabilityService.receive_from_supplier(
+                inventory_item=inventory_item,
+                quantity=remaining,
+                unit_cost=item.estimated_unit_price,
+                staff=staff,
+                reference_number=self.request_number,
+                supplier_name=item.preferred_supplier.name if item.preferred_supplier else '',
+                notes=f'Received via procurement request {self.request_number}',
+            )
 
             if item.drug_id:
                 try:
                     from hospital.pharmacy_stock_utils import add_or_increase_pharmacy_stock
+
                     user = getattr(getattr(staff, 'user', None), 'pk', None) and staff.user
                     add_or_increase_pharmacy_stock(
                         item.drug,
-                        item.quantity,
+                        remaining,
                         unit_cost=item.estimated_unit_price,
                         supplier=item.preferred_supplier,
                         created_by=user,
@@ -791,9 +820,9 @@ class ProcurementRequest(BaseModel):
                 except Exception:
                     pass
 
-            item.received_quantity = item.quantity
+            item.received_quantity = (item.received_quantity or 0) + remaining
             item.save(update_fields=['received_quantity', 'modified'])
-        
+
         self.status = 'received'
         self.save()
 

@@ -13,7 +13,7 @@ from django.db.models import Sum, Count, Q
 from django.core.paginator import Paginator
 from decimal import Decimal
 
-from .utils_billing import get_drug_price_for_prescription
+from .utils_billing import billed_lab_or_scan_catalog_price, get_drug_price_for_prescription
 from .services.auto_billing_service import AutoBillingService
 from .models_accounting import PaymentReceipt, Transaction
 from .models_workflow import CashierSession, PaymentRequest, Bill
@@ -101,6 +101,61 @@ def build_cashier_session_payment_method_summary(session):
         merged[m]['total'] += dep.deposit_amount or Decimal('0')
         merged[m]['deposit_rows'].append(dep)
 
+    # Net deposit withdrawals against deposits this cashier received (any processor).
+    # Reduce the *deposit intake* method so MoMo deposit + cash payout does not leave MoMo inflated.
+    from django.db.models import Q
+
+    dep_method_by_number = {
+        d.deposit_number: (d.payment_method or 'cash')
+        for d in dep_qs
+        if d.deposit_number
+    }
+    deposit_numbers = list(dep_method_by_number.keys())
+    counted_refund_ids = set()
+    if deposit_numbers:
+        dep_ref_q = Q()
+        for num in deposit_numbers:
+            dep_ref_q |= Q(reference_number__startswith=f'REFUND-{num}')
+        dep_withdraw_qs = (
+            Transaction.objects.filter(
+                transaction_type__in=('refund_issued', 'refund'),
+                is_deleted=False,
+                transaction_date__lte=session_end,
+            )
+            .filter(dep_ref_q)
+            .select_related('patient')
+            .order_by('transaction_date')
+        )
+        for txn in dep_withdraw_qs:
+            counted_refund_ids.add(txn.pk)
+            ref = txn.reference_number or ''
+            m = txn.payment_method or 'cash'
+            for num, dep_m in dep_method_by_number.items():
+                if ref.startswith(f'REFUND-{num}'):
+                    m = dep_m
+                    break
+            merged[m]['total'] -= txn.amount or Decimal('0')
+            merged[m].setdefault('refund_rows', []).append(txn)
+
+    # Credit refunds (and non-linked legacy refunds) this cashier processed
+    refund_qs = (
+        Transaction.objects.filter(
+            processed_by=session.cashier,
+            transaction_date__gte=session_start,
+            transaction_date__lte=session_end,
+            transaction_type__in=('refund_issued', 'refund'),
+            is_deleted=False,
+        )
+        .exclude(pk__in=counted_refund_ids)
+        .exclude(reference_number__startswith='REFUND-')
+        .select_related('patient')
+        .order_by('transaction_date')
+    )
+    for txn in refund_qs:
+        m = txn.payment_method or 'cash'
+        merged[m]['total'] -= txn.amount or Decimal('0')
+        merged[m].setdefault('refund_rows', []).append(txn)
+
     def _txn_detail_dict(txn):
         patient_name = 'N/A'
         if txn.patient:
@@ -187,11 +242,35 @@ def build_cashier_session_payment_method_summary(session):
             'row_kind': 'deposit_intake',
         }
 
+    def _refund_detail_dict(txn):
+        patient_name = 'N/A'
+        if txn.patient:
+            patient_name = txn.patient.full_name or f'{txn.patient.first_name} {txn.patient.last_name}'.strip()
+        return {
+            'sort_date': txn.transaction_date,
+            'transaction_date': txn.transaction_date,
+            'transaction_number': txn.transaction_number,
+            'patient_name': patient_name,
+            'services': [
+                {
+                    'description': (txn.notes or 'Refund / deposit withdrawal')[:200],
+                    'quantity': 1,
+                    'unit_price': float(-(txn.amount or 0)),
+                    'line_total': float(-(txn.amount or 0)),
+                }
+            ],
+            'amount': -(txn.amount or Decimal('0')),
+            'reference_number': (txn.reference_number or '')[:100],
+            'invoice_number': '',
+            'row_kind': 'refund_outflow',
+        }
+
     summary = []
     for method in sorted(merged.keys(), key=lambda k: -merged[k]['total']):
         bucket = merged[method]
         details = [_txn_detail_dict(t) for t in bucket['txn_rows']]
         details.extend(_deposit_detail_dict(d) for d in bucket['deposit_rows'])
+        details.extend(_refund_detail_dict(t) for t in bucket.get('refund_rows') or [])
         details.sort(key=lambda x: x['sort_date'])
         for d in details:
             d.pop('sort_date', None)
@@ -573,9 +652,33 @@ def cashier_dashboard(request):
     todays_receipts_qs = PaymentReceipt.objects.filter(
         receipt_date__date=receipts_date,
         is_deleted=False
-    )
-    today_total = todays_receipts_qs.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+    ).exclude(payment_method='deposit')  # deposit-to-bill is not new till cash
+    today_receipts_total = todays_receipts_qs.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
     today_count = todays_receipts_qs.count()
+
+    # Net patient deposit intake for the day (deposits in − withdrawals out)
+    from .models_patient_deposits import PatientDeposit
+    from .models_accounting import Transaction as AccTxn
+    today_deposit_in = (
+        PatientDeposit.objects.filter(
+            deposit_date__date=receipts_date,
+            is_deleted=False,
+        )
+        .exclude(status='cancelled')
+        .aggregate(total=Sum('deposit_amount'))['total']
+        or Decimal('0.00')
+    )
+    today_refunds_out = (
+        AccTxn.objects.filter(
+            transaction_date__date=receipts_date,
+            transaction_type__in=('refund_issued', 'refund'),
+            is_deleted=False,
+        ).aggregate(total=Sum('amount'))['total']
+        or Decimal('0.00')
+    )
+    today_total = today_receipts_total + today_deposit_in - today_refunds_out
+    if today_total < 0:
+        today_total = Decimal('0.00')
     
     # Pending payment requests headed to cashier
     pending_payments_qs = PaymentRequest.objects.filter(
@@ -684,11 +787,12 @@ def cashier_dashboard(request):
     pending_consultation = []
     try:
         from datetime import timedelta
-        from django.db.models.functions import TruncDate
 
         from .models import Encounter
         from .utils_billing import (
+            GENERAL_CONSULTATION_CASH,
             bulk_consultation_lines_for_encounters,
+            consultation_settled_encounter_ids,
             get_consultation_price_for_encounter,
             local_datetime_bounds_for_date,
         )
@@ -701,26 +805,6 @@ def cashier_dashboard(request):
                 self.encounter = encounter
                 self.balance = amount
                 self.consultation_display = label
-
-        consultation_paid_ids = set(
-            PaymentReceipt.objects.filter(
-                is_deleted=False,
-                service_type='consultation',
-                invoice__encounter_id__isnull=False,
-            ).values_list('invoice__encounter_id', flat=True).distinct()
-        )
-        old_consultation_rows = PaymentReceipt.objects.filter(
-            is_deleted=False,
-            service_type='consultation',
-            invoice__encounter_id__isnull=True,
-        ).annotate(rd=TruncDate('receipt_date')).values_list('patient_id', 'rd')
-        max_receipt_by_patient = {}
-        for pid, rd in old_consultation_rows:
-            if pid is None:
-                continue
-            prev = max_receipt_by_patient.get(pid)
-            if prev is None or rd > prev:
-                max_receipt_by_patient[pid] = rd
 
         # Match views_centralized_cashier.cashier_all_pending_bills: consultation rows use status=active only
         enc_qs = Encounter.objects.filter(
@@ -752,6 +836,7 @@ def cashier_dashboard(request):
         enc_qs = enc_qs[:CASHIER_DASHBOARD_CAP]
 
         enc_list = list(enc_qs)
+        consultation_paid_ids = consultation_settled_encounter_ids([e.id for e in enc_list])
         consultation_line_by_enc = bulk_consultation_lines_for_encounters([e.id for e in enc_list])
 
         for e in enc_list:
@@ -763,16 +848,8 @@ def cashier_dashboard(request):
             else:
                 cp = get_consultation_price_for_encounter(e)
             if cp == Decimal('30.00'):
-                cp = Decimal('150.00')
+                cp = GENERAL_CONSULTATION_CASH
             if cp is None or cp <= 0:
-                continue
-            _sa = e.started_at
-            if _sa and getattr(_sa, 'tzinfo', None):
-                started_date = timezone.localtime(_sa).date()
-            else:
-                started_date = _sa.date() if _sa else None
-            mr = max_receipt_by_patient.get(e.patient_id)
-            if mr is not None and started_date and mr >= started_date:
                 continue
             enc_type_lower = (e.encounter_type or '').lower()
             label = (
@@ -1042,16 +1119,14 @@ def close_session(request, session_id):
         notes_parts.append("")
         
         # Session Summary
-        bill_svc = session.total_payments - session.deposit_received_total
-        if bill_svc < 0:
-            bill_svc = Decimal('0.00')
+        bill_svc = session.bill_payments_total
         notes_parts.append("SESSION SUMMARY:")
         notes_parts.append("-" * 80)
         notes_parts.append(f"  Opening Cash:                GH¢{session.opening_cash:,.2f}")
         notes_parts.append(f"  Bill & service payments:     GH¢{bill_svc:,.2f}")
-        notes_parts.append(f"  Deposit received:            GH¢{session.deposit_received_total:,.2f}")
-        notes_parts.append(f"  Total payments received:     GH¢{session.total_payments:,.2f}")
-        notes_parts.append(f"  Total Refunds Issued:        GH¢{session.total_refunds:,.2f}")
+        notes_parts.append(f"  Deposit received (gross):    GH¢{session.deposit_received_total:,.2f}")
+        notes_parts.append(f"  Refunds / withdrawals:      GH¢{session.total_refunds:,.2f}")
+        notes_parts.append(f"  Net total (after refunds):   GH¢{session.total_payments:,.2f}")
         notes_parts.append(f"  Expected Cash:               GH¢{session.expected_cash:,.2f}")
         notes_parts.append(f"  Total Transactions:          {session.total_transactions:,}")
         notes_parts.append("")
@@ -1928,6 +2003,9 @@ def waive_invoice_line(request):
             line.invoice.status = 'paid'
             line.invoice.save(update_fields=['status'])
 
+        # Keep prescribe sale line in sync so ensure_sale_invoice cannot restore the charge.
+        _sync_waive_invoice_line_to_prescribe_sale_item(line, request.user, waiver_reason)
+
         # If this is a drug/prescription line: cancel PharmacyDispensing so quantity returns to stock.
         # Waived drugs were never paid for - stock should only be affected by paid dispensations.
         if line.prescription_id:
@@ -1950,6 +2028,37 @@ def waive_invoice_line(request):
     return redirect('hospital:cashier_invoice_detail', pk=line.invoice_id)
 
 
+def _sync_waive_invoice_line_to_prescribe_sale_item(line, user, reason):
+    """When an invoice line is waived, waive the matching walk-in sale item and recalc sale totals."""
+    from .services.pharmacy_invoice_payment_link import (
+        WALKIN_SALE_REF_RE,
+        _invoice_line_matches_prescribe_sale_item,
+    )
+
+    m = WALKIN_SALE_REF_RE.search(line.description or '')
+    if not m:
+        return
+    sn = (m.group(1) or '').strip()
+    if not sn:
+        return
+    sale = WalkInPharmacySale.objects.filter(sale_number=sn, is_deleted=False).first()
+    if not sale:
+        return
+    now = timezone.now()
+    reason_text = (reason or 'Waived from total bill')[:255]
+    for item in sale.items.filter(is_deleted=False, waived_at__isnull=True).select_related('drug', 'sale'):
+        if not _invoice_line_matches_prescribe_sale_item(line, item):
+            continue
+        item.waived_at = now
+        item.waived_by = user
+        item.waiver_reason = reason_text
+        item.save()
+    try:
+        sale.calculate_totals()
+    except Exception:
+        logger.exception('calculate_totals after waive sync for sale %s', sn)
+
+
 @login_required
 @invoice_from_bill_remover_required
 def remove_invoice_from_bill(request):
@@ -1961,6 +2070,8 @@ def remove_invoice_from_bill(request):
     - Invoices with cash/MoMo/card or combined (non-deposit) payments cannot be
       removed here; use accounting adjustment/refund instead.
     - Remaining open invoices/lines on the total bill then add up to the new amount due.
+    - Prescribe/walk-in sales linked to the invoice are cancelled so they are not
+      recreated on the next Total Bill load.
     """
     if request.method != 'POST':
         messages.error(request, 'Invalid request.')
@@ -2004,6 +2115,9 @@ def remove_invoice_from_bill(request):
         inv.status = 'cancelled'
         inv.save(update_fields=['status', 'modified'])
         inv.update_totals()
+        # Prescribe/walk-in invoices: also cancel the linked sale so Total Bill
+        # does not recreate the charge via ensure_sale_invoice on reload.
+        _cancel_prescribe_sales_for_removed_invoice(inv, request.user)
 
     if reversed_amt > Decimal('0.00'):
         messages.success(
@@ -2027,6 +2141,40 @@ def remove_invoice_from_bill(request):
     if invoice.patient_id:
         return redirect('hospital:cashier_patient_total_bill', patient_id=invoice.patient_id)
     return redirect('hospital:cashier_patient_bills')
+
+
+def _cancel_prescribe_sales_for_removed_invoice(invoice, user):
+    """
+    When an invoice is removed from the bill, cancel any Prescribe (walk-in) sales
+    referenced in its line descriptions so ensure_sale_invoice cannot recreate them.
+    """
+    from .models_pharmacy_walkin import WalkInPharmacySale
+    from .services.pharmacy_invoice_payment_link import WALKIN_SALE_REF_RE
+
+    sale_numbers = set()
+    for desc in invoice.lines.filter(is_deleted=False).values_list('description', flat=True):
+        for m in WALKIN_SALE_REF_RE.finditer(desc or ''):
+            sn = (m.group(1) or '').strip()
+            if sn:
+                sale_numbers.add(sn)
+    if not sale_numbers:
+        return
+    now = timezone.now()
+    reason = 'Removed from total bill'
+    qs = WalkInPharmacySale.objects.filter(
+        sale_number__in=sale_numbers,
+        is_deleted=False,
+        waived_at__isnull=True,
+    )
+    if getattr(invoice, 'patient_id', None):
+        qs = qs.filter(patient_id=invoice.patient_id)
+    for sale in qs:
+        sale.waived_at = now
+        sale.waived_by = user
+        sale.waiver_reason = reason
+        sale.payment_status = 'cancelled'
+        sale.amount_due = Decimal('0.00')
+        sale.save()
 
 
 @login_required
@@ -2142,6 +2290,10 @@ def waive_prescribe_sale_line(request):
             except Exception as e:
                 logger.warning('waive_invoice_lines_for_prescribe_sale_item: %s', e)
                 n_inv = 0
+            try:
+                item.sale.calculate_totals()
+            except Exception:
+                logger.exception('calculate_totals after waive line for sale %s', item.sale_id)
             extra_inv = f' {n_inv} invoice line(s) updated.' if n_inv else ''
             messages.success(
                 request,
@@ -2286,7 +2438,12 @@ def customer_debt(request):
                     unpaid_labs.append(lab)
             
             lab_debt = sum(
-                (lab.test.price or Decimal('0.00')) for lab in unpaid_labs
+                billed_lab_or_scan_catalog_price(
+                    getattr(lab.test, 'price', None),
+                    getattr(patient, 'primary_insurance', None),
+                    kind='lab',
+                )
+                for lab in unpaid_labs
             )
             
             # Pharmacy debt (prescriptions not paid/dispensed)

@@ -28,11 +28,22 @@ def encounter_diagnosis_summary(encounter) -> str:
                 lines.append(code)
 
         if not lines:
-            for p in ProblemList.objects.filter(
-                patient_id=encounter.patient_id,
-                status='active',
-                is_deleted=False,
-            ).order_by('-created')[:10]:
+            # Prefer problems recorded on this visit, then other active patient problems
+            problem_qs = list(
+                ProblemList.objects.filter(
+                    encounter=encounter,
+                    is_deleted=False,
+                ).order_by('-created')[:10]
+            )
+            if not problem_qs:
+                problem_qs = list(
+                    ProblemList.objects.filter(
+                        patient_id=encounter.patient_id,
+                        status='active',
+                        is_deleted=False,
+                    ).order_by('-created')[:10]
+                )
+            for p in problem_qs:
                 code = (p.icd10_code or '').strip()
                 prob = (p.problem or '').strip()
                 if prob and code:
@@ -62,6 +73,22 @@ def encounter_diagnosis_summary(encounter) -> str:
             seen.add(key)
             unique.append(line)
     return '; '.join(unique)
+
+
+def persist_lab_order_diagnosis(order, encounter=None) -> str:
+    """Copy visit diagnosis onto the lab order so laboratory always sees it."""
+    if not order:
+        return ''
+    stored = (getattr(order, 'clinical_indication', None) or '').strip()
+    if stored:
+        return stored
+    enc = encounter or getattr(order, 'encounter', None)
+    text = encounter_diagnosis_summary(enc)
+    if text:
+        order.clinical_indication = text
+        if getattr(order, 'pk', None):
+            order.save(update_fields=['clinical_indication'])
+    return text
 
 
 def order_lab_diagnosis_display(order) -> str:

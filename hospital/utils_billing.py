@@ -19,13 +19,229 @@ logger = logging.getLogger(__name__)
 CORPORATE_PACK_VISIT_CHARGE_SYNC_FROM = date(2026, 3, 10)
 
 # General (non-specialist) OPD consultation — flat rates; only specialist uses doctor/tier pricing.
-GENERAL_CONSULTATION_CASH = Decimal('150.00')
-GENERAL_CONSULTATION_CORPORATE = Decimal('160.00')
+# Cash 158 = 150 consultation revenue + 8 sustainability; corporate 168 = 160 + 8.
+SUSTAINABILITY_FEE = Decimal('8.00')
+CONSULTATION_REVENUE_CASH = Decimal('150.00')
+CONSULTATION_REVENUE_CORPORATE = Decimal('160.00')
+GENERAL_CONSULTATION_CASH = CONSULTATION_REVENUE_CASH + SUSTAINABILITY_FEE  # 158.00
+GENERAL_CONSULTATION_CORPORATE = CONSULTATION_REVENUE_CORPORATE + SUSTAINABILITY_FEE  # 168.00
+
+# Specialist / gynae consultation: listed fee includes +8 sustainability (GL 4115).
+SPECIALIST_CONSULTATION_REVENUE = Decimal('300.00')
+SPECIALIST_CONSULTATION = SPECIALIST_CONSULTATION_REVENUE + SUSTAINABILITY_FEE  # 308.00
+GYNAE_SPECIAL_REVENUE = Decimal('260.00')
+GYNAE_SPECIAL = GYNAE_SPECIAL_REVENUE + SUSTAINABILITY_FEE  # 268.00
+
+# Antenatal (MAT-ANC): 235 consultation revenue + 8 sustainability.
+ANC_VISIT_REVENUE = Decimal('235.00')
+ANC_VISIT = ANC_VISIT_REVENUE + SUSTAINABILITY_FEE  # 243.00
+
+# Physiotherapy: subsequent session is a consultation-like fee → +8 sustainability.
+PHYSIO_FIRST = Decimal('250.00')
+PHYSIO_SUBSEQUENT_REVENUE = Decimal('150.00')
+PHYSIO_SUBSEQUENT = PHYSIO_SUBSEQUENT_REVENUE + SUSTAINABILITY_FEE  # 158.00
+
+# 10% increment on drugs, lab, scans, and ward fees → GL 4115 Sustainability and Insurance.
+# Billed = base × 1.10; the extra 10% of the original (billed × 10/110) posts to 4115.
+SERVICE_SUSTAINABILITY_RATE = Decimal('0.10')
+SERVICE_SUSTAINABILITY_FACTOR = Decimal('1') + SERVICE_SUSTAINABILITY_RATE  # 1.10
+# Do not peel 10/110 from invoices / IRE rows billed before this increment went live.
+SERVICE_SUSTAINABILITY_GL_FROM = date(2026, 8, 18)
+
+
+def with_service_sustainability(amount):
+    """Add 10% Sustainability and Insurance to a drug / lab / scan / ward tariff."""
+    if amount is None:
+        return None
+    amt = Decimal(str(amount))
+    if amt <= 0:
+        return amt.quantize(Decimal('0.01')) if amt else amt
+    return (amt * SERVICE_SUSTAINABILITY_FACTOR).quantize(Decimal('0.01'))
+
+
+def service_sustainability_portion(billed_amount):
+    """
+    Extra 10% embedded in a billed drug/lab/scan/ward amount (billed × 10/110).
+    Example: billed 110 → 10.00 to 4115, 100.00 to the service revenue account.
+    """
+    billed = Decimal(str(billed_amount or 0))
+    if billed <= 0:
+        return Decimal('0.00')
+    return (billed * SERVICE_SUSTAINABILITY_RATE / SERVICE_SUSTAINABILITY_FACTOR).quantize(
+        Decimal('0.01')
+    )
+
+
+def invoice_uses_service_sustainability(invoice):
+    """
+    True when this invoice (or a payment with no invoice) should peel 10/110 of
+    drug/lab/scan/ward amounts to GL 4115.
+
+    New bills and unpaid lines refreshed today are included; untouched historical
+    invoices keep their original revenue split.
+    """
+    if invoice is None:
+        return True
+    cutoff = SERVICE_SUSTAINABILITY_GL_FROM
+
+    def _on_or_after(dt):
+        if not dt:
+            return False
+        try:
+            if isinstance(dt, datetime):
+                if timezone.is_aware(dt):
+                    d = timezone.localtime(dt).date()
+                else:
+                    d = dt.date()
+            elif isinstance(dt, date):
+                d = dt
+            else:
+                return False
+        except Exception:
+            return False
+        return d >= cutoff
+
+    for attr in ('issued_at', 'created', 'modified'):
+        if _on_or_after(getattr(invoice, attr, None)):
+            return True
+    try:
+        for line in invoice.lines.filter(is_deleted=False).only('created', 'modified'):
+            if _on_or_after(getattr(line, 'modified', None)) or _on_or_after(
+                getattr(line, 'created', None)
+            ):
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def is_lab_or_imaging_service_code(service_code):
+    """True for laboratory and scan/imaging ServiceCode rows."""
+    if not service_code:
+        return False
+    code = (getattr(service_code, 'code', None) or '').strip().upper()
+    category = (getattr(service_code, 'category', None) or '').strip().lower()
+    if code.startswith(('LAB-', 'LABTEST-')):
+        return True
+    if code.startswith(('IMG-', 'IMGCAT-', 'RAD-')) or (code.startswith('IMG') and len(code) >= 5):
+        return True
+    if code.startswith('LAB') and len(code) >= 6 and not code.startswith('LABEL'):
+        return True
+    if any(k in category for k in ('laboratory', 'lab', 'imaging', 'radiology', 'scan')):
+        if 'label' in category:
+            return False
+        return True
+    return False
+
+
+_WARD_FEE_CODES = frozenset({
+    'DETENTION',
+    'ADM-ACCOM',
+    'ADM-DOCTOR-CARE',
+    'ADM-NURSING-CARE',
+    'ADM-CONSUMABLES',
+    'ADM-FEE',
+})
+
+
+def is_ward_fee_service_code(service_code):
+    """True for detention, accommodation, and other ward/admission package fees."""
+    if not service_code:
+        return False
+    code = (getattr(service_code, 'code', None) or '').strip().upper()
+    category = (getattr(service_code, 'category', None) or '').strip().lower()
+    if code in _WARD_FEE_CODES:
+        return True
+    if code.startswith(('WARD-', 'BED-', 'ADM-')):
+        return True
+    if any(k in category for k in ('accommodation', 'ward', 'detention')):
+        return True
+    if 'admission' in category and 'consultation' not in category:
+        return True
+    return False
+
+
+def billed_lab_or_scan_catalog_price(catalog_price, payer=None, *, kind='lab'):
+    """
+    Catalog list price plus insurance/corporate lab-scan markup (if any) and the
+    10% Sustainability and Insurance increment.
+    """
+    from types import SimpleNamespace
+
+    price = Decimal(str(catalog_price or 0))
+    if kind == 'imaging':
+        stub = SimpleNamespace(code='IMG-CATALOG', category='imaging')
+    else:
+        stub = SimpleNamespace(code='LAB-CATALOG', category='laboratory')
+    billed = pricing_engine._apply_lab_imaging_markup(price, stub, payer)
+    if billed is None:
+        return Decimal('0.00')
+    return Decimal(str(billed))
+
+
+def with_sustainability_fee(amount):
+    """Add the GHS 8 Sustainability and Insurance fee to a base consultation tariff."""
+    if amount is None:
+        return None
+    amt = Decimal(str(amount))
+    if amt <= 0:
+        return amt
+    return (amt + SUSTAINABILITY_FEE).quantize(Decimal('0.01'))
+
+
+# Labels/codes that are visit consultation fees (get +8). Not theatre/surgery packages.
+_CONSULTATION_LIKE_INCLUDE = (
+    'consult',
+    'consultation',
+    'dietician',
+    'dietitian',
+    'psychiatr',
+    'psychiatric',
+    'psychiatry',
+)
+_CONSULTATION_LIKE_EXCLUDE = (
+    'surgical fee',
+    'theatre',
+    'anesthesia',
+    'anaesthesia',
+    'nursing care',
+    'oxygen',
+    'plaster',
+    'denture',
+    'lens',
+    'vip bed',
+    'bed fee',
+)
+
+
+def is_consultation_like_charge(code='', description='', label=''):
+    """
+    True for consultation / specialist visit fees that include GHS 8 sustainability.
+    Covers dietician, surgical consult, psychiatric, etc. Excludes theatre/surgery packages.
+    """
+    blob = f'{code or ""} {description or ""} {label or ""}'.casefold()
+    if not blob.strip():
+        return False
+    code_u = (code or '').strip().upper()
+    if code_u in (
+        'CON001', 'CON002', 'MAT-ANC', 'S00023', 'CONS-GEN', 'PHYSIO', 'PHYSIO-SUB',
+    ):
+        return True
+    # Visit fee (not "surgical fee major")
+    if 'surgical consult' in blob:
+        return True
+    if any(x in blob for x in _CONSULTATION_LIKE_EXCLUDE):
+        return False
+    return any(x in blob for x in _CONSULTATION_LIKE_INCLUDE)
+
+
+# No consultation fee for review / return visit within this many calendar days of a prior visit.
+CONSULTATION_FREE_RETURN_DAYS = 6
 
 
 def is_gp_general_medicine_department(department):
     """
-    True when staff belongs to General Medicine / GP OPD — use flat CON001 (150 cash / 160 corporate),
+    True when staff belongs to General Medicine / GP OPD — use flat CON001 (158 cash / 168 corporate),
     not CON002 specialist baseline (300). Department titles that include the word 'specialist'
     (for example, 'General Medicine & Specialist OPD') still count as GP here.
     """
@@ -45,13 +261,20 @@ def is_gp_general_medicine_department(department):
 def should_use_gp_flat_consultation_fee(encounter, doctor_staff):
     """
     When True, bill CON001 / flat GP rates. Excludes ER, gynae, and antenatal (those use other paths).
+    Named specialists (psychiatry, physio, etc.) keep their own tariff even if seated in GP OPD.
     """
     if not encounter or not doctor_staff:
         return False
+    try:
+        from .utils_doctor_pricing import DoctorPricingService
+        if DoctorPricingService.is_specialist_doctor(doctor_staff):
+            return False
+    except Exception:
+        pass
     if not is_gp_general_medicine_department(getattr(doctor_staff, 'department', None)):
         return False
     et = (encounter.encounter_type or '').lower()
-    if et in ('er', 'emergency', 'gynae'):
+    if et in ('er', 'emergency', 'gynae', 'specialist'):
         return False
     if 'antenatal' in et:
         return False
@@ -178,10 +401,15 @@ _CORPORATE_COMPANY_ALIAS_RAW = (
             'ECG / Power Distribution Service',
             'ECG/Power Distribution Service',
             'ECG Power Distribution Service',
+            'Power Distribution Service',
+            'Power Distribution',
             'ECG*electricity company of ghana',
             'ECG*Electricity Company of Ghana',
             'Electricity Company of Ghana (ECG)',
             'ECG',
+            'ECG Pensioneers',
+            'ECG Pensioners',
+            'ECG Pensioners Association',
         ),
     ),
     (
@@ -307,6 +535,25 @@ _CORPORATE_COMPANY_ALIAS_RAW = (
             'Prime Care',
         ),
     ),
+    (
+        'Ghana Communication and Technology University',
+        (
+            'Ghana Communication and Technology University',
+            'Ghana Communication & Technology University',
+            'Ghana Communication Technology University',
+            'Ghana Communication TechnologyUniversity',
+            'Ghana Comm. Tech. University',
+            'Ghana Comm Tech University',
+            'Ghana Comm. Technology University',
+            'Ghana Technology University',
+            'Ghana Tech University',
+            'Ghana Technology University (GTU)',
+            'Ghana Communication Technology University (GCTU)',
+            'Ghana Communication and Technology University (GCTU)',
+            'GCTU',
+            'GTU',
+        ),
+    ),
 )
 
 
@@ -366,6 +613,13 @@ def consolidated_corporate_company_group(name):
         return 'ghana commercial bank', 'Ghana Commercial Bank'
     if k == 'ecg' or re.match(r'^ecg([\s\-/]|$)', k):
         return 'electricity company of ghana', 'Electricity Company of Ghana'
+    if 'power distribution' in k and ('ecg' in k or 'electricity' in k or k in (
+        'power distribution',
+        'power distribution service',
+    )):
+        return 'electricity company of ghana', 'Electricity Company of Ghana'
+    if k in ('power distribution', 'power distribution service'):
+        return 'electricity company of ghana', 'Electricity Company of Ghana'
     if re.match(r'^anointed electric', k):
         return 'anointed electrical company', 'Anointed Electrical Company'
     for token in ('assougyaman', 'assuogyaman', 'asuogyaman', 'assougyman'):
@@ -377,6 +631,30 @@ def consolidated_corporate_company_group(name):
         or re.match(r'^primecare medical', k)
     ):
         return 'primecare medical center', 'Primecare Medical Center'
+    # GCTU / former GTU — old and new official names share one corporate umbrella
+    _gctu_display = 'Ghana Communication and Technology University'
+    _gctu_key = 'ghana communication and technology university'
+    _gctu_flat = re.sub(r'\s+and\s+', ' ', k)
+    if k in ('gctu', 'gtu') or _gctu_flat in (
+        'ghana communication technology university',
+        'ghana technology university',
+        'ghana tech university',
+        'ghana comm. tech. university',
+        'ghana comm tech university',
+        'ghana communication technologyuniversity',
+        'ghana comm. technology university',
+    ):
+        return _gctu_key, _gctu_display
+    if (
+        k.startswith('ghana')
+        and 'university' in k
+        and (
+            ('communication' in k and 'tech' in k)
+            or k.startswith('ghana technology university')
+            or k.startswith('ghana tech university')
+        )
+    ):
+        return _gctu_key, _gctu_display
     return k, raw
 
 
@@ -394,6 +672,27 @@ def all_corporate_payer_ids_for_consolidation_group_key(group_key):
         if k == gk:
             found.add(p.pk)
     return sorted(found, key=lambda u: str(u))
+
+
+def corporate_payer_ids_matching_company_search(company_filter):
+    """
+    Payer IDs whose raw name OR consolidated umbrella display matches the company search text.
+    Searching \"ECG\" or \"Electricity\" returns all alias payers under Electricity Company of Ghana.
+    """
+    q = (company_filter or '').strip().lower()
+    if not q:
+        return []
+    found = set()
+    for p in Payer.objects.filter(payer_type='corporate', is_deleted=False).only('id', 'name'):
+        name = (p.name or '').strip()
+        gk, display = consolidated_corporate_company_group(name)
+        if (
+            q in name.lower()
+            or q in (display or '').lower()
+            or q in (gk or '')
+        ):
+            found.add(p.pk)
+    return list(found)
 
 
 def local_datetime_bounds_for_date(d):
@@ -455,7 +754,7 @@ def try_link_invoice_to_encounter(invoice, encounter):
 # Consultation-like invoice lines (OPD + antenatal + legacy/import codes). Cashier and payer sync must use the same set.
 CONSULTATION_LINE_SERVICE_CODES = ('CON001', 'CON002', 'MAT-ANC', 'S00023', 'CONS-GEN')
 
-# Lines billed at general OPD policy (150/160 cash/corp when encounter is general OPD); includes legacy S00023.
+# Lines billed at general OPD policy (158/168 cash/corp when encounter is general OPD); includes legacy S00023.
 GENERAL_OPD_LINE_SERVICE_CODES = frozenset(
     c.upper() for c in ('CON001', 'CONS-GEN', 'CONSULTATION_GENERAL', 'S00023')
 )
@@ -514,21 +813,10 @@ def consultation_line_display_amount(line):
 
 def get_mat_anc_consultation_price(patient, payer):
     """
-    Antenatal MAT-ANC price for display or payer change. Matches add_consultation_charge (default 235 GHC).
+    Antenatal MAT-ANC is a fixed tariff: 235 + 8 sustainability = 243.
+    Catalog / engine rows of 235 (legacy) or other amounts are not used.
     """
-    try:
-        antenatal_code = ServiceCode.objects.filter(code='MAT-ANC', is_active=True).first()
-        if antenatal_code:
-            p = pricing_engine.get_service_price(
-                service_code=antenatal_code,
-                patient=patient,
-                payer=payer,
-            )
-            if p and p > 0:
-                return p
-    except Exception:
-        pass
-    return Decimal('235.00')
+    return ANC_VISIT
 
 
 def _active_patient_insurances_for_badges(patient, limit=5):
@@ -734,6 +1022,7 @@ def patient_non_cash_billing_context(patient, encounter=None):
 def patient_billing_member_id_display(patient, payer=None):
     """
     Single ID string for bills/claims tables: insurance member/policy ID, or corporate employee ID.
+    Checks patient profile fields, then active PatientInsurance enrollment.
     """
     if not patient:
         return ''
@@ -745,6 +1034,26 @@ def patient_billing_member_id_display(patient, payer=None):
         or (getattr(patient, 'insurance_member_id', None) or '').strip()
         or (getattr(patient, 'insurance_policy_number', None) or '').strip()
     )
+    if not ins_id:
+        try:
+            from .models_insurance_companies import PatientInsurance
+
+            pi = (
+                PatientInsurance.objects.filter(
+                    patient=patient, status='active', is_deleted=False
+                )
+                .order_by('-is_primary', '-created')
+                .only('member_id', 'policy_number', 'group_number')
+                .first()
+            )
+            if pi:
+                ins_id = (
+                    (pi.member_id or '').strip()
+                    or (pi.policy_number or '').strip()
+                    or (pi.group_number or '').strip()
+                )
+        except Exception:
+            pass
     if payer_type == 'corporate':
         try:
             emp = _corporate_employee_for_billing_ref(patient)
@@ -766,6 +1075,29 @@ def patient_billing_member_id_display(patient, payer=None):
         except Exception:
             pass
     return ''
+
+
+def _normalize_stored_insurance_id(raw):
+    """Strip placeholder snapshots like NOT_PROVIDED so UI can fall back to live patient data."""
+    s = (raw or '').strip()
+    if not s or s.upper() in ('NOT_PROVIDED', 'N/A', 'NA', 'NONE', '-', 'NULL'):
+        return ''
+    return s
+
+
+def claim_item_insurance_id_display(claim_item):
+    """
+    Member/policy ID for claims officer UI: prefer claim snapshot, else live patient/enrollment.
+    """
+    if not claim_item:
+        return ''
+    snap = _normalize_stored_insurance_id(getattr(claim_item, 'patient_insurance_id', None))
+    if snap:
+        return snap
+    return patient_billing_member_id_display(
+        getattr(claim_item, 'patient', None),
+        getattr(claim_item, 'payer', None),
+    )
 
 
 def patient_bill_payer_details(patient, payer=None):
@@ -1077,12 +1409,12 @@ def patient_payer_billing_ref_parts(patient, encounter=None):
     if grp:
         parts.append(f'Group: {grp}')
 
-    # Insurance plan (from PatientInsurance enrollment, if set)
+    # Insurance plan + member/policy from PatientInsurance enrollment
     try:
         from .models_insurance_companies import PatientInsurance
 
         scope_ids = _patient_billing_scope_ids(patient)
-        pi = (
+        pi_enroll = (
             PatientInsurance.objects.filter(
                 patient_id__in=scope_ids,
                 status='active',
@@ -1092,9 +1424,33 @@ def patient_payer_billing_ref_parts(patient, encounter=None):
             .order_by('-is_primary', '-effective_date', '-created')
             .first()
         )
-        plan_name = (getattr(getattr(pi, 'insurance_plan', None), 'plan_name', None) or '').strip()
-        if plan_name:
-            parts.append(f'Plan: {plan_name}')
+        if pi_enroll:
+            plan_name = (getattr(getattr(pi_enroll, 'insurance_plan', None), 'plan_name', None) or '').strip()
+            if plan_name:
+                parts.append(f'Plan: {plan_name}')
+            enroll_member = (getattr(pi_enroll, 'member_id', None) or '').strip()
+            enroll_policy = (getattr(pi_enroll, 'policy_number', None) or '').strip()
+            enroll_group = (getattr(pi_enroll, 'group_number', None) or '').strip()
+            if enroll_member and enroll_member not in (oid, mid) and f'Member: {enroll_member}' not in parts:
+                parts.append(f'Member: {enroll_member}')
+            if enroll_policy and enroll_policy not in (oid, mid, enroll_member, pol2):
+                if f'Policy#: {enroll_policy}' not in parts and f'Policy/ID: {enroll_policy}' not in parts:
+                    parts.append(f'Policy#: {enroll_policy}')
+            if enroll_group and enroll_group != grp and f'Group: {enroll_group}' not in parts:
+                parts.append(f'Group: {enroll_group}')
+    except Exception:
+        pass
+
+    # Prefer consolidated billing ref (insurance member / corporate employee ID)
+    try:
+        snap = patient_bill_payer_details(patient)
+        snap_num = (snap.get('member_or_policy_number') or '').strip()
+        if snap_num:
+            label = 'Emp ID' if snap.get('is_corporate') else 'Policy/Member'
+            tagged = f'{label}: {snap_num}'
+            already = any(snap_num in p for p in parts)
+            if not already:
+                parts.insert(0, tagged)
     except Exception:
         pass
 
@@ -1105,7 +1461,8 @@ def patient_payer_billing_ref_parts(patient, encounter=None):
             if emp:
                 eid = (getattr(emp, 'employee_id', None) or '').strip()
                 if eid and eid != mid and eid != oid:
-                    parts.append(f'Emp ID: {eid}')
+                    if not any(eid in p for p in parts):
+                        parts.append(f'Emp ID: {eid}')
         except Exception:
             pass
 
@@ -1379,14 +1736,14 @@ def get_patient_payer_info(patient, encounter=None):
 def _ensure_consultation_pricing(service_code):
     """
     Ensure the standard pricing tiers for consultations are enforced:
-    - General Consultation: Cash = 150, Corporate = 160, Insurance from PricingCategory (seed_general_prices)
-    - Specialist Consultation: Cash = 300, Corporate/Insurance from PricingCategory
+    - General Consultation: Cash = 158, Corporate = 168 (incl. GHS 8 sustainability)
+    - Specialist Consultation: Cash/Corp/Ins = 308 (300 + 8 sustainability)
     """
     today = timezone.now().date()
     is_general = (service_code.code or '').strip().upper() in ('CON001', 'CONS-GEN', 'CONSULTATION_GENERAL')
-    desired_cash = GENERAL_CONSULTATION_CASH if is_general else Decimal('300.00')
-    desired_corporate = GENERAL_CONSULTATION_CORPORATE if is_general else Decimal('300.00')
-    desired_insurance = GENERAL_CONSULTATION_CASH if is_general else Decimal('300.00')
+    desired_cash = GENERAL_CONSULTATION_CASH if is_general else SPECIALIST_CONSULTATION
+    desired_corporate = GENERAL_CONSULTATION_CORPORATE if is_general else SPECIALIST_CONSULTATION
+    desired_insurance = GENERAL_CONSULTATION_CASH if is_general else SPECIALIST_CONSULTATION
     
     pricing, created = ServicePricing.objects.get_or_create(
         service_code=service_code,
@@ -1448,6 +1805,7 @@ def get_drug_price_for_prescription(drug, payer=None):
 
     Set Drug.unit_price in the Drug master for stable selling prices; inventory unit_cost
     is used only for costing/valuation and as fallback when no selling price is set.
+    All billed drug prices then include a 10% Sustainability and Insurance increment (GL 4115).
     """
     drug_price = Decimal(str(getattr(drug, 'unit_price', 0) or 0))
     if drug_price and drug_price > 0:
@@ -1476,7 +1834,7 @@ def get_drug_price_for_prescription(drug, payer=None):
         markup = get_drug_markup_for_payer(payer)
         if markup > 0:
             base = base * (1 + markup)
-    return base
+    return with_service_sustainability(base)
 
 
 def _record_locum_consultation_service(encounter, service_amount, consultation_type, invoice_line):
@@ -1534,12 +1892,10 @@ def _record_locum_consultation_service(encounter, service_amount, consultation_t
     return locum_service
 
 
-def is_review_visit(encounter):
+def is_explicit_review_visit(encounter):
     """
-    True when this encounter is a follow-up/review visit — no consultation / visit fee.
-
-    Uses explicit markers from front desk (patient_quick_visit / frontdesk_visit) so random
-    words like "review" in clinical notes do not zero billing.
+    True when front desk / notes mark this encounter as follow-up/review.
+    Uses explicit markers so random words like "review" in clinical notes do not zero billing.
     """
     if not encounter:
         return False
@@ -1554,6 +1910,329 @@ def is_review_visit(encounter):
     if complaint.startswith('follow up:'):
         return True
     return False
+
+
+def _encounter_local_date(encounter):
+    started = getattr(encounter, 'started_at', None)
+    if not started:
+        return timezone.localdate()
+    if getattr(started, 'tzinfo', None):
+        return timezone.localtime(started).date()
+    if hasattr(started, 'date'):
+        return started.date()
+    return started
+
+
+def patient_has_prior_visit_within_days(patient_or_id, within_days=CONSULTATION_FREE_RETURN_DAYS, *, before_dt=None, exclude_encounter_id=None):
+    """
+    True if the patient had another non-cancelled encounter within `within_days` calendar days
+    before `before_dt` (default: now). Used for free return consultation window.
+    """
+    if not patient_or_id:
+        return False
+    patient_id = getattr(patient_or_id, 'pk', None) or getattr(patient_or_id, 'id', None) or patient_or_id
+    before_dt = before_dt or timezone.now()
+    if getattr(before_dt, 'tzinfo', None):
+        before_date = timezone.localtime(before_dt).date()
+    elif hasattr(before_dt, 'date'):
+        before_date = before_dt.date()
+    else:
+        before_date = before_dt
+    window_start = before_date - timedelta(days=int(within_days))
+    qs = Encounter.objects.filter(
+        patient_id=patient_id,
+        is_deleted=False,
+        started_at__date__gte=window_start,
+        started_at__lt=before_dt,
+    ).exclude(status='cancelled').exclude(
+        chief_complaint__iexact='New patient registration'
+    )
+    if exclude_encounter_id:
+        qs = qs.exclude(pk=exclude_encounter_id)
+    return qs.exists()
+
+
+def is_within_consultation_free_return_window(encounter):
+    """True when this visit falls within CONSULTATION_FREE_RETURN_DAYS of a prior visit."""
+    if not encounter or not getattr(encounter, 'patient_id', None):
+        return False
+    started = getattr(encounter, 'started_at', None) or timezone.now()
+    return patient_has_prior_visit_within_days(
+        encounter.patient_id,
+        CONSULTATION_FREE_RETURN_DAYS,
+        before_dt=started,
+        exclude_encounter_id=getattr(encounter, 'pk', None),
+    )
+
+
+def visit_should_auto_mark_review(visit_reason, patient, doctor_staff=None, encounter_type=None):
+    """
+    GP return within 6 days is treated as a free review.
+    Specialist visits (psychiatric new/subsequent, etc.) stay chargeable.
+    """
+    if (visit_reason or '').strip().lower() == 'review':
+        try:
+            from .utils_doctor_pricing import DoctorPricingService
+            if DoctorPricingService.is_specialist_doctor(doctor_staff):
+                return False
+        except Exception:
+            pass
+        et = (encounter_type or '').lower()
+        if et in ('specialist', 'gynae'):
+            return False
+        return True
+    try:
+        from .utils_doctor_pricing import DoctorPricingService
+        if DoctorPricingService.is_specialist_doctor(doctor_staff):
+            return False
+    except Exception:
+        pass
+    et = (encounter_type or '').lower()
+    if et in ('specialist', 'gynae', 'antenatal'):
+        return False
+    return patient_has_prior_visit_within_days(patient)
+
+
+def visit_should_charge_consultation(visit_reason, encounter_type=None, doctor_staff=None):
+    """Charge on new visits and on any specialist visit (including subsequent)."""
+    try:
+        from .utils_doctor_pricing import DoctorPricingService
+        if DoctorPricingService.is_specialist_doctor(doctor_staff):
+            return True
+    except Exception:
+        pass
+    et = (encounter_type or '').lower()
+    if et in ('specialist', 'gynae', 'antenatal'):
+        return True
+    return (visit_reason or 'new').strip().lower() == 'new'
+
+
+def should_waive_consultation_fee(encounter, doctor_staff=None):
+    """
+    No consultation fee for GP review / return within 6 days.
+    Specialist tariffs (psychiatric new/subsequent, physio, etc.) are always billed.
+    """
+    doctor = doctor_staff or getattr(encounter, 'provider', None)
+    try:
+        from .utils_doctor_pricing import DoctorPricingService
+        if DoctorPricingService.is_specialist_doctor(doctor):
+            return False
+    except Exception:
+        pass
+    et = (getattr(encounter, 'encounter_type', None) or '').lower()
+    if et in ('specialist', 'gynae'):
+        return False
+    return is_explicit_review_visit(encounter) or is_within_consultation_free_return_window(encounter)
+
+
+def is_review_visit(encounter):
+    """
+    True when this encounter should not be charged a consultation / visit fee.
+    Includes explicit review markers and automatic free-return window (6 days).
+    """
+    return should_waive_consultation_fee(encounter)
+
+
+def encounter_consultation_is_settled(encounter):
+    """
+    True when consultation should not appear as unpaid at cashier.
+
+    Covers: waived/review/zero price, invoice fully paid (any method including deposit
+    or combined receipts), waived lines, or payments that cover the consultation line.
+    """
+    if not encounter:
+        return True
+    if should_waive_consultation_fee(encounter):
+        return True
+
+    line = get_consultation_line_for_encounter(encounter)
+    if line and getattr(line, 'waived_at', None):
+        return True
+
+    inv = getattr(line, 'invoice', None) if line else None
+    if inv is None:
+        inv = Invoice.all_objects.filter(encounter=encounter, is_deleted=False).order_by('-created').first()
+    if inv is None:
+        # No invoice yet — still unpaid if a fee would apply
+        try:
+            price = get_consultation_price_for_encounter(encounter, preloaded_consultation_line=None)
+        except Exception:
+            price = None
+        return price is not None and price <= 0
+
+    from .models_accounting import PaymentReceipt
+
+    if inv.status == 'paid' or (inv.balance is not None and inv.balance <= 0 and (inv.total_amount or 0) > 0):
+        return True
+
+    if PaymentReceipt.objects.filter(
+        is_deleted=False,
+        service_type='consultation',
+        invoice__encounter_id=encounter.pk,
+    ).exists():
+        return True
+
+    if PaymentReceipt.objects.filter(invoice=inv, is_deleted=False).exists():
+        if (inv.balance or 0) <= 0:
+            return True
+
+    try:
+        from .models_patient_deposits import DepositApplication
+        if DepositApplication.objects.filter(invoice=inv).exists() and (inv.balance or 0) <= 0:
+            return True
+    except Exception:
+        pass
+
+    # Partial settlement: payments on this invoice cover at least the consultation line
+    if line and not getattr(line, 'waived_at', None):
+        from django.db.models import Sum
+        try:
+            from hospital.utils_invoice_line import invoice_line_display_unit_and_total
+            _u, consult_amt = invoice_line_display_unit_and_total(line)
+            consult_amt = Decimal(str(consult_amt or 0))
+        except Exception:
+            consult_amt = Decimal(str(getattr(line, 'line_total', 0) or 0))
+        if consult_amt > 0:
+            paid_total = (
+                PaymentReceipt.objects.filter(invoice=inv, is_deleted=False)
+                .aggregate(t=Sum('amount_paid'))['t']
+                or Decimal('0.00')
+            )
+            try:
+                from .models_patient_deposits import DepositApplication
+                # Avoid double-counting deposit receipts that already record the application
+                deposit_receipt_total = (
+                    PaymentReceipt.objects.filter(
+                        invoice=inv, is_deleted=False, payment_method='deposit'
+                    ).aggregate(t=Sum('amount_paid'))['t']
+                    or Decimal('0.00')
+                )
+                dep_applied = (
+                    DepositApplication.objects.filter(invoice=inv)
+                    .aggregate(t=Sum('applied_amount'))['t']
+                    or Decimal('0.00')
+                )
+                if dep_applied > deposit_receipt_total:
+                    paid_total += (dep_applied - deposit_receipt_total)
+            except Exception:
+                pass
+            if paid_total >= consult_amt:
+                return True
+    return False
+
+
+def consultation_settled_encounter_ids(encounter_ids):
+    """
+    Bulk helper: encounter ids whose consultation is settled (paid/waived/zero).
+    Prefer this over per-row encounter_consultation_is_settled in cashier lists.
+    """
+    ids = [i for i in (encounter_ids or []) if i]
+    if not ids:
+        return set()
+
+    from django.db.models import Sum, Q
+    from .models_accounting import PaymentReceipt
+
+    settled = set()
+
+    # Explicit consultation receipts
+    settled |= set(
+        PaymentReceipt.objects.filter(
+            is_deleted=False,
+            service_type='consultation',
+            invoice__encounter_id__in=ids,
+        ).values_list('invoice__encounter_id', flat=True)
+    )
+
+    # Fully paid / zero-balance encounter invoices
+    settled |= set(
+        Invoice.all_objects.filter(
+            encounter_id__in=ids,
+            is_deleted=False,
+        ).filter(
+            Q(status='paid') | Q(balance__lte=0, total_amount__gt=0)
+        ).values_list('encounter_id', flat=True)
+    )
+
+    # Waived consultation lines
+    settled |= set(
+        InvoiceLine.objects.filter(
+            invoice__encounter_id__in=ids,
+            service_code__code__in=CONSULTATION_LINE_SERVICE_CODES,
+            is_deleted=False,
+            waived_at__isnull=False,
+        ).values_list('invoice__encounter_id', flat=True)
+    )
+
+    # Any receipt / deposit on encounter invoice with balance already 0 caught above;
+    # also catch combined/other payments that cover consultation line while balance > 0
+    remaining = [i for i in ids if i not in settled]
+    if remaining:
+        lines = list(
+            InvoiceLine.objects.filter(
+                invoice__encounter_id__in=remaining,
+                service_code__code__in=CONSULTATION_LINE_SERVICE_CODES,
+                is_deleted=False,
+                waived_at__isnull=True,
+            ).select_related('invoice', 'service_code')
+        )
+        from hospital.utils_invoice_line import invoice_line_display_unit_and_total
+        for line in lines:
+            enc_id = line.invoice.encounter_id
+            if enc_id in settled:
+                continue
+            try:
+                _u, consult_amt = invoice_line_display_unit_and_total(line)
+                consult_amt = Decimal(str(consult_amt or 0))
+            except Exception:
+                consult_amt = Decimal(str(line.line_total or 0))
+            if consult_amt <= 0:
+                settled.add(enc_id)
+                continue
+            inv = line.invoice
+            paid_total = (
+                PaymentReceipt.objects.filter(invoice=inv, is_deleted=False)
+                .aggregate(t=Sum('amount_paid'))['t']
+                or Decimal('0.00')
+            )
+            try:
+                from .models_patient_deposits import DepositApplication
+                deposit_receipt_total = (
+                    PaymentReceipt.objects.filter(
+                        invoice=inv, is_deleted=False, payment_method='deposit'
+                    ).aggregate(t=Sum('amount_paid'))['t']
+                    or Decimal('0.00')
+                )
+                dep_applied = (
+                    DepositApplication.objects.filter(invoice=inv)
+                    .aggregate(t=Sum('applied_amount'))['t']
+                    or Decimal('0.00')
+                )
+                if dep_applied > deposit_receipt_total:
+                    paid_total += (dep_applied - deposit_receipt_total)
+            except Exception:
+                pass
+            if paid_total >= consult_amt:
+                settled.add(enc_id)
+
+    # Review / free-return / zero-price for remaining (cheaper to check in caller for small sets;
+    # include free-return here for correctness)
+    still = [i for i in ids if i not in settled]
+    if still:
+        for enc in Encounter.objects.filter(pk__in=still).only(
+            'id', 'patient_id', 'started_at', 'notes', 'chief_complaint', 'encounter_type'
+        ):
+            if should_waive_consultation_fee(enc):
+                settled.add(enc.id)
+                continue
+            try:
+                price = get_consultation_price_for_encounter(enc)
+            except Exception:
+                price = None
+            if price is not None and price <= 0:
+                settled.add(enc.id)
+
+    return settled
 
 
 def waive_encounter_consultation_fees_for_review(encounter):
@@ -1610,9 +2289,11 @@ def add_consultation_charge(
     - Antenatal visits use MAT-ANC service code with existing pricing
     - Doctor-specific pricing takes precedence over general pricing
     - Specialist visits: doctor/tier or engine (e.g. 300 cash baseline); insurance uses tiers
-    - General visits: always 150 (cash) / 160 (corporate); insurance uses tiers (no doctor-specific GP fees)
+    - General visits: always 158 (cash) / 168 (corporate); insurance uses tiers (no doctor-specific GP fees)
+    - Review / return within 6 days: no consultation fee
     """
-    if is_review_visit(encounter):
+    billing_doctor = doctor_staff or getattr(encounter, 'provider', None)
+    if should_waive_consultation_fee(encounter, doctor_staff=billing_doctor):
         waive_encounter_consultation_fees_for_review(encounter)
         existing_inv = Invoice.all_objects.filter(encounter=encounter, is_deleted=False).first()
         if existing_inv is not None:
@@ -1639,20 +2320,8 @@ def add_consultation_charge(
             }
         )
         
-        # Get price using pricing engine (respects insurance/cash pricing)
-        # Default antenatal price: 235 GHC (front desk / cashier standard)
-        try:
-            consultation_price = pricing_engine.get_service_price(
-                service_code=antenatal_service_code,
-                patient=price_patient,
-                payer=payer
-            )
-            if consultation_price is None or consultation_price == Decimal('0.00'):
-                consultation_price = Decimal('235.00')
-        except Exception as e:
-            logger.warning(f"Error getting antenatal price: {e}, using default")
-            consultation_price = Decimal('235.00')
-        
+        # Fixed antenatal tariff: 235 + 8 sustainability = 243 (do not use catalog/engine)
+        consultation_price = ANC_VISIT
         service_code = antenatal_service_code
         description = 'Antenatal Care Visit'
         
@@ -1698,6 +2367,13 @@ def add_consultation_charge(
                 unit_price=consultation_price,
                 line_total=consultation_price
             )
+            invoice.update_totals()
+        elif existing_line.unit_price != consultation_price and not existing_line.waived_at:
+            qty = existing_line.quantity or Decimal('1')
+            existing_line.unit_price = consultation_price
+            existing_line.line_total = consultation_price * qty
+            existing_line.description = description
+            existing_line.save(update_fields=['unit_price', 'line_total', 'description', 'modified'])
             invoice.update_totals()
         
         logger.info(
@@ -1763,8 +2439,20 @@ def add_consultation_charge(
                 patient=price_patient,
                 doctor_staff=doctor_staff,
                 encounter_type=encounter_type_lower,
-                is_review_visit=False  # Already checked above
+                is_review_visit=False,
+                encounter=encounter,
             )
+            pricing_info = DoctorPricingService.get_doctor_pricing_info(doctor_staff)
+            specialty = (pricing_info.get('specialty') or '').lower()
+            if 'psychiatr' in specialty:
+                is_first = DoctorPricingService.is_first_visit_to_doctor(
+                    price_patient, doctor_staff, exclude_encounter=encounter
+                )
+                description = (
+                    'Psychiatric Consultation (New)'
+                    if is_first
+                    else 'Psychiatric Consultation (Subsequent)'
+                )
             logger.info(
                 f"💰 Doctor-specific pricing for {doctor_staff.user.get_full_name()}: "
                 f"GHS {consultation_price} (Patient: {price_patient.full_name})"
@@ -1775,13 +2463,13 @@ def add_consultation_charge(
     
     # Gynae / Special: default 260 GHC when no doctor-specific price (front desk / cashier special payment)
     if consultation_price is None and encounter_type_lower == 'gynae':
-        consultation_price = Decimal('260.00')
+        consultation_price = GYNAE_SPECIAL
 
     # 💰 USE PRICING ENGINE: Pick from general system (ServicePrice + PricingCategory: cash, corporate, insurance)
     # Only if doctor-specific pricing wasn't found
     if consultation_price is None:
-        fallback_cash = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00')
-        fallback_corp = GENERAL_CONSULTATION_CORPORATE if consultation_type == 'general' else Decimal('300.00')
+        fallback_cash = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION
+        fallback_corp = GENERAL_CONSULTATION_CORPORATE if consultation_type == 'general' else SPECIALIST_CONSULTATION
         try:
             consultation_price = pricing_engine.get_service_price(
                 service_code=service_code,
@@ -1835,13 +2523,13 @@ def add_consultation_charge(
             consultation_price = PayerPrice.get_price(payer, service_code_key)
         if consultation_price is None:
             if payer and payer.payer_type == 'cash':
-                consultation_price = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00')
+                consultation_price = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION
             elif payer and payer.payer_type == 'corporate':
-                consultation_price = fallback_corp if consultation_type == 'general' else Decimal('300.00')
+                consultation_price = fallback_corp if consultation_type == 'general' else SPECIALIST_CONSULTATION
             else:
                 consultation_price = DefaultPrice.get_price(
                     'consultation_general' if consultation_type == 'general' else 'consultation_specialist',
-                    GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00'),
+                    GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION,
                 )
 
     # GP flat rates: enforce when not insurance (flat helper returns None for insurance — keep engine)
@@ -2057,14 +2745,15 @@ def get_consultation_price_for_encounter(encounter, preloaded_consultation_line=
     """
     Return the consultation price for an encounter (for display/cashier).
     Uses the same logic as add_consultation_charge: doctor-specific pricing for
-    specialist encounters only; general OPD 150/160 (cash/corporate) or insurance from engine.
+    specialist encounters only; general OPD 158/168 (cash/corporate) or insurance from engine.
     Never returns the wrong legacy 30.
     When an invoice line exists, prefer that line's amount.
     If preloaded_consultation_line is passed (including None from a bulk lookup), skip fetching the line again.
+    Review / return within 6 days: returns 0.
     """
     if not encounter:
         return None
-    if is_review_visit(encounter):
+    if should_waive_consultation_fee(encounter):
         return Decimal('0.00')
     if preloaded_consultation_line is _CONSULTATION_LINE_PRELOAD:
         line = get_consultation_line_for_encounter(encounter)
@@ -2072,8 +2761,12 @@ def get_consultation_price_for_encounter(encounter, preloaded_consultation_line=
         line = preloaded_consultation_line
     if line:
         from_line = consultation_line_display_amount(line)
-        # Trust line only when amount > 0; zero can be stale/wrong and would hide gynae from cashier
         if from_line is not None and from_line > 0:
+            code = (getattr(getattr(line, 'service_code', None), 'code', None) or '').strip().upper()
+            if code in GENERAL_OPD_LINE_SERVICE_CODES and getattr(line, 'invoice', None):
+                corrected = get_corrected_general_opd_line_unit_price(line.invoice, line)
+                if corrected is not None and corrected > 0:
+                    return corrected
             return from_line
     patient = encounter.patient
     encounter_type_lower = (encounter.encounter_type or '').lower()
@@ -2094,7 +2787,7 @@ def get_consultation_price_for_encounter(encounter, preloaded_consultation_line=
         except Exception:
             pass
     if encounter_type_lower == 'gynae':
-        return Decimal('260.00')
+        return GYNAE_SPECIAL
     # Use encounter_type so Special Consultation shows correct price at cashier even without assigned doctor
     if encounter_type_lower == 'specialist':
         if should_use_gp_flat_consultation_fee(encounter, doctor_staff):
@@ -2104,7 +2797,7 @@ def get_consultation_price_for_encounter(encounter, preloaded_consultation_line=
             if flat is not None:
                 return flat
             return GENERAL_CONSULTATION_CASH
-        return Decimal('300.00')
+        return SPECIALIST_CONSULTATION
     flat = get_general_consultation_price_for_patient_and_payer(patient, patient.primary_insurance)
     if flat is not None:
         return flat
@@ -2146,7 +2839,7 @@ def get_consultation_price_for_encounter_and_payer(encounter, payer, consultatio
         code=service_code_str, is_active=True
     ).first()
     if not service_code:
-        return GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00')
+        return GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION
     consultation_price = None
     if doctor_staff and consultation_type == 'specialist':
         try:
@@ -2160,10 +2853,10 @@ def get_consultation_price_for_encounter_and_payer(encounter, payer, consultatio
         except Exception:
             pass
     if consultation_price is None and encounter_type_lower == 'gynae':
-        consultation_price = Decimal('260.00')
+        consultation_price = GYNAE_SPECIAL
     if consultation_price is None and payer:
-        fallback_cash = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00')
-        fallback_corp = GENERAL_CONSULTATION_CORPORATE if consultation_type == 'general' else Decimal('300.00')
+        fallback_cash = GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION
+        fallback_corp = GENERAL_CONSULTATION_CORPORATE if consultation_type == 'general' else SPECIALIST_CONSULTATION
         try:
             consultation_price = pricing_engine.get_service_price(
                 service_code=service_code,
@@ -2206,7 +2899,7 @@ def get_consultation_price_for_encounter_and_payer(encounter, payer, consultatio
         if flat is not None:
             consultation_price = flat
     if consultation_price is None:
-        return GENERAL_CONSULTATION_CASH if consultation_type == 'general' else Decimal('300.00')
+        return GENERAL_CONSULTATION_CASH if consultation_type == 'general' else SPECIALIST_CONSULTATION
     return consultation_price
 
 

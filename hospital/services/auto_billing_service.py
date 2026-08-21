@@ -158,10 +158,17 @@ class AutoBillingService:
                                 notify_patient_pending_payment,
                                 SERVICE_TYPE_LAB,
                             )
-                            notify_patient_pending_payment(
-                                patient, SERVICE_TYPE_LAB, test.name, unit_price,
-                                message_type='pending_payment_lab',
-                            )
+                            payer_type = (getattr(payer, 'payer_type', '') or 'cash').strip().lower()
+                            if payer_type not in ('insurance', 'private', 'nhis', 'corporate'):
+                                notify_patient_pending_payment(
+                                    patient,
+                                    SERVICE_TYPE_LAB,
+                                    test.name,
+                                    unit_price,
+                                    message_type='pending_payment_lab',
+                                    encounter=encounter,
+                                    invoice=invoice,
+                                )
                         except Exception as notify_exc:
                             logger.warning("Lab pending payment notification failed: %s", notify_exc)
                     return {
@@ -220,10 +227,17 @@ class AutoBillingService:
                             notify_patient_pending_payment,
                             SERVICE_TYPE_LAB,
                         )
-                        notify_patient_pending_payment(
-                            patient, SERVICE_TYPE_LAB, test.name, unit_price,
-                            message_type='pending_payment_lab',
-                        )
+                        payer_type = (getattr(payer, 'payer_type', '') or 'cash').strip().lower()
+                        if payer_type not in ('insurance', 'private', 'nhis', 'corporate'):
+                            notify_patient_pending_payment(
+                                patient,
+                                SERVICE_TYPE_LAB,
+                                test.name,
+                                unit_price,
+                                message_type='pending_payment_lab',
+                                encounter=encounter,
+                                invoice=invoice,
+                            )
                     except Exception as notify_exc:
                         logger.warning("Lab pending payment notification failed: %s", notify_exc)
 
@@ -304,15 +318,50 @@ class AutoBillingService:
             return False
 
     @staticmethod
+    def _encounter_requires_consultation_complete_for_pharmacy(encounter):
+        """
+        True only for insurance (NHIS / private) OPD visits.
+
+        Cash and corporate prescriptions are released to pharmacy as soon as the
+        doctor prescribes (and on drug changes). Insurance stays held until
+        Complete Consultation so the claim set is final.
+        """
+        if not encounter:
+            return False
+        try:
+            from hospital.utils_billing import get_patient_payer_info
+            from hospital.services.insurance_exclusion_service import (
+                INSURANCE_PAYER_TYPES,
+                is_insurance_billing_payer,
+            )
+
+            patient = getattr(encounter, 'patient', None)
+            if not patient:
+                return False
+            info = get_patient_payer_info(patient, encounter) or {}
+            payer = info.get('payer')
+            if is_insurance_billing_payer(payer):
+                return True
+            payer_type = (
+                info.get('type')
+                or info.get('payer_type')
+                or getattr(payer, 'payer_type', None)
+                or ''
+            )
+            return str(payer_type).strip().lower() in INSURANCE_PAYER_TYPES
+        except Exception:
+            # Fail open for cash-like behaviour so pharmacy is not blocked.
+            return False
+
+    @staticmethod
     def is_prescription_released_to_pharmacy(prescription):
         """
         Decides whether a prescription should be visible to the pharmacy queue.
 
-        OPD (any non-inpatient encounter, or inpatient without an active admission):
-            Released after "Complete Consultation", OR immediately when marked
-            is_start_dose (initial/stat dose during an in-progress visit).
-        IPD (inpatient with an active admission):
-            Released immediately so pharmacy can dispense ongoing meds during the stay.
+        - Start/stat dose: always released immediately.
+        - IPD (active admission): always released immediately.
+        - Cash / corporate OPD: released as soon as prescribed (and on drug changes).
+        - Insurance OPD: released after Complete Consultation (or start dose).
         """
         try:
             if getattr(prescription, 'is_start_dose', False):
@@ -322,7 +371,12 @@ class AutoBillingService:
             return False
         if AutoBillingService._encounter_is_inpatient_active(encounter):
             return True
-        return getattr(encounter, 'status', None) == 'completed' or bool(getattr(encounter, 'ended_at', None))
+        if getattr(encounter, 'status', None) == 'completed' or bool(getattr(encounter, 'ended_at', None)):
+            return True
+        # Active OPD: hold only for insurance; cash/corporate serve immediately.
+        if AutoBillingService._encounter_requires_consultation_complete_for_pharmacy(encounter):
+            return False
+        return True
 
     @staticmethod
     def create_pharmacy_dispensing_record_only(prescription, force=False):
@@ -331,10 +385,8 @@ class AutoBillingService:
         Puts prescription in pharmacy queue for check/edit before sending to cashier/insurer.
         Bill (InvoiceLine) is created only when pharmacy sends to cashier/insurance.
 
-        Gate: For OPD encounters, the dispensing record is only created once the doctor
-        completes the consultation. IPD (admitted) prescriptions are released immediately.
-        Pass ``force=True`` to bypass this gate (e.g. when a downstream pharmacy/cashier
-        path is explicitly handling an already-released prescription).
+        Gate: Insurance OPD stays hidden until Complete Consultation (unless start dose).
+        Cash/corporate OPD and IPD are released immediately. Pass ``force=True`` to bypass.
         """
         from hospital.models_payment_verification import PharmacyDispensing
         try:
@@ -365,7 +417,8 @@ class AutoBillingService:
         Create PharmacyDispensing rows for prescriptions that should be in the
         pharmacy queue but have no dispensing record (signal miss, legacy data).
 
-        Covers active IPD, completed OPD, and OPD start/stat doses on active visits.
+        Covers active IPD, completed OPD, cash/corporate OPD in progress,
+        and OPD start/stat doses on active insurance visits.
         """
         from hospital.models import Prescription
 
@@ -658,8 +711,13 @@ class AutoBillingService:
                             SERVICE_TYPE_PRESCRIPTION,
                         )
                         notify_patient_pending_payment(
-                            patient, SERVICE_TYPE_PRESCRIPTION, 'Pharmacy total', line_total,
+                            patient,
+                            SERVICE_TYPE_PRESCRIPTION,
+                            'Pharmacy total',
+                            line_total,
                             message_type='pending_payment_prescription',
+                            encounter=encounter,
+                            invoice=invoice,
                         )
                     except Exception as notify_exc:
                         logger.warning("Prescription pending payment notification failed: %s", notify_exc)
@@ -825,11 +883,18 @@ class AutoBillingService:
                             notify_patient_pending_payment,
                             SERVICE_TYPE_IMAGING,
                         )
-                        service_name = imaging_study.study_type or f"{imaging_study.get_modality_display()} - {imaging_study.body_part}"
-                        notify_patient_pending_payment(
-                            patient, SERVICE_TYPE_IMAGING, service_name, unit_price,
-                            message_type='pending_payment_imaging',
-                        )
+                        payer_type = (getattr(payer, 'payer_type', '') or 'cash').strip().lower()
+                        if payer_type not in ('insurance', 'private', 'nhis', 'corporate'):
+                            service_name = imaging_study.study_type or f"{imaging_study.get_modality_display()} - {imaging_study.body_part}"
+                            notify_patient_pending_payment(
+                                patient,
+                                SERVICE_TYPE_IMAGING,
+                                service_name,
+                                unit_price,
+                                message_type='pending_payment_imaging',
+                                encounter=encounter,
+                                invoice=invoice,
+                            )
                     except Exception as notify_exc:
                         logger.warning("Imaging pending payment notification failed: %s", notify_exc)
 
@@ -1009,13 +1074,19 @@ class AutoBillingService:
         Resolve unit price for a service line.
 
         Lab (LAB-*) / imaging (IMG-*): hospital catalog is the source of truth when available.
-        - Cash: catalog list price.
-        - Corporate/insurance with catalog cash list only: apply lab/imaging markup on catalog.
-        - When catalog_tier_applied=True (imaging corporate_price / insurance_price from catalog): amount is final.
+        - Cash: catalog list price + 10% Sustainability and Insurance (GL 4115).
+        - Corporate/insurance with catalog cash list only: 30% markup on catalog, then +10%.
+        - When catalog_tier_applied=True (imaging corporate_price / insurance_price from catalog):
+          that tier amount + 10% Sustainability and Insurance.
 
         Other services: flexible pricing engine first, then fallback + markup where applicable.
         """
         from hospital.services.pricing_engine_service import pricing_engine
+        from hospital.utils_billing import (
+            is_lab_or_imaging_service_code,
+            is_ward_fee_service_code,
+            with_service_sustainability,
+        )
         from hospital.utils_invoice_line import lab_catalog_unit_price_for_service_code
 
         base = fallback_price if fallback_price is not None else Decimal('0.00')
@@ -1035,6 +1106,7 @@ class AutoBillingService:
             or cat == 'lab'
         )
         is_img = code.startswith('IMG-') or 'imaging' in cat or 'radiology' in cat or 'scan' in cat
+        is_ward = is_ward_fee_service_code(service_code)
 
         if is_lab and service_code:
             catalog_p = lab_catalog_unit_price_for_service_code(service_code)
@@ -1042,11 +1114,13 @@ class AutoBillingService:
                 base = catalog_p
 
         if payer_type == 'cash' and base > 0:
+            if is_lab or is_img or is_ward or is_lab_or_imaging_service_code(service_code):
+                return pricing_engine._apply_lab_imaging_markup(base, service_code, payer)
             return base
 
         if (is_lab or is_img) and base > 0:
             if catalog_tier_applied:
-                return base
+                return with_service_sustainability(base)
             return pricing_engine._apply_lab_imaging_markup(base, service_code, payer)
 
         try:
@@ -1077,10 +1151,11 @@ class AutoBillingService:
         try:
             from hospital.models_insurance import InsuranceClaimItem
             from django.utils import timezone
+            from hospital.utils_billing import patient_billing_member_id_display
             patient = invoice.patient
             if not patient:
                 return
-            insurance_id = (patient.insurance_id or patient.insurance_member_id) or "NOT_PROVIDED"
+            insurance_id = patient_billing_member_id_display(patient, invoice.payer) or "NOT_PROVIDED"
             for line in invoice.lines.filter(is_deleted=False):
                 if line.is_insurance_excluded:
                     continue

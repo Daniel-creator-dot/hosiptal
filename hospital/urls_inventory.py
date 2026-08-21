@@ -13,6 +13,7 @@ urlpatterns = [
     # Inventory Items
     path('items/', inventory_views.inventory_items_list, name='items_list'),
     path('items/<uuid:item_id>/', inventory_views.inventory_item_detail, name='item_detail'),
+    path('issue-consumables/', inventory_views.issue_consumables, name='issue_consumables'),
     
     # Stock Alerts
     path('alerts/', inventory_views.stock_alerts_list, name='alerts_list'),

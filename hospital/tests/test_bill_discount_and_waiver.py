@@ -289,6 +289,162 @@ class WaiverPersistenceTests(TestCase):
         self.assertEqual(inv.balance, Decimal('0.00'))
 
 
+class RemovePrescribeInvoiceSticksTests(TestCase):
+    """Removing a prescribe invoice must drop the amount and not recreate on Total Bill reload."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_superuser(
+            username=f'rem_{uuid.uuid4().hex[:8]}',
+            email=f'rem_{uuid.uuid4().hex[:8]}@test.local',
+            password='testpass123',
+        )
+        self.patient = Patient.objects.create(
+            first_name='Remove',
+            last_name='Stick',
+            mrn=f'PMC-RS-{uuid.uuid4().hex[:8]}',
+        )
+
+    def test_remove_invoice_cancels_sale_and_amount_leaves_bill(self):
+        from hospital.models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
+        from hospital.services.pharmacy_walkin_service import WalkInPharmacyService
+        from hospital.views_centralized_cashier import _total_bill_services_to_display
+
+        drug = Drug.objects.create(
+            name=f'RemDrug {uuid.uuid4().hex[:6]}',
+            strength='0',
+            form='Inj',
+            pack_size='1',
+            category='other',
+            unit_price=Decimal('40.00'),
+        )
+        sale = WalkInPharmacySale.objects.create(
+            customer_name=self.patient.full_name,
+            patient=self.patient,
+            customer_type='registered',
+            total_amount=Decimal('40.00'),
+            subtotal=Decimal('40.00'),
+            amount_due=Decimal('40.00'),
+        )
+        WalkInPharmacySaleItem.objects.create(
+            sale=sale,
+            drug=drug,
+            quantity=1,
+            unit_price=Decimal('40.00'),
+            line_total=Decimal('40.00'),
+        )
+        inv = WalkInPharmacyService.ensure_sale_invoice(sale, self.patient)
+        self.assertIsNotNone(inv)
+        inv.update_totals()
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance, Decimal('40.00'))
+
+        services, total = _get_patient_pending_services_for_payment(self.patient)
+        self.assertEqual(total, Decimal('40.00'))
+
+        user_logged_in.disconnect(track_successful_login, dispatch_uid=None)
+        try:
+            self.client.force_login(self.user)
+            url = reverse('hospital:remove_invoice_from_bill')
+            response = self.client.post(
+                url,
+                {
+                    'invoice_id': str(inv.pk),
+                    'redirect_url': reverse(
+                        'hospital:cashier_patient_total_bill',
+                        kwargs={'patient_id': self.patient.pk},
+                    ),
+                },
+            )
+        finally:
+            user_logged_in.connect(track_successful_login)
+        self.assertIn(response.status_code, (302, 200))
+
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, 'cancelled')
+        sale.refresh_from_db()
+        self.assertIsNotNone(sale.waived_at)
+        self.assertEqual(sale.payment_status, 'cancelled')
+
+        # Reloading Total Bill must not recreate the charge
+        again = WalkInPharmacyService.ensure_sale_invoice(sale, self.patient)
+        self.assertIsNone(again)
+        services2, total2 = _get_patient_pending_services_for_payment(self.patient)
+        self.assertEqual(total2, Decimal('0.00'))
+        display = _total_bill_services_to_display(services2)
+        self.assertEqual(sum((s.get('price') or 0) for s in display), Decimal('0.00'))
+
+    def test_waive_line_reduces_sale_and_bill_totals(self):
+        from hospital.models_pharmacy_walkin import WalkInPharmacySale, WalkInPharmacySaleItem
+        from hospital.services.pharmacy_walkin_service import WalkInPharmacyService
+
+        drug_a = Drug.objects.create(
+            name=f'LineA {uuid.uuid4().hex[:6]}',
+            strength='10mg',
+            form='Tab',
+            pack_size='10',
+            category='other',
+            unit_price=Decimal('10.00'),
+        )
+        drug_b = Drug.objects.create(
+            name=f'LineB {uuid.uuid4().hex[:6]}',
+            strength='20mg',
+            form='Tab',
+            pack_size='10',
+            category='other',
+            unit_price=Decimal('20.00'),
+        )
+        sale = WalkInPharmacySale.objects.create(
+            customer_name=self.patient.full_name,
+            patient=self.patient,
+            customer_type='registered',
+            total_amount=Decimal('30.00'),
+            subtotal=Decimal('30.00'),
+            amount_due=Decimal('30.00'),
+        )
+        item_a = WalkInPharmacySaleItem.objects.create(
+            sale=sale, drug=drug_a, quantity=1, unit_price=Decimal('10.00'), line_total=Decimal('10.00')
+        )
+        WalkInPharmacySaleItem.objects.create(
+            sale=sale, drug=drug_b, quantity=1, unit_price=Decimal('20.00'), line_total=Decimal('20.00')
+        )
+        inv = WalkInPharmacyService.ensure_sale_invoice(sale, self.patient)
+        inv.update_totals()
+        self.assertEqual(inv.balance, Decimal('30.00'))
+
+        if not hasattr(item_a, 'waived_at'):
+            self.skipTest('WalkInPharmacySaleItem.waived_at migration not applied')
+
+        user_logged_in.disconnect(track_successful_login, dispatch_uid=None)
+        try:
+            self.client.force_login(self.user)
+            response = self.client.post(
+                reverse('hospital:waive_prescribe_sale_line'),
+                {
+                    'sale_item_id': str(item_a.pk),
+                    'waiver_reason': 'Remove one item',
+                    'redirect_url': reverse(
+                        'hospital:cashier_patient_total_bill',
+                        kwargs={'patient_id': self.patient.pk},
+                    ),
+                },
+            )
+        finally:
+            user_logged_in.connect(track_successful_login)
+        self.assertIn(response.status_code, (302, 200))
+
+        sale.refresh_from_db()
+        self.assertEqual(sale.total_amount, Decimal('20.00'))
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance, Decimal('20.00'))
+        # ensure must not restore waived line
+        WalkInPharmacyService.ensure_sale_invoice(sale, self.patient)
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance, Decimal('20.00'))
+        services, total = _get_patient_pending_services_for_payment(self.patient)
+        self.assertEqual(total, Decimal('20.00'))
+
+
 class PartialCombinedInvoiceLineDisplayTests(TestCase):
     """FIFO line remaining after partial payment on a multi-line invoice."""
 
@@ -390,12 +546,9 @@ class PartialCombinedInvoiceLineDisplayTests(TestCase):
         self.assertEqual(paid_lines[0]['description'], 'Consultation fee')
 
     def test_open_balance_due_when_total_amount_exceeds_line_sum(self):
-        """Row price must follow line remainings, not inflated invoice.total_amount."""
+        """Row price must follow invoice balance, not inflated invoice.total_amount."""
         from hospital.utils_invoice_line import invoice_open_balance_due
-        from hospital.views_centralized_cashier import (
-            _attach_pending_service_line_breakdowns,
-            _sync_pending_service_prices_from_line_breakdown,
-        )
+        from hospital.views_centralized_cashier import _total_bill_services_to_display
 
         self._allocate_partial(Decimal('100.00'))
         # Simulate stale header total (e.g. discount/waiver drift on total_amount only)
@@ -404,8 +557,119 @@ class PartialCombinedInvoiceLineDisplayTests(TestCase):
         self.assertEqual(self.invoice.balance, Decimal('100.00'))
         self.assertEqual(invoice_open_balance_due(self.invoice), Decimal('100.00'))
 
-        services, _ = _get_patient_pending_services_for_payment(self.patient)
-        _attach_pending_service_line_breakdowns(services)
-        total = _sync_pending_service_prices_from_line_breakdown(services)
+        services, total = _get_patient_pending_services_for_payment(self.patient)
+        display = _total_bill_services_to_display(services)
         self.assertEqual(total, Decimal('100.00'))
-        self.assertEqual(services[0]['price'], Decimal('100.00'))
+        self.assertEqual(display[0]['price'], Decimal('100.00'))
+        unpaid_sum = sum(
+            (r.get('amount') or Decimal('0'))
+            for r in (display[0].get('breakdown') or [])
+            if not r.get('is_paid')
+        )
+        self.assertEqual(unpaid_sum, Decimal('100.00'))
+
+    def test_registration_fee_paid_not_earlier_lab(self):
+        """
+        GHS 50 paid after Registration Fee is added must mark Registration paid,
+        not an earlier lab line (Atta Duodu-style front-desk collection).
+        """
+        from datetime import timedelta
+        from django.utils import timezone
+        from hospital.models_accounting import PaymentReceipt, Transaction
+        from hospital.utils_invoice_line import invoice_breakdown_rows_for_display
+
+        lab_sc = ServiceCode.objects.create(
+            code=f'LAB-REG-{uuid.uuid4().hex[:6]}',
+            description='URINE RE',
+            category='lab',
+        )
+        inv = _open_invoice(self.patient, Decimal('158.00'))
+        # Backdate consultation so it predates lab
+        consult = inv.lines.first()
+        t0 = timezone.now() - timedelta(hours=2)
+        InvoiceLine.objects.filter(pk=consult.pk).update(created=t0)
+
+        lab = InvoiceLine.objects.create(
+            invoice=inv,
+            service_code=lab_sc,
+            description='URINE RE',
+            quantity=Decimal('1'),
+            unit_price=Decimal('65.00'),
+            line_total=Decimal('65.00'),
+        )
+        InvoiceLine.objects.filter(pk=lab.pk).update(created=t0 + timedelta(minutes=20))
+
+        # First payment: consultation only (before registration exists)
+        pay1 = t0 + timedelta(minutes=30)
+        t1 = Transaction.objects.create(
+            transaction_type='payment_received',
+            invoice=inv,
+            patient=self.patient,
+            amount=Decimal('158.00'),
+            payment_method='cash',
+            processed_by=self.user,
+            transaction_number=f'TXN-{uuid.uuid4().hex[:12]}',
+        )
+        r1 = PaymentReceipt.objects.create(
+            receipt_number=f'RCP-T1-{uuid.uuid4().hex[:10]}',
+            transaction=t1,
+            invoice=inv,
+            patient=self.patient,
+            amount_paid=Decimal('158.00'),
+            payment_method='cash',
+            received_by=self.user,
+            notes=f'Payment for Invoice {inv.invoice_number}',
+        )
+        PaymentReceipt.objects.filter(pk=r1.pk).update(created=pay1)
+        Transaction.objects.filter(pk=t1.pk).update(created=pay1)
+
+        reg_sc = ServiceCode.objects.create(
+            code=f'REG-{uuid.uuid4().hex[:6]}',
+            description='REGISTRATION',
+            category='registration',
+        )
+        reg = InvoiceLine.objects.create(
+            invoice=inv,
+            service_code=reg_sc,
+            description='Registration Fee',
+            quantity=Decimal('1'),
+            unit_price=Decimal('50.00'),
+            line_total=Decimal('50.00'),
+        )
+        InvoiceLine.objects.filter(pk=reg.pk).update(created=pay1 + timedelta(minutes=1))
+
+        t2 = Transaction.objects.create(
+            transaction_type='payment_received',
+            invoice=inv,
+            patient=self.patient,
+            amount=Decimal('50.00'),
+            payment_method='cash',
+            processed_by=self.user,
+            transaction_number=f'TXN-{uuid.uuid4().hex[:12]}',
+        )
+        r2 = PaymentReceipt.objects.create(
+            receipt_number=f'RCP-T2-{uuid.uuid4().hex[:10]}',
+            transaction=t2,
+            invoice=inv,
+            patient=self.patient,
+            amount_paid=Decimal('50.00'),
+            payment_method='cash',
+            received_by=self.user,
+            notes=f'Payment for Invoice {inv.invoice_number}',
+        )
+        pay2 = pay1 + timedelta(minutes=2)
+        PaymentReceipt.objects.filter(pk=r2.pk).update(created=pay2)
+        Transaction.objects.filter(pk=t2.pk).update(created=pay2)
+
+        inv.update_totals()
+        inv.refresh_from_db()
+        self.assertEqual(inv.amount_paid, Decimal('208.00'))
+
+        rows = invoice_breakdown_rows_for_display(inv, prefer_pharmacy_first=False)
+        by_desc = {r['description']: r for r in rows}
+        self.assertTrue(by_desc['Consultation fee']['is_paid'])
+        self.assertEqual(by_desc['Consultation fee']['amount'], Decimal('0.00'))
+        self.assertTrue(by_desc['Registration Fee']['is_paid'])
+        self.assertEqual(by_desc['Registration Fee']['amount'], Decimal('0.00'))
+        self.assertFalse(by_desc['URINE RE']['is_paid'])
+        self.assertEqual(by_desc['URINE RE']['amount'], Decimal('65.00'))

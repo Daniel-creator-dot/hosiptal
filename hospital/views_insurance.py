@@ -324,10 +324,17 @@ def insurance_claim_item_detail(request, pk):
     plan_map = batch_insurance_plan_names_for_patients([claim_item.patient_id])
     insurance_plan_name = plan_map.get(claim_item.patient_id, '')
 
+    from .utils_billing import claim_item_insurance_id_display, patient_billing_member_id_display
+
+    insurance_id_display = claim_item_insurance_id_display(claim_item)
+    patient_policy_id = patient_billing_member_id_display(claim_item.patient, claim_item.payer)
+
     context = {
         'claim_item': claim_item,
         'admission_icd10': admission_icd10,
         'insurance_plan_name': insurance_plan_name,
+        'insurance_id_display': insurance_id_display,
+        'patient_policy_id': patient_policy_id,
     }
 
     return render(request, 'hospital/insurance/claim_item_detail.html', context)
@@ -526,12 +533,17 @@ def patient_insurance_claims(request, patient_id):
         count=Count('id'),
         total=Sum('billed_amount')
     )
+
+    from .utils_billing import patient_billing_member_id_display
+
+    patient_insurance_id_display = patient_billing_member_id_display(patient)
     
     context = {
         'patient': patient,
         'claim_items': claim_items,
         'stats': stats,
         'by_status': by_status,
+        'patient_insurance_id_display': patient_insurance_id_display,
     }
     
     return render(request, 'hospital/insurance/patient_claims.html', context)
@@ -570,12 +582,9 @@ def create_claim_from_invoice(request, invoice_id):
     payer = invoice.payer or invoice.patient.primary_insurance
     
     # Get patient insurance ID
-    patient_insurance_id = (
-        invoice.patient.insurance_member_id or 
-        invoice.patient.insurance_id or 
-        invoice.patient.insurance_policy_number or
-        ''
-    )
+    from .utils_billing import patient_billing_member_id_display
+
+    patient_insurance_id = patient_billing_member_id_display(invoice.patient, payer) or ''
     
     if not patient_insurance_id:
         messages.warning(request, 'Patient insurance ID not set. Please set it in patient profile.')

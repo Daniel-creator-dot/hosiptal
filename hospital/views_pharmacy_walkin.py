@@ -107,13 +107,23 @@ def payer_for_pharmacy_drug_search(request):
     payer_id = request.GET.get('payer_id', '').strip()
     if payer_id:
         return resolve_walk_in_payer_id(payer_id)
+    encounter_id = request.GET.get('encounter_id', '').strip()
+    if encounter_id:
+        from .models import Encounter
+        from .services.nhis_drug_formulary import payer_from_encounter
+        enc = Encounter.objects.filter(
+            pk=encounter_id, is_deleted=False
+        ).select_related('patient', 'patient__primary_insurance').first()
+        if enc:
+            return payer_from_encounter(enc)
     patient_id = request.GET.get('patient_id', '').strip()
     if patient_id:
         p = Patient.objects.filter(
             pk=patient_id, is_deleted=False
         ).select_related('primary_insurance').first()
         if p:
-            return p.primary_insurance
+            from .services.nhis_drug_formulary import payer_from_patient
+            return payer_from_patient(p) or p.primary_insurance
     return None
 
 
@@ -752,11 +762,15 @@ def api_search_drugs(request):
 
     try:
         search_payer = payer_for_pharmacy_drug_search(request)
-        
-        drugs = Drug.objects.filter(
-            Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query) | Q(strength__icontains=query),
-            is_active=True,
-            is_deleted=False
+        from .services.nhis_drug_formulary import restrict_drug_queryset_for_payer
+
+        drugs = restrict_drug_queryset_for_payer(
+            Drug.objects.filter(
+                Q(name__icontains=query) | Q(generic_name__icontains=query) | Q(atc_code__icontains=query) | Q(strength__icontains=query),
+                is_active=True,
+                is_deleted=False
+            ),
+            search_payer,
         )[:25]
         
         # Get pharmacy store for InventoryItem (procurement/inventory system)

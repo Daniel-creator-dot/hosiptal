@@ -90,8 +90,8 @@
 {% block content %}
 <div class="form-container">
     <div class="form-header">
-        <h1 class="mb-2"><i class="bi bi-building me-3"></i>Add Insurance Company</h1>
-        <p class="mb-0" style="opacity: 0.9;">Register a new insurance provider or company</p>
+        <h1 class="mb-2"><i class="bi bi-building me-3"></i>{% if is_edit %}Edit Insurance Company{% else %}Add Insurance Company{% endif %}</h1>
+        <p class="mb-0" style="opacity: 0.9;">{% if is_edit %}Update name and details — linked billing payer is kept in sync{% else %}Register a new insurance provider or company{% endif %}</p>
     </div>
     
     <form method="post" enctype="multipart/form-data">
@@ -107,17 +107,29 @@
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Company Name *</label>
-                        <input type="text" name="name" class="form-control" required placeholder="e.g., National Health Insurance Scheme">
+                        <input type="text" name="name" class="form-control" required placeholder="e.g., National Health Insurance Scheme"
+                               value="{% if post %}{{ post.name }}{% elif company %}{{ company.name }}{% endif %}">
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="form-group">
                         <label class="form-label">Code *</label>
-                        <input type="text" name="code" class="form-control" required placeholder="e.g., NHIS" style="text-transform: uppercase;">
+                        <input type="text" name="code" class="form-control" required placeholder="e.g., NHIS" style="text-transform: uppercase;"
+                               value="{% if post %}{{ post.code }}{% elif company %}{{ company.code }}{% endif %}">
                         <small class="help-text">Short unique code</small>
                     </div>
                 </div>
                 <div class="col-md-3">
+                    {% if is_edit %}
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select name="status" class="form-select">
+                            <option value="active" {% if company.status == 'active' %}selected{% endif %}>Active</option>
+                            <option value="suspended" {% if company.status == 'suspended' %}selected{% endif %}>Suspended</option>
+                            <option value="inactive" {% if company.status == 'inactive' %}selected{% endif %}>Inactive</option>
+                        </select>
+                    </div>
+                    {% else %}
                     <div class="form-group">
                         <label class="form-label">Payer Type *</label>
                         <select name="payer_type" class="form-select" required>
@@ -127,8 +139,16 @@
                         </select>
                         <small class="help-text">For billing purposes</small>
                     </div>
+                    {% endif %}
                 </div>
             </div>
+            {% if is_edit %}
+            <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" name="is_active" value="1" id="insIsActive"
+                       {% if post %}{% if post.is_active == '1' %}checked{% endif %}{% elif company.is_active %}checked{% endif %}>
+                <label class="form-check-label" for="insIsActive">Active (available for patient registration)</label>
+            </div>
+            {% endif %}
         </div>
         
         <!-- Contact Information -->
@@ -141,13 +161,15 @@
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Phone Number</label>
-                        <input type="tel" name="phone_number" class="form-control" placeholder="+233...">
+                        <input type="tel" name="phone_number" class="form-control" placeholder="+233..."
+                               value="{% if post %}{{ post.phone_number }}{% elif company %}{{ company.phone_number }}{% endif %}">
                     </div>
                 </div>
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="info@company.com">
+                        <input type="email" name="email" class="form-control" placeholder="info@company.com"
+                               value="{% if post %}{{ post.email }}{% elif company %}{{ company.email }}{% endif %}">
                     </div>
                 </div>
             </div>
@@ -156,20 +178,22 @@
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Website</label>
-                        <input type="url" name="website" class="form-control" placeholder="https://...">
+                        <input type="url" name="website" class="form-control" placeholder="https://..."
+                               value="{% if post %}{{ post.website }}{% elif company %}{{ company.website }}{% endif %}">
                     </div>
                 </div>
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Contract Number</label>
-                        <input type="text" name="contract_number" class="form-control" placeholder="Contract/Agreement #" title="Enter text" placeholder="Enter text">
+                        <input type="text" name="contract_number" class="form-control" placeholder="Contract/Agreement #"
+                               value="{% if post %}{{ post.contract_number }}{% elif company %}{{ company.contract_number }}{% endif %}">
                     </div>
                 </div>
             </div>
             
             <div class="form-group">
                 <label class="form-label">Address</label>
-                <textarea name="address" class="form-control" rows="3" placeholder="Full address..."></textarea>
+                <textarea name="address" class="form-control" rows="3" placeholder="Full address...">{% if post %}{{ post.address }}{% elif company %}{{ company.address }}{% endif %}</textarea>
             </div>
         </div>
         
@@ -183,7 +207,8 @@
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Payment Terms (Days)</label>
-                        <input type="number" name="payment_terms_days" class="form-control" value="30" min="0" title="Enter number" placeholder="Enter number">
+                        <input type="number" name="payment_terms_days" class="form-control" min="0"
+                               value="{% if post %}{{ post.payment_terms_days }}{% elif company %}{{ company.payment_terms_days }}{% else %}30{% endif %}">
                         <small class="help-text">Number of days for payment (e.g., NET 30)</small>
                     </div>
                 </div>
@@ -200,13 +225,15 @@
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Billing Contact Name</label>
-                        <input type="text" name="billing_contact_name" class="form-control" placeholder="Contact person name" title="Enter text" placeholder="Enter text">
+                        <input type="text" name="billing_contact_name" class="form-control" placeholder="Contact person name"
+                               value="{% if post %}{{ post.billing_contact_name }}{% elif company %}{{ company.billing_contact_name }}{% endif %}">
                     </div>
                 </div>
                 <div class="col-md-6">
                     <div class="form-group">
                         <label class="form-label">Billing Contact Email</label>
-                        <input type="email" name="billing_contact_email" class="form-control" placeholder="billing@company.com">
+                        <input type="email" name="billing_contact_email" class="form-control" placeholder="billing@company.com"
+                               value="{% if post %}{{ post.billing_contact_email }}{% elif company %}{{ company.billing_contact_email }}{% endif %}">
                     </div>
                 </div>
             </div>
@@ -220,24 +247,25 @@
             
             <div class="form-group">
                 <label class="form-label">Notes</label>
-                <textarea name="notes" class="form-control" rows="4" placeholder="Internal notes about this insurance company..."></textarea>
+                <textarea name="notes" class="form-control" rows="4" placeholder="Internal notes about this insurance company...">{% if post %}{{ post.notes }}{% elif company %}{{ company.notes }}{% endif %}</textarea>
             </div>
         </div>
         
         <!-- Submit Buttons -->
         <div class="form-card">
             <div class="d-flex justify-content-between">
-                <a href="{% url 'hospital:insurance_management_dashboard' %}" class="btn btn-outline-secondary btn-lg">
+                <a href="{% if is_edit and company %}{% url 'hospital:insurance_company_detail' company.pk %}{% else %}{% url 'hospital:insurance_company_list' %}{% endif %}" class="btn btn-outline-secondary btn-lg">
                     <i class="bi bi-arrow-left me-2"></i>Cancel
                 </a>
                 <button type="submit" class="btn-submit">
-                    <i class="bi bi-check-circle me-2"></i>Add Insurance Company
+                    <i class="bi bi-check-circle me-2"></i>{% if is_edit %}Save Changes{% else %}Add Insurance Company{% endif %}
                 </button>
             </div>
         </div>
     </form>
 </div>
 {% endblock %}
+
 
 
 

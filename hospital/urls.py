@@ -53,6 +53,8 @@ from . import views_hr_manager
 from . import views_locum_doctors
 from . import views_role_specific
 from . import views_admin_medical_analytics
+from . import views_patient_attendance
+from . import views_maternity_procedures
 from . import views_telemedicine_enhanced
 from . import views_staff_dashboard
 from . import views_specialists
@@ -233,6 +235,10 @@ urlpatterns = [
     path('admin/staff/<uuid:staff_id>/reset-password/', views_it_operations.reset_staff_password, name='reset_staff_password'),
     path('admin/staff/<uuid:staff_id>/password-form/', views_it_operations.get_staff_password_form, name='get_staff_password_form'),
     path('admin/staff/<uuid:staff_id>/revoke-sessions/', views_it_operations.revoke_staff_sessions, name='revoke_staff_sessions'),
+    path('admin/it-operations/cleanup/', views_it_operations.records_cleanup, name='records_cleanup'),
+    path('admin/it-operations/patients/<uuid:patient_id>/delete/', views_it_operations.it_delete_patient, name='it_delete_patient'),
+    path('admin/it-operations/staff/<uuid:staff_id>/delete/', views_it_operations.it_delete_staff_account, name='it_delete_staff_account'),
+    path('admin/it-operations/users/<int:user_id>/delete/', views_it_operations.it_delete_user_account, name='it_delete_user_account'),
     
     # Audit Logs
     path('admin/audit-logs/', views_audit_logs.audit_logs_view, name='audit_logs'),
@@ -393,10 +399,29 @@ urlpatterns = [
     path('reports/financial/export/excel/', views.financial_report_export_excel, name='financial_report_export_excel'),
     path('reports/financial/export/pdf/', views.financial_report_export_pdf, name='financial_report_export_pdf'),
     path('reports/patients/', views.patient_statistics_report_view, name='patient_statistics_report'),
+    path(
+        'reports/patient-attendance/',
+        views_patient_attendance.patient_attendance_report,
+        name='patient_attendance_report',
+    ),
+    path(
+        'reports/maternity-deliveries/',
+        views_maternity_procedures.maternity_procedures_report,
+        name='maternity_procedures_report',
+    ),
     path('reports/encounters/', views.encounter_report_view, name='encounter_report'),
     path('reports/admissions/', views.admission_report_view, name='admission_report'),
     path('reports/departments/', views.department_performance_report_view, name='department_performance_report'),
     path('reports/beds/', views.bed_utilization_report_view, name='bed_utilization_report'),
+    path(
+        'reports/department-billed-revenue/',
+        RedirectView.as_view(
+            pattern_name='hospital:department_billed_revenue_report',
+            query_string=True,
+            permanent=False,
+        ),
+        name='department_billed_revenue_report_legacy',
+    ),
     
     # Export views
     path('export/patients/csv/', views.export_patients_csv, name='export_patients_csv'),
@@ -529,6 +554,7 @@ urlpatterns = [
     path('lab/equipment/add/', views_lab_management.lab_equipment_add, name='lab_equipment_add'),
     path('lab/equipment/<uuid:equipment_id>/', views_lab_management.equipment_detail, name='equipment_detail'),
     path('lab/reagents/', views_lab_management.lab_reagent_dashboard, name='lab_reagent_dashboard'),
+    path('lab/reagents/issue/', views_lab_management.issue_lab_consumables, name='issue_lab_consumables'),
     path('lab/reagents/<uuid:reagent_id>/', views_lab_management.reagent_detail, name='reagent_detail'),
     path('lab/reagents/transaction/', views_lab_management.record_reagent_transaction, name='record_reagent_transaction'),
     path('lab/reagents/add-via-procurement/', views_lab_reagent_procurement.add_reagent_via_procurement, name='add_reagent_via_procurement'),
@@ -604,6 +630,26 @@ urlpatterns = [
     path('consultation/<uuid:encounter_id>/', views_consultation.consultation_view, name='consultation_view'),
     path('consultation/<uuid:encounter_id>/pricing/', views_consultation.consultation_pricing_api, name='consultation_pricing_api'),
     path('consultation/<uuid:encounter_id>/vitals/', views_consultation.consultation_latest_vitals_api, name='consultation_latest_vitals_api'),
+    path(
+        'consultation/<uuid:encounter_id>/ai-assist/start/',
+        views_consultation.consultation_ai_assist_start,
+        name='consultation_ai_assist_start',
+    ),
+    path(
+        'consultation/<uuid:encounter_id>/ai-assist/<uuid:run_id>/',
+        views_consultation.consultation_ai_assist_status,
+        name='consultation_ai_assist_status',
+    ),
+    path(
+        'consultation/<uuid:encounter_id>/ai-assist/<uuid:run_id>/feedback/',
+        views_consultation.consultation_ai_assist_feedback,
+        name='consultation_ai_assist_feedback',
+    ),
+    path(
+        'consultation/<uuid:encounter_id>/ai-assist/<uuid:run_id>/chat/',
+        views_consultation.consultation_ai_assist_chat,
+        name='consultation_ai_assist_chat',
+    ),
     path('consultation/patient/<uuid:patient_id>/start/', views_consultation.quick_consultation, name='quick_consultation'),
     
     # Prescription Management
@@ -659,6 +705,7 @@ urlpatterns = [
     path('insurance/management/', views_insurance_management.insurance_management_dashboard, name='insurance_management_dashboard'),
     path('insurance/companies/', views_insurance_management.insurance_company_list, name='insurance_company_list'),
     path('insurance/companies/new/', views_insurance_management.insurance_company_create, name='insurance_company_create'),
+    path('insurance/companies/<uuid:pk>/edit/', views_insurance_management.insurance_company_edit, name='insurance_company_edit'),
     path('insurance/companies/<uuid:pk>/', views_insurance_management.insurance_company_detail, name='insurance_company_detail'),
     path('insurance/companies/<uuid:company_pk>/plans/new/', views_insurance_management.insurance_plan_create, name='insurance_plan_create'),
     path('insurance/patients/<uuid:patient_pk>/enroll/', views_insurance_management.patient_insurance_enroll, name='patient_insurance_enroll'),
@@ -908,12 +955,15 @@ urlpatterns = [
     ),
     path('cashier/central/patient/<uuid:patient_id>/apply-deposit/', views_centralized_cashier.cashier_apply_deposit_to_bill, name='cashier_apply_deposit_to_bill'),
     path('cashier/central/patient/<uuid:patient_id>/refund-credit/', views_centralized_cashier.cashier_refund_credit, name='cashier_refund_credit'),
+    path('cashier/central/patient/<uuid:patient_id>/refund-deposit/', views_centralized_cashier.cashier_refund_unused_deposit, name='cashier_refund_unused_deposit'),
     path('cashier/central/api/search-billable-items/', views_centralized_cashier.cashier_search_billable_items, name='cashier_search_billable_items'),
     path('cashier/central/patient/<uuid:patient_id>/add-services-to-invoice/', views_centralized_cashier.cashier_add_services_to_invoice, name='cashier_add_services_to_invoice'),
     path('cashier/central/patient/<uuid:patient_id>/add-services/', views_centralized_cashier.cashier_add_services_select, name='cashier_add_services_select'),
     path('cashier/central/add-manual-payment/', views_centralized_cashier.cashier_add_manual_payment, name='cashier_add_manual_payment'),
+    path('cashier/add-manual-payment/', views_centralized_cashier.cashier_add_manual_payment, name='cashier_add_manual_payment_short'),
     path('cashier/non-patient-charge/', views_centralized_cashier.cashier_non_patient_charge, name='cashier_non_patient_charge'),
     path('cashier/central/patients/', views_centralized_cashier.cashier_patient_list, name='cashier_patient_list'),
+    path('cashier/central/nhis-cash-pay/', views_centralized_cashier.cashier_nhis_cash_pay, name='cashier_nhis_cash_pay'),
     path('cashier/central/create-billing/', views_centralized_cashier.cashier_create_billing, name='cashier_create_billing'),
     path('cashier/central/process/<str:service_type>/<uuid:service_id>/', views_centralized_cashier.cashier_process_service_payment, name='cashier_process_service_payment'),
     path('cashier/central/process-pharmacy-encounter/<uuid:encounter_id>/', views_centralized_cashier.cashier_process_pharmacy_encounter, name='cashier_process_pharmacy_encounter'),
@@ -1258,6 +1308,7 @@ urlpatterns = [
     path('accounting/profit-loss/', views_accounting_advanced.profit_loss_statement, name='profit_loss_statement'),
     path('accounting/balance-sheet/', views_accounting_advanced.balance_sheet, name='balance_sheet'),
     path('accounting/trial-balance/', views_accounting_advanced.trial_balance, name='trial_balance'),
+    path('accounting/trial-balance/sync-closing-stock/', views_accounting_advanced.sync_closing_stock_to_gl, name='sync_closing_stock'),
     path('accounting/cash-flow/', views_accounting_advanced.cash_flow_statement, name='cash_flow_statement'),
     path('accounting/general-ledger/', views_accounting_advanced.general_ledger_report, name='general_ledger_report'),
     path('accounting/ar-aging/', views_accounting_advanced.accounts_receivable_aging, name='ar_aging_report'),
@@ -1343,6 +1394,11 @@ urlpatterns = [
         'accountant/supplier-accounts/<uuid:supplier_id>/',
         views_accountant_comprehensive.supplier_account_detail,
         name='supplier_account_detail',
+    ),
+    path(
+        'accountant/supplier-accounts/<uuid:supplier_id>/invoice-status/',
+        views_accountant_comprehensive.supplier_invoice_status_api,
+        name='supplier_invoice_status_api',
     ),
     
     # Accounting Management Views (HMS Interface for Admin Features)
@@ -1562,6 +1618,7 @@ urlpatterns = [
     path('drugs/print/', views.drug_formulary_print, name='drug_formulary_print'),
     path('drugs/export/pdf/', views.drug_formulary_pdf, name='drug_formulary_pdf'),
     path('drugs/export/excel/', views.drug_formulary_excel, name='drug_formulary_excel'),
+    path('drugs/import-nhis/', views.drug_formulary_import_nhis, name='drug_formulary_import_nhis'),
     path('drugs/new/', views.drug_create, name='drug_create'),
     path('drugs/<uuid:pk>/', views.drug_detail, name='drug_detail'),
     path('drugs/<uuid:pk>/audit-trail/', views.drug_audit_trail, name='drug_audit_trail'),

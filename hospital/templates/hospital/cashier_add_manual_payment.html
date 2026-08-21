@@ -1,9 +1,9 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
 
-{% block title %}Add Manual Payment - Cashier - HMS{% endblock %}
-{% block page_title %}Add Manual Payment{% endblock %}
-{% block page_subtitle %}Record payment for services not yet billed (e.g. consultation paid at cashier){% endblock %}
+{% block title %}{% if is_front_desk %}Request Charge - Front Desk - HMS{% else %}Add Manual Payment - Cashier - HMS{% endif %}{% endblock %}
+{% block page_title %}{% if is_front_desk %}Request Charge for Cashier{% else %}Add Manual Payment{% endif %}{% endblock %}
+{% block page_subtitle %}{% if is_front_desk %}Select the patient and service. Cashier collects payment.{% else %}Record payment for services not yet billed (e.g. consultation paid at cashier){% endif %}{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -11,7 +11,7 @@
         <div class="col-lg-8 offset-lg-2">
             <div class="card shadow-sm">
                 <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Add Manual Payment</h5>
+                    <h5 class="mb-0"><i class="bi bi-{% if is_front_desk %}file-earmark-medical{% else %}cash-coin{% endif %} me-2"></i>{% if is_front_desk %}Request Charge for Cashier{% else %}Add Manual Payment{% endif %}</h5>
                     <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-light btn-sm">
                         <i class="bi bi-arrow-left"></i> Back to Dashboard
                     </a>
@@ -33,12 +33,12 @@
                                    id="patient_search" 
                                    placeholder="Type patient name, MRN, or phone..."
                                    autocomplete="off"
-                                   required>
-                            <input type="hidden" name="patient_id" id="patient_id" required>
+                                   {% if selected_patient %}style="display: none;"{% endif %}>
+                            <input type="hidden" name="patient_id" id="patient_id" value="{% if selected_patient %}{{ selected_patient.pk }}{% endif %}" required>
                             <div id="patient_search_results" class="list-group mt-2 shadow-sm" 
                                  style="max-height: 300px; overflow-y: auto; display: none; position: absolute; z-index: 1000; width: 100%;"></div>
-                            <div id="patient_selected_display" class="alert alert-info mt-2" style="display: none;">
-                                <strong id="patient_name_display"></strong> (MRN: <span id="patient_mrn_display"></span>)
+                            <div id="patient_selected_display" class="alert alert-info mt-2" {% if not selected_patient %}style="display: none;"{% endif %}>
+                                <strong id="patient_name_display">{% if selected_patient %}{{ selected_patient.full_name }}{% endif %}</strong> (MRN: <span id="patient_mrn_display">{% if selected_patient %}{{ selected_patient.mrn }}{% endif %}</span>)
                                 <button type="button" class="btn btn-sm btn-outline-primary float-end" id="clear_patient_btn">
                                     <i class="bi bi-x-circle"></i> Change
                                 </button>
@@ -48,6 +48,38 @@
                         <!-- Service Selection -->
                         <div class="mb-4">
                             <label class="form-label fw-bold">Service</label>
+                            <div class="card mb-3 border-primary" id="medical_report_card">
+                                <div class="card-header bg-primary text-white py-2">
+                                    <strong><i class="bi bi-file-earmark-medical me-1"></i>Medical Reports</strong>
+                                    <span class="fw-normal ms-1">— front desk requests; cashier collects</span>
+                                </div>
+                                <div class="card-body py-3">
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_medical_report_school" value="medical_report_school" data-amount="{{ medical_report_school_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_medical_report_school">
+                                            School — GHS {{ medical_report_school_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_medical_report_gp" value="medical_report_gp" data-amount="{{ medical_report_gp_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_medical_report_gp">
+                                            GP — GHS {{ medical_report_gp_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_medical_report_extensive" value="medical_report_extensive" data-amount="{{ medical_report_extensive_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_medical_report_extensive">
+                                            Extensive — GHS {{ medical_report_extensive_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_medical_report_international" value="medical_report_international" data-amount="{{ medical_report_international_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_medical_report_international">
+                                            International — GHS {{ medical_report_international_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="card mb-3 border-success">
                                 <div class="card-body py-3">
                                     <div class="form-check mb-2">
@@ -57,9 +89,21 @@
                                         </label>
                                     </div>
                                     <div class="form-check mb-2">
-                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_gp" value="gp" data-amount="{{ gp_price }}" checked>
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_gp" value="gp" data-amount="{{ gp_price }}" {% if not focus_medical_report %}checked{% endif %}>
                                         <label class="form-check-label fw-semibold" for="service_gp">
                                             General Consultation (GP) — GHS {{ gp_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_antenatal" value="antenatal" data-amount="{{ antenatal_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_antenatal">
+                                            Antenatal / ANC — GHS {{ antenatal_price|floatformat:0 }}
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input service-preset" type="radio" name="service_type" id="service_gynae_special" value="gynae_special" data-amount="{{ gynae_special_price }}">
+                                        <label class="form-check-label fw-semibold" for="service_gynae_special">
+                                            Gynae / Special — GHS {{ gynae_special_price|floatformat:0 }}
                                         </label>
                                     </div>
                                     <div class="form-check mb-2">
@@ -201,18 +245,26 @@
                             </div>
                         </div>
                         
+                        {% if is_front_desk %}
+                        <input type="hidden" name="charge_only" value="1">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-1"></i>
+                            This sends an unpaid charge to cashier. Do not collect cash at front desk.
+                        </div>
+                        {% else %}
                         <!-- Charge only (for reception - add without collecting payment) -->
                         <div class="mb-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="charge_only" id="charge_only" value="1">
+                                <input class="form-check-input" type="checkbox" name="charge_only" id="charge_only" value="1" {% if charge_only_default %}checked{% endif %}>
                                 <label class="form-check-label" for="charge_only">
                                     <strong>Charge only</strong> — Add to bill without collecting payment (cashier will collect later)
                                 </label>
                             </div>
                         </div>
+                        {% endif %}
                         
                         <!-- Payment Method -->
-                        <div class="mb-3" id="payment_method_group">
+                        <div class="mb-3" id="payment_method_group" {% if is_front_desk %}style="display: none;"{% endif %}>
                             <label for="payment_method" class="form-label">Payment Method <span class="text-danger">*</span></label>
                             <select class="form-select" id="payment_method" name="payment_method" required>
                                 <option value="cash">Cash</option>
@@ -234,7 +286,7 @@
                         <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                             <a href="{% url 'hospital:centralized_cashier_dashboard' %}" class="btn btn-secondary">Cancel</a>
                             <button type="submit" class="btn btn-primary btn-lg" id="submit_btn">
-                                <i class="bi bi-check-circle me-1"></i><span id="submit_btn_text">Record Payment & Print Receipt</span>
+                                <i class="bi bi-check-circle me-1"></i><span id="submit_btn_text">{% if is_front_desk %}Send to Cashier{% else %}Record Payment & Print Receipt{% endif %}</span>
                             </button>
                         </div>
                     </form>
@@ -261,10 +313,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const presetAmountInput = document.getElementById('preset_amount');
     const form = document.getElementById('manualPaymentForm');
     const submitBtn = document.getElementById('submit_btn');
+    const paymentMethodSelect = document.getElementById('payment_method');
+    const isFrontDesk = {{ is_front_desk|yesno:"true,false" }};
+    const focusMedicalReport = {{ focus_medical_report|yesno:"true,false" }};
     
     let patientSearchTimeout;
     
-    // Service type toggle: presets (gp, admission, detainment) vs custom
+    // Service type toggle: presets vs custom
     function updateServiceFields() {
         const isCustom = serviceCustom.checked;
         const presetRadios = document.querySelectorAll('.service-preset');
@@ -288,26 +343,18 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
-    serviceGp.addEventListener('change', updateServiceFields);
-    document.getElementById('service_telemedicine_consult').addEventListener('change', updateServiceFields);
-    document.getElementById('service_admission').addEventListener('change', updateServiceFields);
-    document.getElementById('service_bed').addEventListener('change', updateServiceFields);
-    document.getElementById('service_detainment').addEventListener('change', updateServiceFields);
-    document.getElementById('service_doctor_care').addEventListener('change', updateServiceFields);
-    document.getElementById('service_nursing_care').addEventListener('change', updateServiceFields);
-    document.getElementById('service_dressing').addEventListener('change', updateServiceFields);
-    document.getElementById('service_dressing_large').addEventListener('change', updateServiceFields);
-    document.getElementById('service_ear_wash').addEventListener('change', updateServiceFields);
-    document.getElementById('service_injection').addEventListener('change', updateServiceFields);
-    document.getElementById('service_ecg').addEventListener('change', updateServiceFields);
-    document.getElementById('service_urinalysis').addEventListener('change', updateServiceFields);
-    document.getElementById('service_xray').addEventListener('change', updateServiceFields);
-    document.getElementById('service_wound_care').addEventListener('change', updateServiceFields);
-    document.getElementById('service_delivery_fee').addEventListener('change', updateServiceFields);
-    document.getElementById('service_midwife_care').addEventListener('change', updateServiceFields);
-    document.getElementById('service_home_care').addEventListener('change', updateServiceFields);
-    document.getElementById('service_domiciliary_service').addEventListener('change', updateServiceFields);
+    document.querySelectorAll('.service-preset').forEach(function(radio) {
+        radio.addEventListener('change', updateServiceFields);
+    });
     serviceCustom.addEventListener('change', updateServiceFields);
+    updateServiceFields();
+
+    if (focusMedicalReport) {
+        const card = document.getElementById('medical_report_card');
+        if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
     
     // Patient search
     patientSearch.addEventListener('input', function() {
@@ -389,18 +436,29 @@ document.addEventListener('DOMContentLoaded', function() {
         submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing...';
     });
     
-    // Toggle payment method visibility when charge_only is checked
-    document.getElementById('charge_only').addEventListener('change', function() {
+    function syncChargeOnlyUi() {
+        const chargeOnlyEl = document.getElementById('charge_only');
         const pmGroup = document.getElementById('payment_method_group');
         const submitText = document.getElementById('submit_btn_text');
-        if (this.checked) {
-            pmGroup.style.opacity = '0.5';
-            if (submitText) submitText.textContent = 'Add Charge (No Payment)';
-        } else {
-            pmGroup.style.opacity = '1';
-            if (submitText) submitText.textContent = 'Record Payment & Print Receipt';
+        const chargeOnly = isFrontDesk || (chargeOnlyEl && chargeOnlyEl.checked);
+        if (pmGroup) {
+            pmGroup.style.opacity = chargeOnly ? '0.5' : '1';
+            if (isFrontDesk) pmGroup.style.display = 'none';
         }
-    });
+        if (paymentMethodSelect) {
+            paymentMethodSelect.required = !chargeOnly;
+        }
+        if (submitText) {
+            submitText.textContent = chargeOnly
+                ? (isFrontDesk ? 'Send to Cashier' : 'Add Charge (No Payment)')
+                : 'Record Payment & Print Receipt';
+        }
+    }
+    const chargeOnlyEl = document.getElementById('charge_only');
+    if (chargeOnlyEl) {
+        chargeOnlyEl.addEventListener('change', syncChargeOnlyUi);
+    }
+    syncChargeOnlyUi();
 });
 </script>
 {% endblock %}

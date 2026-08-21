@@ -6,8 +6,9 @@ Write-Host "Docker Desktop Auto-Start Setup" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-$scriptPath = $PSScriptRoot
-$startupScript = Join-Path $scriptPath "startup_hms.bat"
+$CanonicalRoot = 'C:\chm'
+$scriptPath = $CanonicalRoot
+$startupScript = Join-Path $CanonicalRoot 'startup_hms.bat'
 
 Write-Host "Step 1: Configuring Docker Desktop auto-start..." -ForegroundColor Yellow
 
@@ -59,48 +60,13 @@ if ($dockerDesktopPath) {
 
 Write-Host ""
 
-# Step 2: Update HMS startup script to wait for Docker
-Write-Host "Step 2: Updating HMS startup script..." -ForegroundColor Yellow
-
-$startupScriptContent = @"
-@echo off
-REM HMS Auto-Start Script
-REM Waits for Docker Desktop and starts HMS services
-
-REM Change to project directory
-cd /d "%~dp0"
-
-REM Wait for Docker Desktop to be ready (up to 2 minutes)
-echo Waiting for Docker Desktop to start...
-set MAX_WAIT=24
-set WAIT_COUNT=0
-
-:wait_docker
-timeout /t 5 /nobreak >nul
-docker info >nul 2>&1
-if %errorlevel% equ 0 (
-    echo Docker Desktop is ready!
-    goto docker_ready
-)
-set /a WAIT_COUNT+=1
-if %WAIT_COUNT% geq %MAX_WAIT% (
-    echo ERROR: Docker Desktop did not start within 2 minutes
-    echo Please start Docker Desktop manually
-    exit /b 1
-)
-goto wait_docker
-
-:docker_ready
-echo Starting HMS services...
-docker-compose up -d
-
-REM Log the startup
-echo HMS services started at %date% %time% >> startup_log.txt
-
-"@
-
-$startupScriptContent | Set-Content $startupScript -Encoding ASCII
-Write-Host "✅ Updated startup script" -ForegroundColor Green
+# Step 2: HMS startup script (maintained in repo — do not overwrite with legacy template)
+Write-Host "Step 2: Verifying HMS startup script at $startupScript..." -ForegroundColor Yellow
+if (-not (Test-Path $startupScript)) {
+    Write-Host "ERROR: Missing $startupScript" -ForegroundColor Red
+    exit 1
+}
+Write-Host "OK: startup_hms.bat uses C:\chm" -ForegroundColor Green
 Write-Host ""
 
 # Step 3: Ensure HMS startup task exists

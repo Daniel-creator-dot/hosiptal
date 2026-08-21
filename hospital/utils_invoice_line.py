@@ -489,12 +489,25 @@ def create_or_merge_invoice_line(
         manager = getattr(invoice.__class__, 'all_objects', invoice.__class__.objects)
         invoice = manager.select_for_update().get(pk=invoice.pk)
         
-        # Check for existing line with same service_code
-        existing_line = InvoiceLine.objects.filter(
+        # Check for existing line with same service_code.
+        # CASH-MISC is shared across unrelated custom charges — only merge when the
+        # description matches, otherwise a second custom price overwrites/reduces the first.
+        sc_code = (getattr(service_code, 'code', None) or '').strip().upper()
+        existing_qs = InvoiceLine.objects.filter(
             invoice=invoice,
             service_code=service_code,
             is_deleted=False
-        ).select_for_update().first()
+        ).select_for_update()
+        existing_line = None
+        if sc_code == 'CASH-MISC':
+            desc_base = (description or '').split(' x')[0].strip().lower()
+            for cand in existing_qs:
+                cand_base = (cand.description or '').split(' x')[0].strip().lower()
+                if cand_base == desc_base:
+                    existing_line = cand
+                    break
+        else:
+            existing_line = existing_qs.first()
         
         if existing_line:
             # MERGE: Update existing line
@@ -503,8 +516,7 @@ def create_or_merge_invoice_line(
             if max_quantity is not None:
                 new_qty = min(new_qty, Decimal(str(max_quantity)))
             # Consultation (CON001/CON002): always cap at 1 per encounter
-            sc_code = getattr(service_code, 'code', None) or ''
-            if (sc_code or '').strip().upper() in ('CON001', 'CON002'):
+            if sc_code in ('CON001', 'CON002'):
                 new_qty = min(new_qty, Decimal('1'))
             existing_line.quantity = new_qty
             existing_line.unit_price = unit_price  # Use current price
@@ -580,7 +592,13 @@ def merge_duplicate_lines_on_invoice(invoice):
     )
     by_code = {}
     for line in lines:
-        k = line.service_code_id
+        code = (getattr(line.service_code, 'code', None) or '').strip().upper()
+        # Keep distinct custom names under shared CASH-MISC (do not collapse into one line)
+        if code == 'CASH-MISC':
+            desc_key = (line.description or '').split(' x')[0].strip().lower()
+            k = (line.service_code_id, desc_key)
+        else:
+            k = (line.service_code_id, '')
         if k not in by_code:
             by_code[k] = []
         by_code[k].append(line)
@@ -681,16 +699,263 @@ def invoice_line_effective_total(line):
     return qty * up - disc + tax
 
 
+def invoice_line_is_pharmacy(line):
+    """
+    True for prescription / drug / walk-in prescribe lines on an encounter invoice.
+    Used so pharmacy can clear when the drug amount is paid without waiting for
+    consult/lab/other lines on the same invoice.
+    """
+    if not line or getattr(line, 'waived_at', None):
+        return False
+    if getattr(line, 'prescription_id', None):
+        return True
+    sc = getattr(line, 'service_code', None)
+    code = (getattr(sc, 'code', None) or '').strip().upper()
+    if code.startswith('DRUG-'):
+        return True
+    desc = (getattr(line, 'description', None) or '').lower()
+    if '(sale ps' in desc or 'prescribe' in desc:
+        return True
+    return False
+
+
+def invoice_line_is_registration(line):
+    """True for registration fee lines (front-desk charge)."""
+    if not line or getattr(line, 'waived_at', None):
+        return False
+    sc = getattr(line, 'service_code', None)
+    code = (getattr(sc, 'code', None) or '').strip().upper()
+    cat = (getattr(sc, 'category', None) or '').strip().lower()
+    if code in ('REG', 'REGISTRATION', 'REG-FEE', 'REGISTRATION_FEE') or code.startswith('REG'):
+        if 'DRUG' not in code:
+            return True
+    if cat in ('registration', 'registration_fee'):
+        return True
+    desc = (getattr(line, 'description', None) or '').lower()
+    return 'registration fee' in desc or desc.strip() in ('registration', 'reg fee')
+
+
+def invoice_line_is_consultation(line):
+    """True for consultation / GP visit fee lines."""
+    if not line or getattr(line, 'waived_at', None):
+        return False
+    if invoice_line_is_registration(line):
+        return False
+    sc = getattr(line, 'service_code', None)
+    code = (getattr(sc, 'code', None) or '').strip().upper()
+    cat = (getattr(sc, 'category', None) or '').strip().lower()
+    if code.startswith('CONSUM'):
+        return False
+    if cat in ('consultation', 'consult', 'gp'):
+        return True
+    if (
+        code in ('CON001', 'GP', 'CONSULT', 'CONSULTATION')
+        or code.startswith('CONSULT')
+        or code.startswith('CON-')
+    ):
+        return True
+    # CON001-style codes (CON + digits) but not CONSUMABLES
+    if code.startswith('CON') and code[3:].isdigit():
+        return True
+    desc = (getattr(line, 'description', None) or '').lower()
+    if 'consumable' in desc:
+        return False
+    return 'consultation' in desc or desc.strip() in ('gp', 'general practice')
+
+
+def _order_lines_for_payment_settlement(lines):
+    """
+    Front-desk first within a payment: registration, then consultation, then
+    remaining lines in created order. Matches how cashiers usually collect fees.
+    """
+    reg = [ln for ln in lines if invoice_line_is_registration(ln)]
+    consult = [ln for ln in lines if invoice_line_is_consultation(ln)]
+    other = [
+        ln for ln in lines
+        if not invoice_line_is_registration(ln) and not invoice_line_is_consultation(ln)
+    ]
+    return reg + consult + other
+
+
+def _invoice_payment_events_for_line_settlement(invoice):
+    """
+    Chronological payment amounts posted to this invoice.
+
+    Prefer PaymentAllocation rows (combined payments / tests), else receipts,
+    else payment_received transactions.
+
+    Deposit applications create PaymentReceipt(payment_method='deposit') without
+    PaymentAllocation — always merge those deposit receipts even when allocations
+    exist so Apply deposit marks lines Paid correctly.
+    """
+    events = []
+    allocation_events = []
+    try:
+        from hospital.models_accounting import PaymentAllocation
+
+        for a in (
+            PaymentAllocation.objects.filter(
+                invoice=invoice,
+                is_deleted=False,
+                payment_transaction__transaction_type='payment_received',
+                payment_transaction__is_deleted=False,
+            )
+            .select_related('payment_transaction')
+            .order_by('allocation_date', 'created', 'id')
+        ):
+            amt = Decimal(str(getattr(a, 'allocated_amount', None) or 0))
+            if amt <= 0:
+                continue
+            when = (
+                getattr(a, 'allocation_date', None)
+                or getattr(a, 'created', None)
+                or getattr(getattr(a, 'payment_transaction', None), 'created', None)
+            )
+            allocation_events.append((amt, when))
+    except Exception:
+        allocation_events = []
+
+    receipt_events = []
+    deposit_receipt_events = []
+    try:
+        from hospital.models_accounting import PaymentReceipt
+
+        for r in (
+            PaymentReceipt.objects.filter(invoice=invoice, is_deleted=False)
+            .exclude(notes__icontains='Part of combined bill')
+            .exclude(notes__icontains='Combined payment (summary)')
+            .order_by('created', 'id')
+        ):
+            amt = Decimal(str(getattr(r, 'amount_paid', None) or 0))
+            if amt <= 0:
+                continue
+            when = getattr(r, 'created', None) or getattr(r, 'receipt_date', None)
+            is_deposit = r.payment_method == 'deposit' or (
+                isinstance(getattr(r, 'service_details', None), dict)
+                and r.service_details.get('deposit_applied')
+            )
+            if is_deposit:
+                deposit_receipt_events.append((amt, when))
+            else:
+                receipt_events.append((amt, when))
+    except Exception:
+        receipt_events = []
+        deposit_receipt_events = []
+
+    if allocation_events:
+        # Combined cash/MoMo allocations + any deposit receipts from Apply deposit
+        events = allocation_events + deposit_receipt_events
+    elif receipt_events or deposit_receipt_events:
+        events = receipt_events + deposit_receipt_events
+
+        def _event_sort_key(item):
+            when = item[1]
+            # Missing timestamps sort first (legacy rows)
+            return (when is not None, when)
+
+        try:
+            events.sort(key=_event_sort_key)
+        except TypeError:
+            pass
+    else:
+        try:
+            from hospital.models_accounting import Transaction
+
+            for t in (
+                Transaction.objects.filter(
+                    invoice=invoice,
+                    is_deleted=False,
+                    transaction_type='payment_received',
+                ).order_by('created', 'id')
+            ):
+                amt = Decimal(str(getattr(t, 'amount', None) or 0))
+                if amt > 0:
+                    events.append((amt, getattr(t, 'created', None)))
+        except Exception:
+            pass
+
+    return events
+
+
+def invoice_pharmacy_lines_total(invoice):
+    """Sum of effective totals for pharmacy lines on the invoice."""
+    from hospital.models import InvoiceLine
+
+    if not invoice or not getattr(invoice, 'pk', None):
+        return Decimal('0.00')
+    total = Decimal('0.00')
+    for line in InvoiceLine.objects.filter(
+        invoice=invoice,
+        is_deleted=False,
+        waived_at__isnull=True,
+    ).select_related('service_code'):
+        if invoice_line_is_pharmacy(line):
+            total += invoice_line_effective_total(line)
+    return total
+
+
+def invoice_amount_already_applied(invoice):
+    """
+    Amount already collected against billable lines (line gross − open balance).
+    """
+    from hospital.models import InvoiceLine
+
+    if not invoice or not getattr(invoice, 'pk', None):
+        return Decimal('0.00')
+    inv_balance = Decimal(str(getattr(invoice, 'balance', None) or 0))
+    lines = InvoiceLine.objects.filter(
+        invoice=invoice,
+        is_deleted=False,
+        waived_at__isnull=True,
+    )
+    line_gross = sum(
+        (invoice_line_effective_total(line) for line in lines),
+        Decimal('0.00'),
+    )
+    return max(Decimal('0.00'), line_gross - inv_balance)
+
+
+def invoice_pharmacy_lines_are_settled(invoice):
+    """
+    True when collected payments cover the pharmacy (drug) line totals.
+
+    Uses pharmacy-first attribution: amount already applied is counted against
+    pharmacy lines first so cash patients can dispense after paying only the
+    drug amount, even when consult/lab on the same encounter invoice remain open.
+    Full invoice settlement also returns True.
+    """
+    if not invoice or getattr(invoice, 'is_deleted', False):
+        return False
+    status = (getattr(invoice, 'status', '') or '').lower()
+    if status in ('cancelled', 'draft'):
+        return False
+    inv_balance = Decimal(str(getattr(invoice, 'balance', None) or 0))
+    if inv_balance <= Decimal('0'):
+        tot = Decimal(str(getattr(invoice, 'total_amount', None) or 0))
+        return tot > Decimal('0') or invoice_pharmacy_lines_total(invoice) <= Decimal('0')
+
+    pharmacy_total = invoice_pharmacy_lines_total(invoice)
+    if pharmacy_total <= Decimal('0'):
+        return True
+    return invoice_amount_already_applied(invoice) >= pharmacy_total
+
+
 def invoice_line_remaining_balances(invoice):
     """
-    FIFO settlement of payments/deposits already applied to an invoice.
+    Settlement of payments/deposits already applied to an invoice, per line.
 
-    Treat (sum of line totals - balance) as amount already collected and consume it
-    against billable lines in created order. Returns one dict per billable line with
-    remaining due.
+    Uses chronological payment receipts when available. For each payment, only
+    lines that existed at (or shortly after) payment time are eligible, and
+    within those lines registration then consultation are settled before labs /
+    pharmacy / other (front-desk collection order).
+
+    This avoids marking Urine RE as paid when a GHS 50 payment was taken for
+    Registration Fee that was added moments earlier, while still keeping a
+    consult-only payment on consultation when registration is added later.
 
     Call after invoice.update_totals() so balance is current.
     """
+    from datetime import timedelta
     from hospital.models import InvoiceLine
 
     if not invoice or not getattr(invoice, 'pk', None):
@@ -731,45 +996,84 @@ def invoice_line_remaining_balances(invoice):
             for line in lines
         ]
 
-    pool = amount_already_applied
+    remaining_due = {
+        line.id: invoice_line_effective_total(line) for line in lines
+    }
+    line_by_id = {line.id: line for line in lines}
+
+    def _apply_pool(pool, candidate_lines):
+        ordered = _order_lines_for_payment_settlement(candidate_lines)
+        for ln in ordered:
+            if pool <= 0:
+                break
+            due = remaining_due.get(ln.id) or Decimal('0.00')
+            if due <= 0:
+                continue
+            take = min(pool, due)
+            remaining_due[ln.id] = due - take
+            pool -= take
+        return pool
+
+    events = _invoice_payment_events_for_line_settlement(invoice)
+    events_sum = sum((amt for amt, _ in events), Decimal('0.00'))
+    # If receipts under-count applied amount (legacy / deposit without receipt),
+    # settle the residual as a final pool against all open lines.
+    if events and events_sum + Decimal('0.01') < amount_already_applied:
+        events = list(events) + [(amount_already_applied - events_sum, None)]
+    elif not events:
+        events = [(amount_already_applied, None)]
+
+    # Cap total settlement to amount_already_applied (ignore over-listed receipts)
+    settle_budget = amount_already_applied
+    grace = timedelta(minutes=5)
+
+    for pay_amt, pay_when in events:
+        if settle_budget <= 0:
+            break
+        pool = min(Decimal(str(pay_amt or 0)), settle_budget)
+        if pool <= 0:
+            continue
+        if pay_when is not None:
+            cutoff = pay_when + grace
+            eligible = [
+                ln for ln in lines
+                if getattr(ln, 'created', None) is None or ln.created <= cutoff
+            ]
+            if not eligible:
+                eligible = list(lines)
+        else:
+            eligible = list(lines)
+        leftover = _apply_pool(pool, eligible)
+        applied_now = pool - leftover
+        settle_budget -= applied_now
+        # Payment larger than eligible open lines: put remainder on any later lines
+        if leftover > 0 and settle_budget >= 0:
+            leftover2 = _apply_pool(leftover, lines)
+            settle_budget -= (leftover - leftover2)
+
     rows = []
     open_indices = []
-
     for line in lines:
         line_total = invoice_line_effective_total(line)
+        rem = remaining_due.get(line.id) or Decimal('0.00')
+        if rem < 0:
+            rem = Decimal('0.00')
+        if rem > line_total:
+            rem = line_total
+        paid_on_line = line_total - rem
+        is_fully_paid = rem <= 0 or line_total <= 0
         if line_total <= 0:
-            rows.append({
-                'line': line,
-                'line_total': line_total,
-                'amount_paid': Decimal('0.00'),
-                'amount_remaining': Decimal('0.00'),
-                'is_fully_paid': True,
-            })
-            continue
-
-        if pool >= line_total:
-            paid_on_line = line_total
-            remaining = Decimal('0.00')
-            pool -= line_total
-            is_fully_paid = True
-        elif pool > 0:
-            paid_on_line = pool
-            remaining = line_total - pool
-            pool = Decimal('0.00')
-            is_fully_paid = False
-        else:
             paid_on_line = Decimal('0.00')
-            remaining = line_total
-            is_fully_paid = False
-
+            rem = Decimal('0.00')
+            is_fully_paid = True
         rows.append({
             'line': line,
             'line_total': line_total,
             'amount_paid': paid_on_line,
-            'amount_remaining': remaining,
+            'amount_remaining': rem,
             'is_fully_paid': is_fully_paid,
         })
-        if not is_fully_paid and remaining > 0:
+        if not is_fully_paid and rem > 0:
             open_indices.append(len(rows) - 1)
 
     # Penny drift: line remainders must sum to invoice.balance
@@ -798,13 +1102,99 @@ def invoice_open_balance_due(invoice):
     return sum((r['amount_remaining'] for r in rows), Decimal('0.00'))
 
 
-def invoice_breakdown_rows_for_display(invoice):
+def invoice_breakdown_rows_for_display(invoice, prefer_pharmacy_first=True):
     """
-    Build Total Bill / combined-payment breakdown rows with per-line remaining due (FIFO).
+    Build Total Bill / combined-payment breakdown rows with per-line remaining due.
+
     Fully paid lines are included with is_paid=True and amount 0 for badge display.
+
+    Settlement uses chronological payments with front-desk priority (registration,
+    then consultation) via invoice_line_remaining_balances.
+
+    When prefer_pharmacy_first and collected payments cover pharmacy (drug) lines,
+    those lines show as paid even if consult/lab on the same invoice still have balance —
+    so Total Bill / pharmacy queue does not invite a duplicate pharmacy payment.
+    Remaining balance is shown on non-pharmacy lines only.
+
+    Cashier Total Bill summary uses prefer_pharmacy_first=False so deposit/partial
+    payments mark lines Paid using the chronological front-desk settlement order.
     """
     inv_balance = getattr(invoice, 'balance', None) or Decimal('0.00')
     invoice_fully_paid = inv_balance <= 0
+    pharmacy_settled = False
+    if prefer_pharmacy_first and not invoice_fully_paid:
+        try:
+            pharmacy_settled = invoice_pharmacy_lines_are_settled(invoice)
+        except Exception:
+            pharmacy_settled = False
+
+    # Pharmacy-first display when drug amount is covered but invoice still open:
+    # show pharmacy lines as paid; allocate remaining balance across non-pharmacy lines.
+    if pharmacy_settled and not invoice_fully_paid:
+        from hospital.models import InvoiceLine
+
+        lines = list(
+            InvoiceLine.objects.filter(
+                invoice=invoice,
+                is_deleted=False,
+                waived_at__isnull=True,
+            )
+            .select_related('service_code')
+            .order_by('created', 'id')
+        )
+        pharmacy_lines = [ln for ln in lines if invoice_line_is_pharmacy(ln)]
+        other_lines = [ln for ln in lines if not invoice_line_is_pharmacy(ln)]
+        breakdown = []
+        for line in pharmacy_lines:
+            _up, _gross = invoice_line_display_unit_and_total(line)
+            lt = invoice_line_effective_total(line)
+            breakdown.append({
+                'description': invoice_line_display_description(line),
+                'quantity': line.quantity,
+                'unit_price': _up,
+                'amount': Decimal('0.00'),
+                'line_id': str(line.id),
+                'is_waived': False,
+                'is_paid': True,
+                'line_total_gross': _gross,
+                'amount_paid_on_line': lt,
+            })
+        pool = inv_balance
+        for line in other_lines:
+            _up, _gross = invoice_line_display_unit_and_total(line)
+            lt = invoice_line_effective_total(line)
+            if lt <= 0:
+                remaining = Decimal('0.00')
+                paid = Decimal('0.00')
+                is_paid = True
+            elif pool >= lt:
+                remaining = lt
+                paid = Decimal('0.00')
+                pool -= lt
+                is_paid = False
+            elif pool > 0:
+                remaining = pool
+                paid = lt - pool
+                pool = Decimal('0.00')
+                is_paid = False
+            else:
+                remaining = Decimal('0.00')
+                paid = lt
+                is_paid = True
+            breakdown.append({
+                'description': invoice_line_display_description(line),
+                'quantity': line.quantity,
+                'unit_price': _up,
+                'amount': remaining,
+                'line_id': str(line.id),
+                'is_waived': False,
+                'is_paid': is_paid,
+                'line_total_gross': _gross,
+                'amount_paid_on_line': paid,
+            })
+        if breakdown:
+            return breakdown
+
     remaining_rows = invoice_line_remaining_balances(invoice)
     breakdown = []
 
@@ -846,9 +1236,44 @@ def invoice_line_display_description(line):
     """
     ld = (getattr(line, 'description', None) or '').strip()
     if ld:
-        return ld
+        return clean_bill_line_description(ld)
     sc = getattr(line, 'service_code', None)
-    return (getattr(sc, 'description', None) or '').strip() or '—'
+    return clean_bill_line_description(
+        (getattr(sc, 'description', None) or '').strip() or '—'
+    )
+
+
+def clean_bill_line_description(desc):
+    """
+    Normalize invoice/pharmacy line labels for Total Bill and Generate Bill print.
+    Strips internal walk-in sale markers, bogus trailing strength \"0\", and duplicated
+    size/strength tokens (e.g. \"SYRINGE 2ML  2ML\", \"Vicryl - Sutures 1 1\").
+    """
+    s = (desc or '').strip()
+    if not s or s == '—':
+        return s or '—'
+    # Internal prescribe/walk-in marker — not for patient-facing bills
+    s = re.sub(r'\s*\(\s*Sale\s+PS?\d+\s*\)\s*$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s+', ' ', s).strip()
+    # Trailing lone \"0\" strength/size (Vitamin K Injection 0, Surgical Gloves 7.5 0)
+    s = re.sub(r'\s+0$', '', s).strip()
+    # Drop last token when it duplicates the previous (case-insensitive)
+    parts = s.split(' ')
+    while len(parts) >= 2 and parts[-1].casefold() == parts[-2].casefold():
+        parts = parts[:-1]
+    s = ' '.join(parts).strip()
+    return s or '—'
+
+
+def drug_label_for_bill(name, strength=None):
+    """Build a clean drug/item label; omit empty or placeholder strength \"0\"."""
+    base = (name or '').strip() or 'Item'
+    st = (strength if strength is not None else '')
+    st = str(st).strip()
+    if not st or st in ('0', '0.0', '0.00', 'None', 'N/A', 'n/a'):
+        return clean_bill_line_description(base)
+    label = f'{base} {st}'.strip()
+    return clean_bill_line_description(label)
 
 
 def invoice_line_display_unit_and_total(line):
@@ -906,6 +1331,7 @@ def align_invoice_breakdown_to_balance(breakdown, inv_balance):
     """
     Scale per-line breakdown amounts so they sum to the invoice balance due when
     deposits/partial payments mean balance < gross line charges.
+    Also adjusts unit_price so qty * unit matches the scaled amount on print.
     """
     if not breakdown:
         return breakdown
@@ -913,6 +1339,7 @@ def align_invoice_breakdown_to_balance(breakdown, inv_balance):
     if inv_balance <= 0:
         for row in breakdown:
             row['amount'] = Decimal('0.00')
+            row['unit_price'] = Decimal('0.00')
         return breakdown
     gross = sum(Decimal(str(r.get('amount') or 0)) for r in breakdown)
     if gross <= 0 or gross == inv_balance:
@@ -924,11 +1351,14 @@ def align_invoice_breakdown_to_balance(breakdown, inv_balance):
     last_idx = len(breakdown) - 1
     for i, row in enumerate(breakdown):
         if i == last_idx:
-            row['amount'] = (inv_balance - running).quantize(Decimal('0.01'))
+            amt = (inv_balance - running).quantize(Decimal('0.01'))
         else:
             amt = (Decimal(str(row.get('amount') or 0)) * ratio).quantize(Decimal('0.01'))
-            row['amount'] = amt
             running += amt
+        row['amount'] = amt
+        qty = Decimal(str(row.get('quantity') or 1))
+        if qty > 0:
+            row['unit_price'] = (amt / qty).quantize(Decimal('0.01'))
     return breakdown
 
 

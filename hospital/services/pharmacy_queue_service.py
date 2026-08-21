@@ -92,18 +92,37 @@ def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatie
                 or getattr(encounter, 'ended_at', None)
             )
             is_start_dose = bool(getattr(prescription, 'is_start_dose', False))
-            if consultation_completed or changed:
-                title = 'Prescription Updated — Dispense Required'
-                message = (
-                    f'{drug_name} updated for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
-                    'Open pharmacy queue to review and dispense.'
+            hold_for_insurance = False
+            try:
+                from hospital.services.auto_billing_service import AutoBillingService
+
+                hold_for_insurance = (
+                    AutoBillingService._encounter_requires_consultation_complete_for_pharmacy(
+                        encounter
+                    )
                 )
+            except Exception:
+                hold_for_insurance = False
+
+            if consultation_completed or changed or not hold_for_insurance:
+                if changed:
+                    title = 'Prescription Updated — Dispense Required'
+                    message = (
+                        f'{drug_name} updated for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
+                        'Open pharmacy queue to review and dispense.'
+                    )
+                else:
+                    title = 'New Medication — Dispense Required'
+                    message = (
+                        f'{drug_name} added for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
+                        'Open the pharmacy dispensing queue to verify and dispense.'
+                    )
                 notif_type = 'order_urgent'
             elif is_start_dose:
                 title = 'Stat dose — prepare now'
                 message = (
                     f'Stat/start dose: {drug_name} for {patient_name}{mrn_bit}{doctor_bit} at {added_at}. '
-                    'Prepare and dispense the stat dose now. Other meds on this visit stay held '
+                    'Prepare and dispense the stat dose now. Other insurance meds on this visit stay held '
                     'until the doctor completes the consultation.'
                 )
                 notif_type = 'order_urgent'
@@ -111,7 +130,7 @@ def notify_pharmacy_new_prescription(prescription, encounter, doctor, *, inpatie
                 title = 'Temporary Prescription Added'
                 message = (
                     f'{drug_name} for {patient_name}{mrn_bit}{doctor_bit}. '
-                    'Consultation is not completed yet — do not dispense until the doctor completes the visit.'
+                    'Insurance consultation is not completed yet — do not dispense until the doctor completes the visit.'
                 )
                 notif_type = 'other'
 
@@ -258,8 +277,21 @@ def enrich_pending_medication_orders(orders):
         else:
             order.is_new_pharmacy_item = False
         encounter = getattr(order, 'encounter', None)
+        hold_for_insurance = False
+        try:
+            from hospital.services.auto_billing_service import AutoBillingService
+
+            hold_for_insurance = (
+                AutoBillingService._encounter_requires_consultation_complete_for_pharmacy(
+                    encounter
+                )
+            )
+        except Exception:
+            hold_for_insurance = False
         order.consultation_pending = bool(
-            encounter and not encounter_consultation_complete(encounter)
+            encounter
+            and hold_for_insurance
+            and not encounter_consultation_complete(encounter)
         )
         order.has_start_dose = order.id in start_dose_order_ids
     return orders
@@ -271,6 +303,7 @@ def pending_pharmacy_alert_items(*, since=None, limit=40):
     Returns list of dicts with patient, drug, order, prescription ids and added_at ISO.
     """
     from hospital.consultation_status import encounter_consultation_complete
+    from hospital.services.auto_billing_service import AutoBillingService
 
     qs = (
         _undispensed_prescription_filter()
@@ -301,6 +334,13 @@ def pending_pharmacy_alert_items(*, since=None, limit=40):
         ward = ''
         if enc and getattr(enc, 'admission', None) and enc.admission.ward:
             ward = enc.admission.ward.name
+        hold_for_insurance = False
+        try:
+            hold_for_insurance = (
+                AutoBillingService._encounter_requires_consultation_complete_for_pharmacy(enc)
+            )
+        except Exception:
+            hold_for_insurance = False
         items.append(
             {
                 'prescription_id': str(rx.id),
@@ -322,7 +362,9 @@ def pending_pharmacy_alert_items(*, since=None, limit=40):
                 ),
                 'ward': ward,
                 'consultation_pending': bool(
-                    enc and not encounter_consultation_complete(enc)
+                    enc
+                    and hold_for_insurance
+                    and not encounter_consultation_complete(enc)
                 ),
                 'is_start_dose': bool(getattr(rx, 'is_start_dose', False)),
             }

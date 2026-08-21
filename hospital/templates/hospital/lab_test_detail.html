@@ -95,8 +95,58 @@
                         <div class="fw-semibold">GHS {{ test.price|default:"0.00" }}</div>
                     </div>
                     <div class="col-md-6">
+                        <div class="muted-kv small">NHIS</div>
+                        <div class="fw-semibold">
+                            {% if test.nhis_covered %}
+                            <span class="badge bg-primary">On NHIS panel</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Not on NHIS — cash at cashier</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Insurance</div>
+                        <div class="fw-semibold">
+                            {% if test.exclude_from_insurance %}
+                            <span class="badge bg-warning text-dark">Excluded (all insurers)</span>
+                            {% if test.insurance_exclusion_reason %}
+                            <span class="text-muted small ms-1">{{ test.insurance_exclusion_reason }}</span>
+                            {% endif %}
+                            {% elif selected_insurance_company_ids %}
+                            <span class="badge bg-warning text-dark">Excluded (selected insurers)</span>
+                            {% if test.insurance_exclusion_reason %}
+                            <span class="text-muted small ms-1">{{ test.insurance_exclusion_reason }}</span>
+                            {% endif %}
+                            <ul class="small mb-0 mt-2">
+                                {% for company in insurance_companies %}
+                                {% if company.id in selected_insurance_company_ids %}
+                                <li>{{ company.name }} ({{ company.code }})</li>
+                                {% endif %}
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            <span class="badge bg-success">Covered</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
                         <div class="muted-kv small">Specimen Type</div>
                         <div class="fw-semibold">{{ test.specimen_type|default:"Not specified" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="muted-kv small">Stock tracking</div>
+                        <div class="fw-semibold">
+                            {% if test.stock_tracking == 'measurable' %}
+                            Measurable kit{% if test.kit_name %} — {{ test.kit_name }}{% endif %}
+                            {% if test.qty_per_box %}<div class="small text-muted">{{ test.qty_per_box }} pieces per box</div>{% endif %}
+                            {% elif test.stock_tracking == 'immeasurable' %}
+                            Immeasurable (chemistry){% if test.kit_name %} — {{ test.kit_name }}{% endif %}
+                            {% if test.tests_per_kit %}<div class="small text-muted">{{ test.tests_per_kit }} tests per kit</div>{% endif %}
+                            {% if test.reagent_volume_note %}<div class="small text-muted">{{ test.reagent_volume_note }}</div>{% endif %}
+                            {% else %}
+                            Not tracked
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -148,6 +198,23 @@
             </div>
         </div>
     </div>
+
+    {% if linked_reagents %}
+    <div class="detail-card">
+        <h5 class="mb-2"><i class="bi bi-droplet me-2 text-primary"></i>Deducted when this test is completed</h5>
+        <ul class="mb-0">
+            {% for reagent in linked_reagents %}
+            <li>
+                <a href="{% url 'hospital:reagent_detail' reagent.id %}">{{ reagent.name }}</a>
+                — on hand {{ reagent.quantity_on_hand }} {{ reagent.unit }}
+                {% if reagent.qty_consumed_per_test %}
+                (uses {{ reagent.qty_consumed_per_test }} per test)
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
 
     <div class="detail-card">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">

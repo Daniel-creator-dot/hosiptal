@@ -51,9 +51,9 @@ def create_insurance_claim_item(sender, instance, created, **kwargs):
         if not patient:
             return
 
-        insurance_id = patient.insurance_id or patient.insurance_member_id
-        if not insurance_id:
-            insurance_id = "NOT_PROVIDED"
+        from hospital.utils_billing import patient_billing_member_id_display
+
+        insurance_id = patient_billing_member_id_display(patient, invoice.payer) or "NOT_PROVIDED"
 
         # get_or_create to avoid duplicate key / IntegrityError inside caller's atomic
         billed = instance.line_total if instance.line_total is not None else Decimal('0.00')

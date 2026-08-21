@@ -1,3 +1,4 @@
+{% load hospital_extras %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -318,6 +319,42 @@
             background: #f8f9fa;
             border-radius: 6px;
             border-left: 4px solid #2196F3;
+        }
+
+        .attachment-banner.missing {
+            border-left-color: #fb8c00;
+            background: #fff8e1;
+        }
+
+        .attachment-preview {
+            margin-top: 16px;
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+        }
+
+        .attachment-preview iframe {
+            display: block;
+            width: 100%;
+            min-height: 720px;
+            border: 0;
+            background: #fff;
+        }
+
+        .attachment-preview img {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .attachment-preview-caption {
+            padding: 10px 12px;
+            font-size: 10pt;
+            color: #555;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
         }
 
         .footer-notes-missing {
@@ -675,6 +712,15 @@
     </style>
 </head>
 <body>
+    {% if messages %}
+    <div class="no-print" style="max-width: 210mm; margin: 12px auto 0; padding: 0 10mm;">
+        {% for message in messages %}
+        <div style="padding: 12px 14px; margin-bottom: 8px; border-radius: 8px; background: {% if message.tags == 'error' %}#ffebee{% elif message.tags == 'warning' %}#fff8e1{% else %}#e8f5e9{% endif %}; border: 1px solid {% if message.tags == 'error' %}#ef9a9a{% elif message.tags == 'warning' %}#ffe082{% else %}#a5d6a7{% endif %}; color: #333;">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
     <!-- Watermark -->
     <div class="watermark">{{ settings.hospital_name|default:"LABORATORY" }}</div>
 
@@ -756,6 +802,13 @@
                         {% endif %}
                     </span>
                 </div>
+                {% lab_order_diagnosis result.order as ordering_diagnosis %}
+                {% if ordering_diagnosis %}
+                <div class="info-item" style="grid-column: 1 / -1;">
+                    <span class="info-label">Diagnosis / Clinical Indication:</span>
+                    <span class="info-value">{{ ordering_diagnosis }}</span>
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -788,15 +841,32 @@
             </table>
             {% else %}
             <p style="padding: 20px; text-align: center; color: #999;">No tabular results on file for this test.</p>
-            {% if not result.attachment %}
+            {% if attachment_available %}
+            <p style="padding: 0 20px 8px; text-align: center; color: #666; font-size: 11pt;">See the attached report below for the full result.</p>
+            {% elif attachment_has_record %}
+            <p style="padding: 0 20px 16px; text-align: center; color: #e65100; font-size: 11pt;">Recorded attachment <strong>{{ attachment_filename }}</strong> is missing on this server. Re-upload from the lab entry screen.</p>
+            {% else %}
             <p style="padding: 0 20px 16px; text-align: center; color: #666; font-size: 11pt;">If results were verified, ask the lab to confirm values are saved, or attach a scanned report.</p>
             {% endif %}
             {% endif %}
-            {% if result.attachment %}
+            {% if attachment_available %}
             <div class="attachment-banner">
-                <strong>Attached Document:</strong>
-                <a href="{% url 'hospital:lab_result_attachment_file' result.pk %}" target="_blank" rel="noopener" style="color: #1976D2; margin-right: 12px;">Open</a>
+                <strong>Attached Document:</strong> {{ attachment_filename }}
+                <a href="{% url 'hospital:lab_result_attachment_file' result.pk %}" target="_blank" rel="noopener" style="color: #1976D2; margin-left: 12px; margin-right: 12px;">Open</a>
                 <a href="{% url 'hospital:lab_result_attachment_file' result.pk %}?download=1" style="color: #0d47a1; font-weight: 600;">Download</a>
+            </div>
+            <div class="attachment-preview no-print">
+                {% if attachment_preview_type == 'pdf' %}
+                <iframe src="{{ attachment_file_url }}" title="Lab report attachment"></iframe>
+                {% elif attachment_preview_type == 'image' %}
+                <img src="{{ attachment_file_url }}" alt="{{ attachment_filename }}">
+                {% endif %}
+                <div class="attachment-preview-caption">Uploaded report preview{% if attachment_preview_type == 'pdf' %} — use Open/Download for full resolution{% endif %}</div>
+            </div>
+            {% elif attachment_has_record %}
+            <div class="attachment-banner missing">
+                <strong>Attached Document (missing file):</strong> {{ attachment_filename }}
+                <p style="margin: 8px 0 0; font-size: 10pt; color: #6d4c41;">The filename is saved but the file is not on this server. Open the lab result entry screen and upload the report again.</p>
             </div>
             {% endif %}
         </div>
@@ -945,7 +1015,7 @@
             <button type="button" onclick="window.print()" style="padding: 14px 22px; background: #2196F3; color: white; border: none; border-radius: 8px; font-size: 13pt; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
                 🖨️ Print
             </button>
-            {% if result.attachment %}
+            {% if attachment_available %}
             <a href="{% url 'hospital:lab_result_attachment_file' result.pk %}?download=1" style="padding: 14px 18px; background: #1565c0; color: white; border: none; border-radius: 8px; font-size: 12pt; font-weight: 600; text-decoration: none; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
                 ⬇ Download attachment
             </a>

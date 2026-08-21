@@ -16,7 +16,7 @@ from ..models_advanced import SMSLog
 logger = logging.getLogger(__name__)
 
 # Appended to automated / manual lab SMS so patients know how to follow up clinically.
-LAB_SMS_NURSE_DOCTOR_LINE = "Please see a nurse to schedule you to see a doctor."
+LAB_SMS_NURSE_DOCTOR_LINE = "See a nurse to book a doctor."
 
 # Patient SMS: only official payment receipts should show money (paid amount). Everything else
 # gets currency stripped so draft/pending totals never go out by SMS. Staff procurement alerts
@@ -31,6 +31,40 @@ def _should_strip_payment_amounts_from_sms(message_type: str) -> bool:
     return (message_type or '') not in _MESSAGE_TYPES_ALLOW_GHS_IN_SMS
 
 
+def compact_sms_text(text: str) -> str:
+    """
+    Shrink SMS for cost: drop emojis (UCS-2 = 70 chars/seg), collapse spaces/newlines.
+    Keeps GSM-7 where possible so one segment holds ~160 chars instead of ~70.
+    """
+    if not text:
+        return ''
+    out = str(text)
+    # Emoji + variation selectors / ZWJ (force multi-segment UCS-2 billing)
+    out = re.sub(
+        r'[\U0001F300-\U0001FAFF\U00002702-\U000027B0\U0000FE00-\U0000FE0F'
+        r'\U0000200D\U00002600-\U000026FF\U0001F1E0-\U0001F1FF]+',
+        '',
+        out,
+    )
+    # Fancy punctuation → plain ASCII (still GSM-safe)
+    out = (
+        out.replace('—', '-')
+        .replace('–', '-')
+        .replace('’', "'")
+        .replace('‘', "'")
+        .replace('“', '"')
+        .replace('”', '"')
+        .replace('…', '...')
+    )
+    out = re.sub(r'[ \t\r\f\v]+', ' ', out)
+    out = re.sub(r' *\n *', '\n', out)
+    out = re.sub(r'\n{2,}', '\n', out)
+    # Single-line SMS: newlines still cost a character and encourage padding
+    out = out.replace('\n', ' ').strip()
+    out = re.sub(r' {2,}', ' ', out)
+    return out.strip()
+
+
 def _strip_payment_amounts_from_sms_text(text: str) -> str:
     """Remove GHS/cedi amount patterns so patients never get wrong figures via SMS."""
     if not text:
@@ -39,11 +73,8 @@ def _strip_payment_amounts_from_sms_text(text: str) -> str:
     out = re.sub(r'\bGHS\s*[\d,]+(?:\.\d{1,4})?\b', '', out, flags=re.IGNORECASE)
     out = re.sub(r'\bGH[₵c]\s*[\d,]+(?:\.\d{1,4})?\b', '', out, flags=re.IGNORECASE)
     out = re.sub(r'(?<![\d-])₵\s*[\d,]+(?:\.\d{1,4})?\b', '', out)
-    out = re.sub(r'(?i)\boutstanding\s+balance\s+of\s+', 'outstanding balance — ', out)
-    out = re.sub(r'[ \t]{2,}', ' ', out)
-    out = re.sub(r' *\n *', '\n', out)
-    out = re.sub(r'\n{3,}', '\n\n', out)
-    return out.strip()
+    out = re.sub(r'(?i)\boutstanding\s+balance\s+of\s+', 'outstanding balance - ', out)
+    return compact_sms_text(out)
 
 
 class SMSService:
@@ -213,15 +244,17 @@ class SMSService:
         message_original = message or ''
         if _should_strip_payment_amounts_from_sms(message_type):
             message_original = _strip_payment_amounts_from_sms_text(message_original)
+        # Always compact before send — long spaced/emoji SMS burn extra segments (cost).
+        message_to_send = compact_sms_text(message_original)
         normalized_phone = self._normalize_phone(original_phone)
-        normalized_message = self._normalize_message(message_original)
+        normalized_message = self._normalize_message(message_to_send)
 
         # Fail fast if phone is missing (still log once)
         if not original_phone:
             return SMSLog.objects.create(
                 recipient_phone='',
                 recipient_name=recipient_name,
-                message=message_original,
+                message=message_to_send,
                 message_type=message_type,
                 status='failed',
                 error_message="Phone number is required",
@@ -308,7 +341,7 @@ class SMSService:
             # Intek SMS API: POST JSON with Bearer token
             payload = {
                 'recipients': [normalized_phone],
-                'message': message_original,
+                'message': message_to_send,
                 'sender': self.sender_id,
             }
             headers = {**self._auth_headers(), 'Content-Type': 'application/json'}
@@ -460,27 +493,18 @@ class SMSService:
                 suggests_next_calendar_day = True
                 break
         if suggests_next_calendar_day:
-            return (
-                "Other tests are still running and may be ready tomorrow; "
-                "we will send another message when all are ready."
-            )
-        return (
-            "Other tests are still being processed; "
-            "we will notify you when all are ready."
-        )
+            return "Other tests may be ready tomorrow; we will SMS when all are done."
+        return "Other tests still running; we will SMS when all are ready."
 
     def send_appointment_reminder(self, appointment):
         """Send appointment reminder SMS"""
         patient = appointment.patient
         provider = appointment.provider
-        date_str = appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')
+        date_str = appointment.appointment_date.strftime('%d/%m/%Y %I:%M%p')
         
         message = (
-            f"Dear {patient.first_name},\n\n"
-            f"Your appointment with Dr. {provider.user.get_full_name()}\n"
-            f"is scheduled for {date_str}.\n\n"
-            f"Please arrive 15 minutes early.\n\n"
-            f"Reply STOP to opt out."
+            f"Hi {patient.first_name}, appt with Dr {provider.user.get_full_name()} "
+            f"on {date_str}. Arrive 15 min early. -PrimeCare"
         )
         
         return self.send_sms(
@@ -512,33 +536,12 @@ class SMSService:
                 )
                 return sms_log
             
-            # Build message with result summary if available (no specific test name in SMS)
-            message = f"Dear {patient.first_name},\n\n"
-            message += "Your lab test results are ready.\n"
-            
-            # Add result summary if completed
-            if lab_result.status == 'completed' and lab_result.value:
-                result_text = f"Result: {lab_result.value}"
-                if lab_result.units:
-                    result_text += f" {lab_result.units}"
-                if lab_result.range_low and lab_result.range_high:
-                    result_text += f" (Normal range: {lab_result.range_low}-{lab_result.range_high})"
-                if lab_result.is_abnormal:
-                    result_text += " - ABNORMAL"
-                message += f"{result_text}\n"
-                
-                # Add verification info if available
-                if lab_result.verified_by:
-                    message += f"Verified by: Dr. {lab_result.verified_by.user.get_full_name() or lab_result.verified_by.user.username}\n"
-                if lab_result.verified_at:
-                    message += f"Verified on: {lab_result.verified_at.strftime('%B %d, %Y at %I:%M %p')}\n"
-            
-            # Add reference number
-            message += f"Reference: {lab_result.order.encounter.patient.mrn}\n"
-            
-            message += "\nPlease visit the hospital or check your patient portal for full details.\n\n"
-            message += f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
-            message += "Thank you,\nPrimeCare Hospital"
+            # Short lab-ready SMS (no long result dumps — saves segments)
+            mrn = lab_result.order.encounter.patient.mrn
+            message = (
+                f"Hi {patient.first_name}, lab results ready. Ref {mrn}. "
+                f"{LAB_SMS_NURSE_DOCTOR_LINE} -PrimeCare"
+            )
             
             return self.send_sms(
                 phone_number=patient.phone_number,
@@ -606,14 +609,10 @@ class SMSService:
                 getattr(patient, 'full_name', '').split(' ')[0] if getattr(patient, 'full_name', None) else 'Patient'
             )
             follow = self.pending_labs_followup_wording(pending, now=timezone.now())
+            mrn = getattr(patient, 'mrn', '') or ''
             message = (
-                f"Dear {first_name},\n\n"
-                f"Some of your lab results for this visit are now ready.\n"
-                f"{follow}\n"
-                f"Reference: {getattr(patient, 'mrn', '') or ''}\n\n"
-                f"Please visit the hospital or check your patient portal for details.\n\n"
-                f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
-                f"Thank you,\nPrimeCare Hospital"
+                f"Hi {first_name}, some lab results ready. {follow} "
+                f"Ref {mrn}. {LAB_SMS_NURSE_DOCTOR_LINE} -PrimeCare"
             )
 
             return self.send_sms(
@@ -658,13 +657,10 @@ class SMSService:
                 return sms_log
 
             first_name = getattr(patient, 'first_name', None) or (getattr(patient, 'full_name', '').split(' ')[0] if getattr(patient, 'full_name', None) else 'Patient')
+            mrn = getattr(patient, 'mrn', '') or ''
             message = (
-                f"Dear {first_name},\n\n"
-                f"All your lab results for this visit are now ready.\n"
-                f"Reference: {getattr(patient, 'mrn', '') or ''}\n\n"
-                f"Please visit the hospital or check your patient portal for full details.\n\n"
-                f"{LAB_SMS_NURSE_DOCTOR_LINE}\n\n"
-                f"Thank you,\nPrimeCare Hospital"
+                f"Hi {first_name}, all lab results ready. Ref {mrn}. "
+                f"{LAB_SMS_NURSE_DOCTOR_LINE} -PrimeCare"
             )
 
             return self.send_sms(
@@ -699,10 +695,8 @@ class SMSService:
             return None
 
         message = (
-            f"Dear {patient.first_name},\n\n"
-            f"You have an outstanding balance on invoice {invoice.invoice_number}.\n"
-            f"Please go to the Cashier to settle your bill — the correct amount is available there.\n\n"
-            f"Thank you."
+            f"Hi {patient.first_name}, bill pending ({invoice.invoice_number}). "
+            f"Pay at Cashier. -PrimeCare"
         )
         
         return self.send_sms(
@@ -741,14 +735,9 @@ class SMSService:
             return sms_log
         
         message = (
-            f"Hello {staff_name},\n\n"
-            f"Your leave request has been approved.\n\n"
-            f"Type: {leave_request.get_leave_type_display()}\n"
-            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
-            f"Days: {leave_request.days_requested} working day(s)\n\n"
-            f"Kindly ensure all pending duties are properly handed over before your departure. "
-            f"Wishing you a restful and refreshing break.\n\n"
-            f"— PrimeCare Management"
+            f"Hi {staff_name}, leave approved: {leave_request.get_leave_type_display()} "
+            f"{leave_request.start_date.strftime('%d/%m/%Y')}-{leave_request.end_date.strftime('%d/%m/%Y')} "
+            f"({leave_request.days_requested} day(s)). Hand over duties before you go. -PrimeCare"
         )
         
         return self.send_sms(
@@ -787,19 +776,14 @@ class SMSService:
             return sms_log
         
         message = (
-            f"Dear {staff_name},\n\n"
-            f"Your leave request has been REJECTED.\n\n"
-            f"Type: {leave_request.get_leave_type_display()}\n"
-            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
+            f"Hi {staff_name}, leave REJECTED: {leave_request.get_leave_type_display()} "
+            f"{leave_request.start_date.strftime('%d/%m/%Y')}-{leave_request.end_date.strftime('%d/%m/%Y')}."
         )
         
         if leave_request.rejection_reason:
-            message += f"\nReason: {leave_request.rejection_reason}\n"
+            message += f" Reason: {leave_request.rejection_reason}."
         
-        message += (
-            f"\nPlease contact your supervisor for clarification.\n\n"
-            f"PrimeCare Hospital"
-        )
+        message += " See your supervisor. -PrimeCare"
         
         return self.send_sms(
             phone_number=phone_number,
@@ -828,13 +812,10 @@ class SMSService:
             return None
         
         message = (
-            f"Dear {manager_name},\n\n"
-            f"New leave request submitted by {staff.user.get_full_name()}:\n\n"
-            f"Type: {leave_request.get_leave_type_display()}\n"
-            f"Dates: {leave_request.start_date.strftime('%d/%m/%Y')} to {leave_request.end_date.strftime('%d/%m/%Y')}\n"
-            f"Days: {leave_request.days_requested}\n\n"
-            f"Please review and approve/reject.\n\n"
-            f"PrimeCare Hospital"
+            f"Hi {manager_name}, leave request from {staff.user.get_full_name()}: "
+            f"{leave_request.get_leave_type_display()} "
+            f"{leave_request.start_date.strftime('%d/%m/%Y')}-{leave_request.end_date.strftime('%d/%m/%Y')} "
+            f"({leave_request.days_requested}d). Please review. -PrimeCare"
         )
         
         return self.send_sms(
@@ -869,15 +850,11 @@ class SMSService:
         
         # Calculate age
         age = staff.age if staff.age else ''
-        age_text = f" (Age: {age})" if age else ''
+        age_text = f" ({age})" if age else ''
         
         message = (
-            f"🎉 Happy Birthday, {staff_name}!{age_text}\n\n"
-            f"The entire PrimeCare Hospital family wishes you a wonderful day "
-            f"filled with joy, happiness, and good health.\n\n"
-            f"Thank you for your dedication and service!\n\n"
-            f"Best wishes,\n"
-            f"PrimeCare Hospital Management"
+            f"Happy Birthday {staff_name}{age_text}! "
+            f"Wishing you joy and good health. Thank you for your service. -PrimeCare"
         )
         
         return self.send_sms(
@@ -901,12 +878,8 @@ class SMSService:
             return None
         
         message = (
-            f"Birthday Reminder!\n\n"
-            f"It's {staff.user.get_full_name()}'s birthday today!\n"
-            f"Department: {staff.department.name}\n"
-            f"Profession: {staff.get_profession_display()}\n\n"
-            f"Consider celebrating with the team!\n\n"
-            f"PrimeCare Hospital"
+            f"Birthday today: {staff.user.get_full_name()} "
+            f"({staff.department.name}). -PrimeCare"
         )
         
         return self.send_sms(

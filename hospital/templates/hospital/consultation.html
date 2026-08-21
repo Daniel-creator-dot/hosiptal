@@ -459,6 +459,39 @@
         border-left: 4px solid var(--primary);
     }
 
+    .past-prescription-refill-card {
+        cursor: pointer;
+        border-left-color: #64748b;
+        background: #f8fafc;
+    }
+    .past-prescription-refill-card:hover {
+        background: #eef2ff;
+        border-left-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.12);
+    }
+    .past-prescription-refill-card.past-rx-out-of-stock {
+        cursor: not-allowed;
+        opacity: 0.72;
+        border-left-color: #dc2626;
+        background: #fef2f2;
+    }
+    .past-prescription-refill-card.past-rx-out-of-stock:hover {
+        background: #fef2f2;
+        border-left-color: #dc2626;
+        box-shadow: none;
+    }
+    .past-prescription-refill-card:focus {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+    }
+    .past-prescription-refill-card.refill-flash {
+        animation: pastRxRefillFlash 0.7s ease;
+    }
+    @keyframes pastRxRefillFlash {
+        0% { background: #c7d2fe; }
+        100% { background: #f8fafc; }
+    }
+
     /* Test Grid */
     .test-grid {
         display: grid;
@@ -919,7 +952,8 @@
                 <i class="bi bi-eye"></i> View Mode – Consultation Notes
             </h5>
             <p style="margin: 8px 0 0 0; color: #78350f; font-size: 14px;">
-                {% if consultation_note_author_name %}Note by <strong>Dr. {{ consultation_note_author_name }}</strong>. Only the doctor who wrote this note can edit it.{% else %}You are viewing consultation notes. Only the doctor who wrote the note can edit it.{% endif %}
+                {% if consultation_note_author_name %}Note by <strong>Dr. {{ consultation_note_author_name }}</strong>.{% else %}You are viewing consultation notes.{% endif %}
+                Doctors can edit notes on active or reopened consultations.
             </p>
         </div>
     </div>
@@ -937,7 +971,7 @@
             <button class="tab-btn" data-tab="vitals">📊 Vitals</button>
             <button class="tab-btn {% if not request.GET.prescription_created %}active{% endif %}" data-tab="clinical-notes">📝 Clinical Notes &amp; Diagnosis</button>
             <button class="tab-btn" data-tab="lab">🧪 Lab Orders</button>
-            <button class="tab-btn" data-tab="imaging">📷 Imaging</button>
+            <button class="tab-btn" data-tab="imaging">📷 Imaging{% if imaging_tab_file_count %}<span class="badge bg-primary ms-1" style="font-size:10px;">{{ imaging_tab_file_count }}</span>{% endif %}</button>
             <button class="tab-btn {% if request.GET.prescription_created %}active{% endif %}" data-tab="prescribe">💊 Prescribe</button>
             <button class="tab-btn" data-tab="summary">📋 Summary</button>
         </div>
@@ -1159,6 +1193,11 @@
                                         Recorded by: {{ vital.recorded_by.user.get_full_name|default:vital.recorded_by.user.username }}
                                     </div>
                                     {% endif %}
+                                    <div style="margin-top: 8px;">
+                                        <a href="{% url 'hospital:record_vitals' encounter.id %}?vital_id={{ vital.pk }}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-pencil"></i> Edit
+                                        </a>
+                                    </div>
                                 </div>
                                 {% endfor %}
                             {% else %}
@@ -1233,6 +1272,12 @@
                             <!-- 1. Name of drug -->
                             <div class="form-group">
                                 <label class="form-label">Search Drug</label>
+                                {% if patient_is_nhis %}
+                                <div class="alert alert-info py-2 px-3 small mb-2">
+                                    <i class="bi bi-shield-check"></i>
+                                    This visit is <strong>NHIS</strong> — only NHIS formulary drugs are shown.
+                                </div>
+                                {% endif %}
                                 <div class="autocomplete-wrapper">
                                     <input 
                                         type="text" 
@@ -1366,6 +1411,64 @@
                             {% endif %}
                         </div>
                     </div>
+
+                    <div class="form-section" id="previous-prescriptions-section">
+                        <h4 class="mb-2">Previous prescriptions</h4>
+                        <p class="small text-muted mb-3">From earlier visits. Click a drug to load it into the form for refill. Out-of-stock items stay visible but cannot be prescribed.</p>
+                        <div class="prescription-list past-prescription-list" style="max-height: 420px; overflow-y: auto;">
+                            {% if past_prescriptions %}
+                                {% for prescription in past_prescriptions %}
+                                <div class="prescription-item past-prescription-refill-card{% if prescription.in_stock_for_prescribe == False %} past-rx-out-of-stock{% endif %}"
+                                     role="button"
+                                     tabindex="0"
+                                     title="{% if prescription.in_stock_for_prescribe == False %}Out of stock — see pharmacist for alternative{% else %}Click to refill{% endif %}"
+                                     data-drug-id="{{ prescription.drug_id|default:prescription.drug.id }}"
+                                     data-drug-name="{{ prescription.drug.name }}{% if prescription.drug.strength %} {{ prescription.drug.strength }}{% endif %}"
+                                     data-in-stock="{% if prescription.in_stock_for_prescribe == False %}0{% else %}1{% endif %}"
+                                     data-dose="{{ prescription.dose|default:'' }}"
+                                     data-route="{{ prescription.route|default:'oral' }}"
+                                     data-frequency="{{ prescription.frequency|default:'' }}"
+                                     data-duration="{{ prescription.duration|default:'' }}"
+                                     data-quantity="{{ prescription.quantity|default:1 }}"
+                                     data-instructions="{{ prescription.instructions|default:'' }}">
+                                    <div class="d-flex justify-content-between align-items-start gap-2">
+                                        <strong>{{ prescription.drug.name }}{% if prescription.drug.strength %} {{ prescription.drug.strength }}{% endif %}</strong>
+                                        <span class="d-flex flex-column align-items-end gap-1">
+                                        <span class="badge bg-secondary flex-shrink-0">Previous visit</span>
+                                        {% if prescription.in_stock_for_prescribe == False %}
+                                        <span class="badge bg-danger flex-shrink-0">Out of stock</span>
+                                        {% endif %}
+                                        </span>
+                                    </div>
+                                    <div class="item-card-preview text-muted mt-2">
+                                        Qty: {{ prescription.quantity }} ·
+                                        {% if prescription.dose %}{{ prescription.dose }} · {% endif %}
+                                        {{ prescription.frequency|default:"As directed" }} ·
+                                        {{ prescription.duration|default:"—" }}
+                                        {% if prescription.route %} · {{ prescription.route }}{% endif %}
+                                    </div>
+                                    <div class="small text-muted mt-1" style="font-size: 12px;">
+                                        {% if prescription.prescribed_by and prescription.prescribed_by.user %}
+                                        <i class="bi bi-person-badge"></i> {{ prescription.prescribed_by.user.get_full_name|default:prescription.prescribed_by.user.username }}
+                                        ·
+                                        {% endif %}
+                                        {{ prescription.created|date:"M d, Y" }}
+                                        {% if prescription.order.encounter.started_at %}
+                                        <span class="text-muted">(visit {{ prescription.order.encounter.started_at|date:"M d, Y" }})</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if prescription.in_stock_for_prescribe == False %}
+                                    <div class="item-card-cta mt-2 mb-0 text-danger"><i class="bi bi-exclamation-triangle"></i> See pharmacist for alternative</div>
+                                    {% else %}
+                                    <div class="item-card-cta mt-2 mb-0 text-primary"><i class="bi bi-arrow-repeat"></i> Click to refill</div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <p class="text-muted mb-0">No prescriptions from previous visits for this patient.</p>
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
             </div>
             </div>
@@ -1373,6 +1476,58 @@
 
         <!-- Lab Orders Tab -->
         <div id="lab-tab" class="tab-content">
+            <div id="lab-diagnosis-panel" class="mb-4 p-3 rounded" style="background: #fdf2f8; border: 2px solid #ec4899;"
+                 data-has-diagnosis="{% if has_preliminary_diagnosis %}true{% else %}false{% endif %}">
+                <h5 class="mb-2" style="color: #9d174d; font-weight: 700;"><i class="bi bi-clipboard-pulse me-1"></i>Preliminary diagnosis required before labs</h5>
+                <div id="lab-diagnosis-missing-alert" class="alert alert-danger py-2 mb-3 {% if has_preliminary_diagnosis %}d-none{% endif %}" role="alert">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    <strong>Stop:</strong> Add a <strong>preliminary diagnosis</strong> (working diagnosis) before ordering labs.
+                    After results return, add a <strong>final diagnosis</strong> before completing the consultation.
+                </div>
+                <div id="lab-diagnosis-ok-alert" class="alert alert-success py-2 mb-3 {% if not has_preliminary_diagnosis %}d-none{% endif %}" role="alert">
+                    <i class="bi bi-check-circle me-1"></i> Preliminary diagnosis recorded. You can order labs — lab will see this diagnosis.
+                </div>
+                <div class="row g-2">
+                    <div class="col-md-7">
+                        <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" class="mb-0 consultation-add-diagnosis-form" id="labAddDiagnosisForm">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="save_diagnosis">
+                            <input type="hidden" name="auto_save" value="false">
+                            <input type="hidden" name="diagnosis_type" value="preliminary">
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <label class="form-label small mb-0">Preliminary diagnosis <span class="text-muted">(before investigations)</span></label>
+                                    <input type="text" name="diagnosis_name" class="form-control form-control-sm" placeholder="e.g. Acute febrile illness, ?Malaria" required>
+                                </div>
+                                <div class="col-8">
+                                    <label class="form-label small mb-0">ICD-10 code</label>
+                                    <input type="text" name="icd10_code" class="form-control form-control-sm" list="diagnosisList" placeholder="e.g. I10, B54">
+                                </div>
+                                <div class="col-4 d-flex align-items-end">
+                                    <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-circle me-1"></i> Add</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small mb-1">Diagnoses this visit</label>
+                        <div id="lab-existing-diagnoses-list" style="max-height: 120px; overflow-y: auto;">
+                            {% if encounter.diagnosis %}
+                            <div class="border-bottom pb-1 mb-1" style="font-size: 13px;"><strong>{{ encounter.diagnosis }}</strong></div>
+                            {% endif %}
+                            {% if encounter_problems %}
+                                {% for problem in encounter_problems %}
+                                <div class="d-flex justify-content-between align-items-start border-bottom pb-1 mb-1 lab-diagnosis-row" data-problem-id="{{ problem.id }}" style="font-size: 13px;">
+                                    <div><strong>{{ problem.icd10_description|default:problem.problem }}</strong>{% if problem.icd10_code %} <span class="text-primary">({{ problem.icd10_code }})</span>{% endif %}</div>
+                                </div>
+                                {% endfor %}
+                            {% elif not encounter.diagnosis %}
+                                <p class="text-muted small mb-0">None yet. Add above.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
             {% if lab_pdf_docs %}
             <div class="row mb-4">
                 <div class="col-12">
@@ -1380,7 +1535,7 @@
                         <h5 style="font-weight: 700; color: #92400e; margin-bottom: 16px;"><i class="bi bi-file-earmark-medical me-2"></i>Lab Result Files Ready ({{ lab_pdf_docs|length }})</h5>
                         <div class="row">
                             {% for doc in lab_pdf_docs %}
-                            {% if doc.file %}
+                            {% if doc.file.name %}
                             <div class="col-md-6 col-lg-4 mb-2">
                                 <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #f59e0b; display: flex; justify-content: space-between; align-items: center;">
                                     <div style="flex: 1; min-width: 0;">
@@ -1388,8 +1543,8 @@
                                         <small class="text-muted">{{ doc.created|date:"M d, H:i" }}</small>
                                     </div>
                                     <div class="ms-2">
-                                        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
-                                        <a href="{{ doc.file.url }}" download class="btn btn-sm btn-success"><i class="bi bi-download"></i></a>
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-success"><i class="bi bi-download"></i></a>
                                     </div>
                                 </div>
                             </div>
@@ -1400,10 +1555,23 @@
                 </div>
             </div>
             {% endif %}
-            <div class="row">
+            <div class="row" id="lab-order-section" {% if not has_preliminary_diagnosis %}style="opacity: 0.55;"{% endif %}>
                 <div class="col-md-7">
                     <div class="form-section">
                         <h4 class="mb-4">Search & Order Lab Tests</h4>
+                        {% if insurance_lab_limited %}
+                        <div class="alert alert-info py-2 px-3 mb-3" id="insurance-lab-limit-banner"
+                             data-limit="{{ insurance_lab_limit }}"
+                             data-ordered="{{ insurance_lab_ordered_count }}">
+                            <i class="bi bi-shield-check me-1"></i>
+                            Insurance visit: <strong>{{ insurance_lab_ordered_count }}</strong> of
+                            <strong>{{ insurance_lab_limit }}</strong> lab tests used.
+                            Additional tests need a <strong>reason</strong> and <strong>diagnosis</strong>.
+                        </div>
+                        {% endif %}
+                        <div id="lab-order-blocked-banner" class="alert alert-warning {% if has_preliminary_diagnosis %}d-none{% endif %}">
+                            <i class="bi bi-lock-fill me-1"></i> Lab ordering is locked until you add a <strong>preliminary diagnosis</strong> above.
+                        </div>
                         <form id="labOrderForm" method="POST" action="{% url 'hospital:consultation_view' encounter.id %}">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="order_lab_test">
@@ -1413,6 +1581,13 @@
 
                             <div class="form-group">
                                 <label class="form-label">Search Lab Test</label>
+                                {% if patient_is_nhis %}
+                                <div class="alert alert-info py-2 px-3 small mb-2">
+                                    <i class="bi bi-shield-check"></i>
+                                    This visit is <strong>NHIS</strong> — only NHIS panel labs are shown.
+                                    Tests not on the list can be added and paid as cash at cashier.
+                                </div>
+                                {% endif %}
                                 <div class="autocomplete-wrapper">
                                     <input 
                                         type="text" 
@@ -1455,7 +1630,22 @@
                                 <textarea name="notes" class="form-control" rows="3"></textarea>
                             </div>
 
-                            <button type="submit" id="submitLabOrderBtn" class="btn-primary" disabled>
+                            {% if insurance_lab_limited %}
+                            <div id="insurance-extra-lab-panel" class="alert alert-warning" style="display: none;">
+                                <strong>Additional insurance lab tests</strong>
+                                <p class="small mb-2">This order will exceed the 3-test insurance allowance. Enter a reason and diagnosis for the extra test(s).</p>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-0" for="extra_lab_reason">Reason for extra tests <span class="text-danger">*</span></label>
+                                    <textarea name="extra_lab_reason" id="extra_lab_reason" class="form-control" rows="2" placeholder="e.g. Persistent fever after 3 days, need malaria + Widal + CRP"></textarea>
+                                </div>
+                                <div>
+                                    <label class="form-label small mb-0" for="extra_lab_diagnosis">Diagnosis for extra tests <span class="text-danger">*</span></label>
+                                    <input type="text" name="extra_lab_diagnosis" id="extra_lab_diagnosis" class="form-control" value="{{ encounter.diagnosis|default:'' }}" placeholder="e.g. Acute febrile illness">
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <button type="submit" id="submitLabOrderBtn" class="btn-primary" disabled title="{% if not has_preliminary_diagnosis %}Add a preliminary diagnosis first{% endif %}">
                                 <span id="labOrderText">Create Lab Order(s)</span>
                                 <span id="labOrderLoading" class="loading" style="display:none;"></span>
                             </button>
@@ -1580,6 +1770,60 @@
 
         <!-- Imaging Tab -->
         <div id="imaging-tab" class="tab-content">
+            <div class="mb-4 p-3 rounded" style="background: #fdf2f8; border: 2px solid #ec4899;">
+                <h5 class="mb-2" style="color: #9d174d; font-weight: 700;"><i class="bi bi-clipboard-pulse me-1"></i>Preliminary diagnosis required before imaging</h5>
+                {% if has_preliminary_diagnosis %}
+                <div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle me-1"></i> Preliminary diagnosis on file. You can order imaging.</div>
+                {% else %}
+                <div class="alert alert-danger py-2 mb-0">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Add a <strong>preliminary diagnosis</strong> on the Lab or Notes tab before ordering imaging.
+                </div>
+                {% endif %}
+            </div>
+            {% if patient_encounter_documents %}
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 12px; padding: 20px; border: 2px solid #3b82f6;">
+                        <h5 style="font-weight: 700; color: #1e40af; margin-bottom: 8px;">
+                            <i class="bi bi-folder2-open me-2"></i>Patient folder / external files ({{ patient_encounter_documents|length }})
+                        </h5>
+                        <p class="small mb-3" style="color: #1e3a8a;">
+                            Uploaded by nurse, front desk, or doctor on the patient record (scans, X-rays from outside, photos, PDFs). Open here without leaving consultation.
+                        </p>
+                        <div class="row">
+                            {% for doc in patient_encounter_documents %}
+                            {% if doc.file.name %}
+                            <div class="col-md-6 col-lg-4 mb-2">
+                                <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #3b82f6;">
+                                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                                        <div style="flex: 1; min-width: 0;">
+                                            <strong style="font-size: 14px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ doc.title|truncatechars:40 }}</strong>
+                                            <small class="text-muted d-block">
+                                                {{ doc.get_document_type_display }}
+                                                {% if doc.uploaded_by %} · {{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% endif %}
+                                                · {{ doc.created|date:"M d, Y" }}
+                                            </small>
+                                            {% if doc.file_type and "image" in doc.file_type %}
+                                            <div style="margin-top: 8px;">
+                                                <img src="{% url 'hospital:patient_document_file' doc.pk %}" alt="{{ doc.title }}" style="max-width: 100%; max-height: 120px; object-fit: contain; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="ms-1" style="display: flex; flex-direction: column; gap: 4px;">
+                                            <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary" title="View"><i class="bi bi-eye"></i></a>
+                                            <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-primary" title="Download"><i class="bi bi-download"></i></a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             {% if imaging_pdf_docs %}
             <div class="row mb-4">
                 <div class="col-12">
@@ -1587,7 +1831,7 @@
                         <h5 style="font-weight: 700; color: #065f46; margin-bottom: 16px;"><i class="bi bi-file-earmark-image me-2"></i>Imaging Result Files Ready ({{ imaging_pdf_docs|length }})</h5>
                         <div class="row">
                             {% for doc in imaging_pdf_docs %}
-                            {% if doc.file %}
+                            {% if doc.file.name %}
                             <div class="col-md-6 col-lg-4 mb-2">
                                 <div style="background: white; border-radius: 8px; padding: 12px; border-left: 4px solid #10b981; display: flex; justify-content: space-between; align-items: center;">
                                     <div style="flex: 1; min-width: 0;">
@@ -1595,8 +1839,8 @@
                                         <small class="text-muted">{{ doc.created|date:"M d, H:i" }}</small>
                                     </div>
                                     <div class="ms-2">
-                                        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
-                                        <a href="{{ doc.file.url }}" download class="btn btn-sm btn-success"><i class="bi bi-download"></i></a>
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-success"><i class="bi bi-download"></i></a>
                                     </div>
                                 </div>
                             </div>
@@ -1620,6 +1864,13 @@
 
                             <div class="form-group">
                                 <label class="form-label">Search Imaging Study</label>
+                                {% if patient_is_nhis %}
+                                <div class="alert alert-info py-2 px-3 small mb-2">
+                                    <i class="bi bi-shield-check"></i>
+                                    This visit is <strong>NHIS</strong> — only NHIS-listed scans are shown.
+                                    Scans not on the list can be added and paid as cash at cashier.
+                                </div>
+                                {% endif %}
                                 <div class="autocomplete-wrapper">
                                     <input 
                                         type="text" 
@@ -1669,7 +1920,7 @@
                                 <textarea name="clinical_indication" class="form-control" rows="3"></textarea>
                             </div>
 
-                            <button type="submit" id="submitImagingOrderBtn" class="btn-primary" disabled>
+                            <button type="submit" id="submitImagingOrderBtn" class="btn-primary" disabled title="{% if not has_preliminary_diagnosis %}Add a preliminary diagnosis first{% endif %}">
                                 <span id="imagingOrderText">Create Imaging Order(s)</span>
                                 <span id="imagingOrderLoading" class="loading" style="display:none;"></span>
                             </button>
@@ -1843,7 +2094,9 @@
                                 <div class="mt-2 pt-2 border-top border-light">
                                     <strong class="small text-muted">Reports (PDF) – this visit:</strong>
                                     {% for doc in lab_pdf_docs|slice:":3" %}
-                                    <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1 me-1" title="Open report">{{ doc.title|default:"Lab report"|truncatechars:18 }} <i class="bi bi-file-pdf"></i></a>
+                                    {% if doc.file.name %}
+                                    <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1 me-1" title="Open report">{{ doc.title|default:"Lab report"|truncatechars:18 }} <i class="bi bi-file-pdf"></i></a>
+                                    {% endif %}
                                     {% endfor %}
                                     {% if lab_pdf_docs|length > 3 %}<span class="small text-muted">+{{ lab_pdf_docs|length|add:"-3" }} more</span>{% endif %}
                                 </div>
@@ -1889,13 +2142,27 @@
                                 <p class="text-muted small mb-0">No imaging for this patient yet. <button type="button" class="btn btn-link btn-sm p-0 switch-consultation-tab" data-tab="imaging">Order imaging</button></p>
                                 {% endif %}
                             </div>
-                            {% if imaging_pdf_docs %}
+                            {% if imaging_pdf_docs or patient_encounter_documents %}
                             <div class="mt-2 pt-2 border-top border-light">
-                                <strong class="small text-muted">Reports (PDF):</strong>
+                                {% if patient_encounter_documents %}
+                                <strong class="small text-muted d-block mb-1">Patient folder / external:</strong>
+                                {% for doc in patient_encounter_documents|slice:":4" %}
+                                {% if doc.file.name %}
+                                <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary mt-1 me-1" title="{{ doc.title }}">{{ doc.title|default:"File"|truncatechars:18 }} <i class="bi bi-folder2-open"></i></a>
+                                {% endif %}
+                                {% endfor %}
+                                {% if patient_encounter_documents|length > 4 %}<span class="small text-muted">+{{ patient_encounter_documents|length|add:"-4" }} more</span>{% endif %}
+                                <button type="button" class="btn btn-link btn-sm p-0 ms-1 switch-consultation-tab" data-tab="imaging">Open in Imaging</button>
+                                {% endif %}
+                                {% if imaging_pdf_docs %}
+                                <strong class="small text-muted d-block mt-2 mb-1">Radiology reports:</strong>
                                 {% for doc in imaging_pdf_docs|slice:":3" %}
-                                <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1 me-1" title="Open report">{{ doc.title|default:"Report"|truncatechars:20 }} <i class="bi bi-file-pdf"></i></a>
+                                {% if doc.file.name %}
+                                <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1 me-1" title="Open report">{{ doc.title|default:"Report"|truncatechars:20 }} <i class="bi bi-file-pdf"></i></a>
+                                {% endif %}
                                 {% endfor %}
                                 {% if imaging_pdf_docs|length > 3 %}<span class="small text-muted">+{{ imaging_pdf_docs|length|add:"-3" }} more</span>{% endif %}
+                                {% endif %}
                             </div>
                             {% endif %}
                         </div>
@@ -1916,39 +2183,64 @@
                             <i class="bi bi-info-circle"></i> Write your consultation note in one place. Visible to doctors, nurses, and pharmacy staff.
                         </p>
 
-                        {% if can_edit_consultation_note %}
-                        <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" id="clinicalNotesForm" data-no-autosave="true" data-require-diagnosis="true" data-has-diagnosis="{% if problems %}true{% else %}false{% endif %}">
+                        {% if clinical_notes %}
+                        <div id="visit-clinical-notes-history" class="mb-4">
+                            {% if request.GET.note_saved %}
+                            <div class="alert alert-success py-2 mb-3" role="alert">
+                                <i class="bi bi-check-circle me-1"></i> Clinical note saved. Write your next note in the fresh box below.
+                            </div>
+                            {% endif %}
+                            <h6 class="mb-2" style="color: #0369a1; font-weight: 700;"><i class="bi bi-journal-text me-1"></i> Saved notes this visit ({{ clinical_notes|length }})</h6>
+                            {% for note in clinical_notes %}
+                            <div class="mb-3 p-3 rounded" style="background: #f0f9ff; border: 1px solid #bae6fd;">
+                                <div class="small text-muted mb-2">
+                                    {% if note.created_by and note.created_by.user %}
+                                    <strong>Dr. {{ note.created_by.user.get_full_name|default:note.created_by.user.username }}</strong> ·
+                                    {% endif %}
+                                    {{ note.created|date:"M d, Y H:i" }}
+                                    {% if note.note_type %} · {{ note.get_note_type_display }}{% endif %}
+                                </div>
+                                <div style="white-space: pre-wrap; color: var(--gray-700); font-size: 14px;">{{ note.notes|default:note.subjective }}</div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {% if can_edit_consultation_note and not consultation_read_only %}
+                        <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" id="clinicalNotesForm" data-no-autosave="true" data-require-diagnosis="true" data-has-diagnosis="{% if has_preliminary_diagnosis %}true{% else %}false{% endif %}">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="save_note">
                             <input type="hidden" name="note_type" value="consultation">
                             <input type="hidden" name="auto_save" value="false">
 
                             <div class="form-group">
-                                {% if consultation_summary.clinical_note_combined %}
+                                {% if consultation_summary.clinical_note_combined and not clinical_notes %}
                                 <div class="mb-3">
-                                    <label class="form-label small text-muted" style="font-weight: 600;">Prefilled from triage / previous notes</label>
+                                    <label class="form-label small text-muted" style="font-weight: 600;">Prefilled from triage / previous notes (reference only)</label>
                                     <div style="background: #f9fafb; border-radius: 8px; padding: 12px; white-space: pre-wrap; border: 1px dashed #cbd5e1; font-size: 13px; color: #4b5563;">
                                         {{ consultation_summary.clinical_note_combined }}
                                     </div>
                                 </div>
                                 {% endif %}
-                                <label class="form-label" style="font-weight: 700; color: var(--primary);">Clinical Note</label>
-                                <p class="small text-primary mb-2" style="font-weight: 500;"><i class="bi bi-journal-plus"></i> New consultation – start with a fresh note below.</p>
+                                <label class="form-label" style="font-weight: 700; color: var(--primary);">New Clinical Note</label>
+                                <p class="small text-primary mb-2" style="font-weight: 500;"><i class="bi bi-journal-plus"></i> Fresh note area — each save adds a new entry above.</p>
+                                <div id="diagnosis-required-warning" class="alert alert-warning py-2 mb-2 {% if not clinical_note_draft %}d-none{% endif %}" role="alert">
+                                    <i class="bi bi-exclamation-triangle me-1"></i> Add at least one diagnosis before saving. Your note is kept below.
+                                </div>
                                 <textarea name="clinical_note" id="clinical_note" class="form-control" rows="12" 
-                                          placeholder="Write everything here: presenting complaint, history, examination findings, assessment, plan, follow-up..."></textarea>
-                                <small class="text-muted">One note for the whole consultation. Include PC, history, PE, assessment, and plan as you like.</small>
-                                <p class="small text-success mt-2 mb-0" style="font-weight: 500;"><i class="bi bi-info-circle"></i> Save when ready; you can edit later using the Edit button.</p>
+                                          placeholder="Write everything here: presenting complaint, history, examination findings, assessment, plan, follow-up...">{{ clinical_note_draft|default:'' }}</textarea>
+                                <small class="text-muted">One note for this entry. Include PC, history, PE, assessment, and plan as you like.</small>
                             </div>
 
-                            <div id="diagnosis-reminder-before-save" class="mb-3 p-3 rounded {% if problems %}d-none{% endif %}" style="background: #eff6ff; border: 2px solid #3b82f6;">
-                                <p class="mb-0 small fw-bold" style="color: #1e40af;"><i class="bi bi-info-circle me-1"></i> Add at least one diagnosis below when possible for the medical record. You can save the note anytime.</p>
+                            <div id="diagnosis-reminder-before-save" class="mb-3 p-3 rounded {% if has_preliminary_diagnosis %}d-none{% endif %}" style="background: #eff6ff; border: 2px solid #3b82f6;">
+                                <p class="mb-0 small fw-bold" style="color: #1e40af;"><i class="bi bi-info-circle me-1"></i> Add a preliminary diagnosis below before saving the clinical note.</p>
                             </div>
-                            <div class="mb-3 {% if not problems %}d-none{% endif %}" id="diagnosis-ok-before-save" style="color: #059669;">
-                                <p class="mb-0 small fw-bold"><i class="bi bi-check-circle me-1"></i> Diagnosis added. Your note will be linked to this diagnosis.</p>
+                            <div class="mb-3 {% if not has_preliminary_diagnosis %}d-none{% endif %}" id="diagnosis-ok-before-save" style="color: #059669;">
+                                <p class="mb-0 small fw-bold"><i class="bi bi-check-circle me-1"></i> Preliminary diagnosis on file. Your note will be linked to it.</p>
                             </div>
 
                             <div style="display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap;">
-                                <button type="submit" class="btn-primary" id="saveClinicalNoteBtn" style="flex: 1; min-width: 160px; padding: 14px 24px; font-size: 16px; font-weight: 600;" title="Save your consultation note (add diagnosis below when possible)">
+                                <button type="submit" class="btn-primary" id="saveClinicalNoteBtn" style="flex: 1; min-width: 160px; padding: 14px 24px; font-size: 16px; font-weight: 600;" title="Save your consultation note (requires at least one diagnosis)">
                                     <i class="bi bi-save"></i> Save Clinical Note
                                 </button>
                                 <a href="{% url 'hospital:admission_create' %}?encounter={{ encounter.id }}" class="btn btn-success" style="padding: 14px 24px; font-size: 16px; font-weight: 600; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
@@ -1959,82 +2251,23 @@
                                 </button>
                             </div>
                         </form>
-                        {% else %}
-                        <!-- Read-only: note already saved – Edit and Add new note available -->
-                        <div id="clinical-note-saved-block" style="background: #f0f9ff; border-radius: 12px; padding: 24px; border: 2px solid #bae6fd;">
-                            {% if request.GET.note_saved %}
-                            <div class="alert alert-success py-2 mb-3" role="alert">
-                                <i class="bi bi-check-circle me-1"></i> Your clinical note has been saved and is shown below.
-                            </div>
-                            {% endif %}
-                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                                <div>
-                                    {% if consultation_note_author_name %}
-                                    <p class="mb-0 small fw-bold" style="color: #0369a1;"><i class="bi bi-info-circle"></i> Note by <strong>Dr. {{ consultation_note_author_name }}</strong>.</p>
-                                    {% else %}
-                                    <p class="mb-0 small fw-bold" style="color: #0369a1;"><i class="bi bi-info-circle"></i> Clinical note (saved).</p>
-                                    {% endif %}
-                                </div>
-                                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                    {% if doctor.profession == 'doctor' or user.is_superuser %}
-                                    <button type="button" class="btn btn-outline-primary btn-sm" id="editClinicalNoteBtn" aria-controls="editClinicalNoteForm" onclick="var vb=document.getElementById('clinicalNoteViewBlock'); var ef=document.getElementById('editClinicalNoteForm'); if(vb&&ef){ vb.style.display='none'; this.style.display='none'; ef.style.display='block'; } return false;">
-                                        <i class="bi bi-pencil-square me-1"></i> Edit
-                                    </button>
-                                    {% endif %}
-                                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addNewNoteForm" aria-expanded="false" aria-controls="addNewNoteForm" id="addNewNoteBtn">
-                                        <i class="bi bi-plus-circle me-1"></i> Add new note
-                                    </button>
-                                </div>
-                            </div>
-                            <div id="clinicalNoteViewBlock">
-                                {% if consultation_summary.clinical_note_combined %}
-                                <div class="form-group">
-                                    <label class="form-label" style="font-weight: 700; color: var(--primary);">Clinical Note</label>
-                                    <div style="background: white; border-radius: 8px; padding: 16px; min-height: 80px; color: var(--gray-700); white-space: pre-wrap;">{{ consultation_summary.clinical_note_combined }}</div>
-                                </div>
-                                {% else %}
-                                <div style="text-align: center; padding: 40px; color: var(--gray-600);">
-                                    <i class="bi bi-file-text" style="font-size: 3rem; margin-bottom: 16px; opacity: 0.3;"></i>
-                                    <p style="font-size: 16px; margin: 0;">No clinical notes recorded yet</p>
-                                    <small>Doctor will add notes during consultation</small>
-                                </div>
+                        {% elif not can_edit_consultation_note %}
+                        <div style="background: #f0f9ff; border-radius: 12px; padding: 24px; border: 2px solid #bae6fd;">
+                            {% if consultation_summary.clinical_note_combined %}
+                            <div class="form-group">
+                                <label class="form-label" style="font-weight: 700; color: var(--primary);">Clinical Note</label>
+                                <div style="background: white; border-radius: 8px; padding: 16px; min-height: 80px; color: var(--gray-700); white-space: pre-wrap;">{{ consultation_summary.clinical_note_combined }}</div>
+                                {% if consultation_note_author_name %}
+                                <p class="mb-0 small text-muted mt-2"><i class="bi bi-info-circle"></i> Note by <strong>Dr. {{ consultation_note_author_name }}</strong>.</p>
                                 {% endif %}
                             </div>
-                            {% if doctor.profession == 'doctor' or user.is_superuser %}
-                            <div id="editClinicalNoteForm" class="mt-3" style="display: none;">
-                                <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="update_consultation_note">
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-weight: 700; color: var(--primary);">Edit Clinical Note</label>
-                                        <textarea name="clinical_note" id="editClinicalNoteText" class="form-control" rows="12" placeholder="Clinical note...">{{ consultation_summary.clinical_note_combined|default:'' }}</textarea>
-                                    </div>
-                                    <div class="d-flex gap-2 mt-2">
-                                        <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i> Save changes</button>
-                                        <button type="button" class="btn btn-outline-secondary" id="cancelEditClinicalNoteBtn" onclick="var ef=document.getElementById('editClinicalNoteForm'); var vb=document.getElementById('clinicalNoteViewBlock'); var eb=document.getElementById('editClinicalNoteBtn'); if(ef&&vb&&eb){ ef.style.display='none'; vb.style.display='block'; eb.style.display='inline-block'; } return false;">Cancel</button>
-                                    </div>
-                                </form>
+                            {% else %}
+                            <div style="text-align: center; padding: 40px; color: var(--gray-600);">
+                                <i class="bi bi-file-text" style="font-size: 3rem; margin-bottom: 16px; opacity: 0.3;"></i>
+                                <p style="font-size: 16px; margin: 0;">No clinical notes recorded yet</p>
+                                <small>Doctor will add notes during consultation</small>
                             </div>
                             {% endif %}
-                            <!-- Add new note (progress / follow-up) – other doctors can add -->
-                            <div class="collapse mt-4" id="addNewNoteForm">
-                                <div style="background: white; border-radius: 12px; padding: 20px; border: 2px solid #0ea5e9;">
-                                    <h6 class="mb-2" style="color: #0369a1; font-weight: 700;"><i class="bi bi-journal-plus me-1"></i> Add new note (progress / follow-up)</h6>
-                                    <p class="small text-muted mb-3">Other doctors can add a follow-up or progress note here. It will appear in Clinical Notes and Previous history.</p>
-                                    <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" id="addNewNoteFormSubmit">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="action" value="add_progress_note">
-                                        <div class="mb-3">
-                                            <label for="addNewNoteText" class="form-label fw-bold">Your note</label>
-                                            <textarea name="clinical_note" id="addNewNoteText" class="form-control" rows="5" placeholder="e.g. Follow-up findings, plan update, additional assessment..." required></textarea>
-                                        </div>
-                                        <button type="submit" class="btn btn-primary" name="save_new_note" value="1">
-                                            <i class="bi bi-save me-1"></i> Save new note
-                                        </button>
-                                        <button type="button" class="btn btn-outline-secondary ms-2" data-bs-toggle="collapse" data-bs-target="#addNewNoteForm" aria-expanded="false">Cancel</button>
-                                    </form>
-                                </div>
-                            </div>
                         </div>
                         {% endif %}
 
@@ -2042,8 +2275,11 @@
                         <div id="consultation-diagnosis-block" class="mt-4 p-3 rounded" style="background: #fdf2f8; border: 2px solid #ec4899;"
                              data-consultation-url="{% url 'hospital:consultation_view' encounter.id %}"
                              data-can-delete="{% if doctor.profession == 'doctor' or user.is_superuser %}true{% else %}false{% endif %}">
-                            <h5 class="mb-3" style="color: #9d174d; font-weight: 700;"><i class="bi bi-clipboard-pulse me-1"></i>Diagnosis</h5>
-                            <p class="small text-muted mb-3">Add at least one diagnosis when possible for the medical record. Save your clinical note using the button below.</p>
+                            <h5 class="mb-2" style="color: #9d174d; font-weight: 700;"><i class="bi bi-clipboard-pulse me-1"></i>Diagnosis</h5>
+                            <p class="small mb-3" style="color: #9d174d;">
+                                <strong>1. Preliminary</strong> — before lab/imaging &nbsp;·&nbsp;
+                                <strong>2. Final</strong> — after results, required to complete consultation
+                            </p>
                             <div class="row g-2">
                                 <div class="col-md-7">
                                     <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" class="mb-0" id="addDiagnosisForm">
@@ -2051,6 +2287,13 @@
                                         <input type="hidden" name="action" value="save_diagnosis">
                                         <input type="hidden" name="auto_save" value="false">
                                         <div class="row g-2">
+                                            <div class="col-12">
+                                                <label class="form-label small mb-0">Diagnosis stage</label>
+                                                <select name="diagnosis_type" id="diagnosisTypeSelect" class="form-control form-control-sm">
+                                                    <option value="preliminary" selected>Preliminary (before investigations)</option>
+                                                    <option value="final">Final (after lab/imaging results)</option>
+                                                </select>
+                                            </div>
                                             <div class="col-12">
                                                 <label class="form-label small mb-0">Diagnosis name <span class="text-muted">(type or select ICD-10)</span></label>
                                                 <input type="text" name="diagnosis_name" id="diagnosisNameInput" class="form-control form-control-sm" placeholder="e.g. Hypertension, Malaria" required>
@@ -2074,11 +2317,32 @@
                                     </form>
                                 </div>
                                 <div class="col-md-5">
-                                    <label class="form-label small mb-1">Existing diagnoses</label>
-                                    <div id="existing-diagnoses-list" style="max-height: 140px; overflow-y: auto;">
-                                        {% if problems %}
-                                            {% for problem in problems %}
-                                            <div class="d-flex justify-content-between align-items-start border-bottom pb-1 mb-1" style="font-size: 13px;">
+                                    <label class="form-label small mb-1">Preliminary</label>
+                                    <div id="existing-preliminary-list" class="mb-3" style="max-height: 100px; overflow-y: auto;">
+                                        {% for diag in preliminary_diagnoses %}
+                                        <div class="border-bottom pb-1 mb-1" style="font-size: 13px;">
+                                            <span class="badge bg-warning text-dark me-1">Prelim</span>
+                                            <strong>{{ diag.diagnosis_name }}</strong>{% if diag.display_code %} <span class="text-primary">({{ diag.display_code }})</span>{% endif %}
+                                        </div>
+                                        {% empty %}
+                                        <p class="text-muted small mb-0">None yet — add before ordering labs/imaging.</p>
+                                        {% endfor %}
+                                    </div>
+                                    <label class="form-label small mb-1">Final</label>
+                                    <div id="existing-final-list" style="max-height: 100px; overflow-y: auto;">
+                                        {% for diag in final_diagnoses %}
+                                        <div class="border-bottom pb-1 mb-1" style="font-size: 13px;">
+                                            <span class="badge bg-success me-1">Final</span>
+                                            <strong>{{ diag.diagnosis_name }}</strong>{% if diag.display_code %} <span class="text-primary">({{ diag.display_code }})</span>{% endif %}
+                                        </div>
+                                        {% empty %}
+                                        <p class="text-muted small mb-0">None yet — add after results, before Complete.</p>
+                                        {% endfor %}
+                                    </div>
+                                    <div id="existing-diagnoses-list" class="d-none">
+                                        {% if encounter_problems %}
+                                            {% for problem in encounter_problems %}
+                                            <div class="d-flex justify-content-between align-items-start border-bottom pb-1 mb-1" data-problem-id="{{ problem.id }}" style="font-size: 13px;">
                                                 <div><strong>{{ problem.icd10_description|default:problem.problem }}</strong>{% if problem.icd10_code %} <span class="text-primary">({{ problem.icd10_code }})</span>{% endif %}</div>
                                                 {% if doctor.profession == 'doctor' or user.is_superuser %}
                                                 <form method="POST" action="{% url 'hospital:consultation_view' encounter.id %}" class="d-inline" onsubmit="return confirm('Delete this diagnosis?');" onclick="event.stopPropagation();">
@@ -2090,13 +2354,11 @@
                                                 {% endif %}
                                             </div>
                                             {% endfor %}
-                                        {% else %}
-                                            <p class="text-muted small mb-0">None yet. Add above.</p>
                                         {% endif %}
                                     </div>
                                 </div>
                             </div>
-                            {% if can_edit_consultation_note %}
+                            {% if can_edit_consultation_note and not consultation_read_only %}
                             <div class="mt-3 pt-3 border-top" style="border-color: #fbcfe8 !important;">
                                 <button type="button" class="btn btn-primary" id="saveClinicalNoteFromDiagnosisBtn" style="padding: 12px 24px; font-weight: 600;">
                                     <i class="bi bi-save me-1"></i> Save Clinical Note
@@ -2134,6 +2396,84 @@
                 </div>
 
                 <div class="col-md-4">
+                    {% if ai_clinical_assistant_enabled and can_edit_consultation_note and not consultation_read_only %}
+                    <div class="form-section ai-clinical-copilot-panel"
+                         id="aiClinicalCopilotPanel"
+                         role="region"
+                         aria-label="AI clinical assistance"
+                         data-start-url="{% url 'hospital:consultation_ai_assist_start' encounter.id %}"
+                         data-status-url-template="{% url 'hospital:consultation_ai_assist_status' encounter.id '00000000-0000-0000-0000-000000000000' %}"
+                         data-feedback-url-template="{% url 'hospital:consultation_ai_assist_feedback' encounter.id '00000000-0000-0000-0000-000000000000' %}"
+                         data-chat-url-template="{% url 'hospital:consultation_ai_assist_chat' encounter.id '00000000-0000-0000-0000-000000000000' %}"
+                         style="background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 55%, #ffffff 100%); border: 2px solid #a5b4fc; margin-bottom: 24px;">
+                        <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                            <h5 class="mb-0" style="color: #312e81; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+                                <i class="bi bi-stars" aria-hidden="true"></i> Ayisi Clinical Copilot
+                            </h5>
+                            <span class="badge rounded-pill" style="background: #4f46e5;">Advisory</span>
+                        </div>
+                        <p class="small mb-3" style="color: #4338ca; line-height: 1.5;">
+                            Free local decision support powered by Ayisi. Patient context stays on this server. Suggestions never write diagnoses, orders, prescriptions, or notes unless you copy them.
+                        </p>
+                        <button type="button" class="btn w-100 mb-2" id="aiClinicalGenerateBtn"
+                                style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #fff; font-weight: 700; border: none; padding: 12px 16px; border-radius: 10px;">
+                            <i class="bi bi-magic me-1" aria-hidden="true"></i> Generate clinical assistance
+                        </button>
+                        <div id="aiClinicalStatus" class="small text-muted mb-2" aria-live="polite">Ready when you are.</div>
+                        <div id="aiClinicalProgress" class="progress mb-3 d-none" style="height: 6px;" aria-hidden="true">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%; background: #6366f1;"></div>
+                        </div>
+                        <div id="aiClinicalError" class="alert alert-danger py-2 small d-none" role="alert"></div>
+                        <div id="aiClinicalResults" class="d-none">
+                            <div class="alert alert-warning py-2 small mb-3" role="note">
+                                <strong>AI-generated.</strong> Verify before using. Does not replace clinical judgment.
+                            </div>
+                            <div id="aiClinicalRedFlags" class="mb-3"></div>
+                            <div id="aiClinicalSections"></div>
+                            <div id="aiClinicalChat" class="mt-3 rounded" style="background:#fff;border:1px solid #a5b4fc;overflow:hidden;">
+                                <div class="p-2 d-flex align-items-center justify-content-between gap-2" style="background:#eef2ff;border-bottom:1px solid #c7d2fe;">
+                                    <strong class="small" style="color:#312e81;"><i class="bi bi-chat-dots me-1"></i> Ask Ayisi about this encounter</strong>
+                                    <span class="badge bg-light text-dark">Doctor only</span>
+                                </div>
+                                <div id="aiClinicalChatMessages" class="p-2" role="log" aria-live="polite" aria-label="AI clinical chat messages" style="max-height:360px;overflow-y:auto;">
+                                    <p class="small text-muted mb-0">Type a question below. Ayisi will prepare the encounter context automatically.</p>
+                                </div>
+                                <div id="aiClinicalChatSuggestions" class="px-2 pb-1 d-flex flex-wrap gap-1"></div>
+                                <div class="p-2" style="border-top:1px solid #e2e8f0;">
+                                    <label for="aiClinicalChatInput" class="visually-hidden">Question for AI clinical copilot</label>
+                                    <textarea id="aiClinicalChatInput" class="form-control form-control-sm mb-2" rows="2" maxlength="2000" placeholder="Ask about differentials, red flags, tests, medications, or follow-up…"></textarea>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="button" class="btn btn-primary btn-sm flex-grow-1" id="aiClinicalChatSendBtn">
+                                            <i class="bi bi-send me-1"></i> Ask Ayisi
+                                        </button>
+                                        <span id="aiClinicalChatStatus" class="small text-muted" aria-live="polite"></span>
+                                    </div>
+                                    <p class="small text-muted mt-2 mb-0">Conversation is advisory, audited, and never changes the chart automatically.</p>
+                                </div>
+                            </div>
+                            <div class="d-grid gap-2 mt-3">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="aiClinicalInsertDraftBtn">
+                                    <i class="bi bi-journal-plus me-1"></i> Insert draft into note
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="aiClinicalRetryBtn">
+                                    <i class="bi bi-arrow-clockwise me-1"></i> Regenerate
+                                </button>
+                            </div>
+                            <div class="mt-3 p-2 rounded" style="background: #f8fafc; border: 1px solid #e2e8f0;">
+                                <label class="form-label small fw-bold mb-1" for="aiClinicalFeedbackSelect">Was this helpful?</label>
+                                <select id="aiClinicalFeedbackSelect" class="form-select form-select-sm mb-2">
+                                    <option value="">Select feedback…</option>
+                                    <option value="helpful">Helpful</option>
+                                    <option value="not_helpful">Not helpful</option>
+                                    <option value="unsafe">Unsafe / incorrect</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-dark w-100" id="aiClinicalFeedbackBtn">Send feedback</button>
+                            </div>
+                            <p class="small text-muted mt-2 mb-0" id="aiClinicalProvenance"></p>
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <div class="form-section" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 2px solid #fbbf24;">
                         <h5 style="color: #92400e; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
                             <i class="bi bi-eye"></i> Visibility
@@ -2284,13 +2624,7 @@
                                         <button type="button" class="btn btn-sm btn-outline-primary ms-auto edit-progress-note-btn" title="Edit this note" aria-label="Edit progress note"><i class="bi bi-pencil-square"></i> Edit</button>
                                         {% endif %}
                                     </div>
-                                    <div class="progress-note-body">
-                                        {% if note.subjective %}<p><strong class="text-primary">S:</strong> {{ note.subjective }}</p>{% endif %}
-                                        {% if note.objective %}<p><strong class="text-success">O:</strong> {{ note.objective }}</p>{% endif %}
-                                        {% if note.assessment %}<p><strong class="text-warning">A:</strong> {{ note.assessment }}</p>{% endif %}
-                                        {% if note.plan %}<p><strong class="text-danger">P:</strong> {{ note.plan }}</p>{% endif %}
-                                        {% if note.notes %}<p class="text-muted">{{ note.notes }}</p>{% endif %}
-                                    </div>
+                                    <div class="progress-note-body" style="white-space: pre-wrap;">{% if note.combined_text %}{{ note.combined_text }}{% else %}<span class="text-muted">No note content</span>{% endif %}</div>
                                 </article>
                                 {% endfor %}
                             </div>
@@ -2523,6 +2857,7 @@
                                         </div>
                                         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px;">
                                             {% for image in study.images.all|slice:":6" %}
+                                            {% if image.has_stored_file %}
                                             <div style="background: white; border-radius: 6px; padding: 8px; border: 1px solid var(--gray-200); text-align: center;">
                                                 {% if image.is_previewable %}
                                                 <img src="{{ image.image.url }}" alt="{{ image.description|default:'Image' }}" style="width: 100%; height: 80px; object-fit: cover; border-radius: 4px; margin-bottom: 4px;">
@@ -2535,6 +2870,14 @@
                                                     <i class="bi bi-download"></i> View
                                                 </a>
                                             </div>
+                                            {% else %}
+                                            <div style="background: var(--gray-50); border-radius: 6px; padding: 8px; border: 1px solid var(--gray-200); text-align: center;">
+                                                <div style="height: 80px; display: flex; align-items: center; justify-content: center; background: var(--gray-100); border-radius: 4px; margin-bottom: 4px;">
+                                                    <i class="bi bi-exclamation-triangle" style="font-size: 20px; color: var(--gray-500);"></i>
+                                                </div>
+                                                <small style="color: var(--gray-500);">File unavailable</small>
+                                            </div>
+                                            {% endif %}
                                             {% endfor %}
                                             {% if study.images.all|length > 6 %}
                                             <div style="background: var(--gray-100); border-radius: 6px; padding: 8px; border: 1px solid var(--gray-200); text-align: center; display: flex; align-items: center; justify-content: center;">
@@ -2562,6 +2905,7 @@
                             </h5>
                             <div style="max-height: 200px; overflow-y: auto;">
                                 {% for doc in imaging_pdf_docs %}
+                                {% if doc.file.name %}
                                 <div style="background: var(--gray-50); border-radius: 8px; padding: 12px; margin-bottom: 8px; border-left: 4px solid var(--success);">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <div style="flex: 1;">
@@ -2571,14 +2915,15 @@
                                                 {{ doc.created|date:"M d, Y" }}
                                             </div>
                                         </div>
-                                        <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-success me-1">
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-success me-1">
                                             <i class="bi bi-eye"></i> View
                                         </a>
-                                        <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-success">
+                                        <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-outline-success">
                                             <i class="bi bi-download"></i> Download
                                         </a>
                                     </div>
                                 </div>
+                                {% endif %}
                                 {% endfor %}
                             </div>
                         </div>
@@ -2588,10 +2933,12 @@
                         {% if patient_encounter_documents %}
                         <div style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid var(--primary);">
                             <h5 style="font-weight: 700; color: var(--primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                <i class="bi bi-person-plus"></i> Documents & Images from Patient ({{ patient_encounter_documents|length }})
+                                <i class="bi bi-folder2-open"></i> Patient folder / external files ({{ patient_encounter_documents|length }})
                             </h5>
+                            <p class="small text-muted mb-3">Scans, photos, and reports uploaded by nurse or front desk on the patient record. Also shown on the Imaging tab.</p>
                             <div style="max-height: 320px; overflow-y: auto;">
                                 {% for doc in patient_encounter_documents %}
+                                {% if doc.file.name %}
                                 <div style="background: var(--gray-50); border-radius: 8px; padding: 12px; margin-bottom: 8px; border-left: 4px solid var(--primary);">
                                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                                         <div style="flex: 1; min-width: 0;">
@@ -2599,22 +2946,23 @@
                                             <div style="font-size: 12px; color: var(--gray-600); margin-top: 4px;">
                                                 {{ doc.get_document_type_display }} · {% if doc.uploaded_by %}{{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% else %}Patient / Visit{% endif %} · {{ doc.created|date:"M d, Y" }}
                                             </div>
-                                            {% if doc.file and doc.file_type and "image" in doc.file_type %}
+                                            {% if doc.file_type and "image" in doc.file_type %}
                                             <div style="margin-top: 8px;">
-                                                <img src="{{ doc.file.url }}" alt="{{ doc.title }}" style="max-width: 200px; max-height: 150px; object-fit: contain; border-radius: 6px; border: 1px solid var(--gray-200);">
+                                                <img src="{% url 'hospital:patient_document_file' doc.pk %}" alt="{{ doc.title }}" style="max-width: 200px; max-height: 150px; object-fit: contain; border-radius: 6px; border: 1px solid var(--gray-200);">
                                             </div>
                                             {% endif %}
                                         </div>
                                         <div style="display: flex; gap: 6px;">
-                                            <a href="{{ doc.file.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary">
                                                 <i class="bi bi-eye"></i> View
                                             </a>
-                                            <a href="{{ doc.file.url }}" download class="btn btn-sm btn-outline-primary">
+                                            <a href="{% url 'hospital:patient_document_file' doc.pk %}?download=1" download class="btn btn-sm btn-outline-primary">
                                                 <i class="bi bi-download"></i> Download
                                             </a>
                                         </div>
                                     </div>
                                 </div>
+                                {% endif %}
                                 {% endfor %}
                             </div>
                         </div>
@@ -2716,7 +3064,7 @@
     </div>
 </div>
 
-<!-- Edit Progress Note Modal (consultation – same as inpatient) -->
+<!-- Edit Progress Note Modal (one note for all — same as consultation clinical note) -->
 <div class="modal fade" id="editProgressNoteModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -2731,29 +3079,13 @@
                 <div class="modal-body">
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle me-2"></i>
-                        Update the note and click Save. You can edit again anytime.
+                        Update the note and click Save. One note for everything — same as the consultation note.
                     </div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label"><strong>Subjective</strong> (Patient's complaints)</label>
-                            <textarea name="subjective" id="editProgressSubjective" class="form-control" rows="3"></textarea>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label"><strong>Objective</strong> (Your findings)</label>
-                            <textarea name="objective" id="editProgressObjective" class="form-control" rows="3"></textarea>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label"><strong>Assessment</strong> (Your conclusion)</label>
-                        <textarea name="assessment" id="editProgressAssessment" class="form-control" rows="2"></textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label"><strong>Plan</strong> (What to do next)</label>
-                        <textarea name="plan" id="editProgressPlan" class="form-control" rows="3"></textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Additional Notes</label>
-                        <textarea name="note_content" id="editProgressNoteContent" class="form-control" rows="2"></textarea>
+                    <div class="mb-0">
+                        <label class="form-label" for="editProgressNoteContent" style="font-weight: 700; color: var(--primary);">Clinical note</label>
+                        <textarea name="note_content" id="editProgressNoteContent" class="form-control" rows="12"
+                                  placeholder="Write everything here: presenting complaint, history, examination findings, assessment, plan, follow-up..."></textarea>
+                        <small class="text-muted">One note for this entry. Include PC, history, PE, assessment, and plan as you like.</small>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -2996,11 +3328,20 @@ if (consultationReadOnly) {
             '<strong>' + escapeHtml(n.type) + '</strong> · ' + escapeHtml(n.created) +
             (n.created_by ? ' · By ' + escapeHtml(n.created_by) : '') + visitMeta;
         const blocks = [];
-        if (n.subjective) blocks.push('<div class="soap-block"><div class="soap-label s">1. Presenting Complaints (PC) – History</div><div class="text-body">' + escapeHtml(n.subjective).replace(/\n/g, '<br>') + '</div></div>');
-        if (n.notes) blocks.push('<div class="soap-block"><div class="soap-label o">2. Past Medical History (PMH) – Family, Social, Drug History</div><div class="text-body">' + escapeHtml(n.notes).replace(/\n/g, '<br>') + '</div></div>');
-        if (n.objective) blocks.push('<div class="soap-block"><div class="soap-label">3. Physical Examination (PE) – Findings</div><div class="text-body">' + escapeHtml(n.objective).replace(/\n/g, '<br>') + '</div></div>');
-        if (n.assessment) blocks.push('<div class="soap-block"><div class="soap-label a">4. Assessment – Diagnosis & Differential Findings</div><div class="text-body">' + escapeHtml(n.assessment).replace(/\n/g, '<br>') + '</div></div>');
-        if (n.plan) blocks.push('<div class="soap-block"><div class="soap-label p">5. Plan – Treatment & Follow-up</div><div class="text-body">' + escapeHtml(n.plan).replace(/\n/g, '<br>') + '</div></div>');
+        var combined = (n.combined_text || '').trim();
+        var hasSoapParts = !!(n.subjective || n.objective || n.assessment || n.plan);
+        // Single free-text note (same as consultation note) — show as one body
+        if (combined && !hasSoapParts) {
+            blocks.push('<div class="soap-block"><div class="text-body" style="white-space:pre-wrap;">' + escapeHtml(combined).replace(/\n/g, '<br>') + '</div></div>');
+        } else if (combined && (n.notes || '').trim() === combined) {
+            blocks.push('<div class="soap-block"><div class="text-body" style="white-space:pre-wrap;">' + escapeHtml(combined).replace(/\n/g, '<br>') + '</div></div>');
+        } else {
+            if (n.subjective) blocks.push('<div class="soap-block"><div class="soap-label s">1. Presenting Complaints (PC) – History</div><div class="text-body">' + escapeHtml(n.subjective).replace(/\n/g, '<br>') + '</div></div>');
+            if (n.notes) blocks.push('<div class="soap-block"><div class="soap-label o">2. Past Medical History (PMH) – Family, Social, Drug History</div><div class="text-body">' + escapeHtml(n.notes).replace(/\n/g, '<br>') + '</div></div>');
+            if (n.objective) blocks.push('<div class="soap-block"><div class="soap-label">3. Physical Examination (PE) – Findings</div><div class="text-body">' + escapeHtml(n.objective).replace(/\n/g, '<br>') + '</div></div>');
+            if (n.assessment) blocks.push('<div class="soap-block"><div class="soap-label a">4. Assessment – Diagnosis & Differential Findings</div><div class="text-body">' + escapeHtml(n.assessment).replace(/\n/g, '<br>') + '</div></div>');
+            if (n.plan) blocks.push('<div class="soap-block"><div class="soap-label p">5. Plan – Treatment & Follow-up</div><div class="text-body">' + escapeHtml(n.plan).replace(/\n/g, '<br>') + '</div></div>');
+        }
         document.getElementById('previousNoteSOAP').innerHTML = blocks.length ? blocks.join('') : '<p class="text-muted">No content.</p>';
         if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
             bootstrap.Modal.getOrCreateInstance(detailModalEl).show();
@@ -3015,7 +3356,7 @@ if (consultationReadOnly) {
         const listEl = document.getElementById('previousHistorySummaryList');
         if (!listEl) return;
         listEl.innerHTML = notes.map(function(n, i) {
-            const preview = (n.assessment || n.subjective || n.notes || n.objective || n.plan || 'No preview').substring(0, 60);
+            const preview = (n.combined_text || n.assessment || n.subjective || n.notes || n.objective || n.plan || 'No preview').substring(0, 60);
             return '<div class="history-list-item" data-note-index="' + i + '" role="button" tabindex="0">' +
                 '<strong>' + escapeHtml(n.type) + '</strong> · ' + escapeHtml(n.created) + (n.created_by ? ' · ' + escapeHtml(n.created_by) : '') +
                 '<div class="small text-muted mt-1">' + escapeHtml(preview) + (preview.length >= 60 ? '…' : '') + '</div></div>';
@@ -3307,9 +3648,28 @@ if (consultationReadOnly) {
   run();
 })();
 
-// Edit Progress Note (consultation – same as inpatient Shift Handover)
-// Use event delegation so Edit works even when list is in a tab or rendered after load
+// Edit Progress Note — one combined note field (same as consultation clinical note)
 (function() {
+  function combinedNoteFromCard(card) {
+    var body = (card.getAttribute('data-body') || '').trim();
+    if (body) return body;
+    var parts = [
+      card.getAttribute('data-notes') || '',
+      card.getAttribute('data-subjective') || '',
+      card.getAttribute('data-objective') || '',
+      card.getAttribute('data-assessment') || '',
+      card.getAttribute('data-plan') || ''
+    ].map(function(p) { return (p || '').trim(); }).filter(Boolean);
+    // Prefer notes-first if it already holds the full entry; otherwise join legacy SOAP parts
+    var notesOnly = (card.getAttribute('data-notes') || '').trim();
+    if (notesOnly && parts.length === 1) return notesOnly;
+    if (notesOnly && !card.getAttribute('data-subjective') && !card.getAttribute('data-objective')
+        && !card.getAttribute('data-assessment') && !card.getAttribute('data-plan')) {
+      return notesOnly;
+    }
+    return parts.join('\n\n');
+  }
+
   function handleEditProgressNoteClick(ev) {
     var btn = ev.target.closest('.edit-progress-note-btn');
     if (!btn) return;
@@ -3319,13 +3679,9 @@ if (consultationReadOnly) {
     if (!card) return;
     var noteId = card.getAttribute('data-note-id');
     if (!noteId) return;
-    var e = document.getElementById;
+    var e = function (id) { return document.getElementById(id); };
     if (e('editProgressNoteId')) e('editProgressNoteId').value = noteId;
-    if (e('editProgressSubjective')) e('editProgressSubjective').value = card.getAttribute('data-subjective') || '';
-    if (e('editProgressObjective')) e('editProgressObjective').value = card.getAttribute('data-objective') || '';
-    if (e('editProgressAssessment')) e('editProgressAssessment').value = card.getAttribute('data-assessment') || '';
-    if (e('editProgressPlan')) e('editProgressPlan').value = card.getAttribute('data-plan') || '';
-    if (e('editProgressNoteContent')) e('editProgressNoteContent').value = card.getAttribute('data-notes') || '';
+    if (e('editProgressNoteContent')) e('editProgressNoteContent').value = combinedNoteFromCard(card);
     var editModal = document.getElementById('editProgressNoteModal');
     if (editModal && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
       bootstrap.Modal.getOrCreateInstance(editModal).show();
@@ -3787,7 +4143,17 @@ window.closeCompleteModal = function() {
                     valueField: 'id',
                     resultsKey: 'results',
                     subtextField: 'subtext',
+                    disableUnavailable: true,
                     onSelect: function(drug, input) {
+                        if (drug && drug.available === false) {
+                            input.value = '';
+                            if (typeof showToast === 'function') {
+                                showToast(drug.unavailable_reason || 'Out of stock — see pharmacist for alternative', 'warning');
+                            } else {
+                                alert(drug.unavailable_reason || 'Out of stock — see pharmacist for alternative');
+                            }
+                            return;
+                        }
                         input.value = '';
                         addDrugToPrescriptionList(drug.id, drug.display || drug.name);
                         const drugIdField = document.getElementById('selectedDrugId');
@@ -3848,6 +4214,7 @@ window.closeCompleteModal = function() {
             try {
                 autocompleteInstances.lab = new AutocompleteSearch(labInput, {
                     apiUrl: '{% url "hospital:api_autocomplete_lab_tests" %}',
+                    extraParams: { encounter_id: '{{ encounter.id }}' },
                     minChars: 2,
                     delay: 300,
                     maxResults: 20,
@@ -3911,6 +4278,7 @@ window.closeCompleteModal = function() {
             try {
                 autocompleteInstances.imaging = new AutocompleteSearch(imagingInput, {
                     apiUrl: '{% url "hospital:api_autocomplete_imaging_studies" %}',
+                    extraParams: { encounter_id: '{{ encounter.id }}' },
                     minChars: 2,
                     delay: 300,
                     maxResults: 20,
@@ -3965,6 +4333,109 @@ window.closeCompleteModal = function() {
         if (singleField) singleField.value = '';  // list is source of truth for multiple drugs
         updateSelectedDrugsUI();
     }
+
+    function normalizePrescriptionRoute(route) {
+        var r = String(route || 'oral').trim().toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+        var aliases = {
+            'po': 'oral',
+            'p.o.': 'oral',
+            'p.o': 'oral',
+            'by_mouth': 'oral',
+            'sc': 'subcutaneous',
+            's.c.': 'subcutaneous',
+            's.c': 'subcutaneous',
+            'sq': 'subcutaneous',
+            'pv': 'per_vaginum',
+            'per_vaginal': 'per_vaginum',
+            'intraarticular': 'intra_articular',
+            'intra_articular': 'intra-articular',
+            'i.v.': 'iv',
+            'i.v': 'iv',
+            'i.m.': 'im',
+            'i.m': 'im'
+        };
+        if (aliases[r]) r = aliases[r];
+        // select options use "intra-articular" with hyphen
+        if (r === 'intra_articular') r = 'intra-articular';
+        var allowed = {
+            oral: 1, iv: 1, im: 1, subcutaneous: 1, 'intra-articular': 1,
+            intrathecal: 1, topical: 1, rectally: 1, nasal: 1, per_vaginum: 1
+        };
+        return allowed[r] ? r : 'oral';
+    }
+
+    function refillFromPastPrescription(card) {
+        if (!card) return;
+        if (card.getAttribute('data-in-stock') === '0' || card.classList.contains('past-rx-out-of-stock')) {
+            var msg = 'Out of stock — see pharmacist for alternative';
+            if (typeof showToast === 'function') showToast(msg, 'warning');
+            else alert(msg);
+            return;
+        }
+        var drugId = String(card.getAttribute('data-drug-id') || '').trim();
+        if (!drugId) return;
+        var drugName = (card.getAttribute('data-drug-name') || '').trim() || drugId;
+        var dose = card.getAttribute('data-dose') || '';
+        var route = normalizePrescriptionRoute(card.getAttribute('data-route'));
+        var frequency = card.getAttribute('data-frequency') || '';
+        var duration = card.getAttribute('data-duration') || '';
+        var quantity = card.getAttribute('data-quantity') || '1';
+        var instructions = card.getAttribute('data-instructions') || '';
+
+        addDrugToPrescriptionList(drugId, drugName);
+        var drugIdField = document.getElementById('selectedDrugId');
+        if (drugIdField) drugIdField.value = drugId;
+
+        var form = document.getElementById('prescriptionForm');
+        var durEl = null;
+        if (form) {
+            var doseEl = form.querySelector('input[name="dose"]');
+            var routeEl = form.querySelector('select[name="route"]');
+            var freqEl = form.querySelector('input[name="frequency"]');
+            durEl = form.querySelector('input[name="duration"]');
+            var qtyEl = form.querySelector('input[name="quantity"]');
+            var instrEl = form.querySelector('textarea[name="instructions"]');
+            if (doseEl) doseEl.value = dose;
+            if (routeEl) routeEl.value = route;
+            if (freqEl) freqEl.value = frequency;
+            if (durEl) durEl.value = duration;
+            if (qtyEl) qtyEl.value = quantity || '1';
+            if (instrEl) instrEl.value = instructions;
+        }
+
+        card.classList.remove('refill-flash');
+        void card.offsetWidth;
+        card.classList.add('refill-flash');
+
+        var searchInput = document.getElementById('drugSearchInput');
+        if (searchInput) {
+            try { searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        }
+        if (durEl) {
+            try { durEl.focus(); } catch (e) {}
+        }
+    }
+
+    function initPastPrescriptionRefill() {
+        document.querySelectorAll('.past-prescription-refill-card').forEach(function(card) {
+            if (card._pastRxBound) return;
+            card._pastRxBound = true;
+            card.addEventListener('click', function() {
+                refillFromPastPrescription(card);
+            });
+            card.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    refillFromPastPrescription(card);
+                }
+            });
+        });
+    }
+
+    window.addDrugToPrescriptionList = addDrugToPrescriptionList;
+    window.removeDrugFromPrescriptionList = removeDrugFromPrescriptionList;
+    window.clearSelectedPrescriptionDrugs = clearSelectedPrescriptionDrugs;
+    window.refillFromPastPrescription = refillFromPastPrescription;
 
     function removeDrugFromPrescriptionList(id) {
         selectedPrescriptionDrugs = selectedPrescriptionDrugs.filter(function(d) { return d.id !== id; });
@@ -4180,6 +4651,115 @@ window.closeCompleteModal = function() {
     // ========================================================================
     let selectedLabTests = [];
     let selectedImagingStudies = [];
+    const insuranceLabLimit = {{ insurance_lab_limit|default:3 }};
+    const insuranceLabOrdered = {{ insurance_lab_ordered_count|default:0 }};
+    const insuranceLabLimited = {{ insurance_lab_limited|yesno:"true,false" }};
+
+    function insuranceLabExtrasRequired() {
+        if (!insuranceLabLimited) return false;
+        return (insuranceLabOrdered + selectedLabTests.length) > insuranceLabLimit;
+    }
+
+    function updateInsuranceExtraLabPanel() {
+        const panel = document.getElementById('insurance-extra-lab-panel');
+        if (!panel) return;
+        const show = insuranceLabExtrasRequired();
+        panel.style.display = show ? 'block' : 'none';
+        const reasonEl = document.getElementById('extra_lab_reason');
+        const dxEl = document.getElementById('extra_lab_diagnosis');
+        if (reasonEl) reasonEl.required = show;
+        if (dxEl) dxEl.required = show;
+        const banner = document.getElementById('insurance-lab-limit-banner');
+        if (banner) {
+            const projected = insuranceLabOrdered + selectedLabTests.length;
+            banner.innerHTML = '<i class="bi bi-shield-check me-1"></i> Insurance visit: <strong>' +
+                insuranceLabOrdered + '</strong> of <strong>' + insuranceLabLimit +
+                '</strong> lab tests used' +
+                (selectedLabTests.length ? ' (this order: ' + projected + ')' : '') +
+                '. Additional tests need a <strong>reason</strong> and <strong>diagnosis</strong>.';
+        }
+    }
+
+    window.consultationHasDiagnosisRecorded = function() {
+        var panel = document.getElementById('lab-diagnosis-panel');
+        if (panel && panel.getAttribute('data-has-diagnosis') === 'true') return true;
+        var form = document.getElementById('clinicalNotesForm');
+        if (form && form.getAttribute('data-has-diagnosis') === 'true') return true;
+        return false;
+    };
+
+    window.setConsultationHasDiagnosis = function(hasDx) {
+        var val = hasDx ? 'true' : 'false';
+        var panel = document.getElementById('lab-diagnosis-panel');
+        if (panel) panel.setAttribute('data-has-diagnosis', val);
+        var notesForm = document.getElementById('clinicalNotesForm');
+        if (notesForm) notesForm.setAttribute('data-has-diagnosis', val);
+        var missing = document.getElementById('lab-diagnosis-missing-alert');
+        var okAlert = document.getElementById('lab-diagnosis-ok-alert');
+        if (missing) missing.classList.toggle('d-none', hasDx);
+        if (okAlert) okAlert.classList.toggle('d-none', !hasDx);
+        var reminder = document.getElementById('diagnosis-reminder-before-save');
+        var okSave = document.getElementById('diagnosis-ok-before-save');
+        if (reminder) reminder.classList.toggle('d-none', hasDx);
+        if (okSave) okSave.classList.toggle('d-none', !hasDx);
+        var orderSection = document.getElementById('lab-order-section');
+        if (orderSection) orderSection.style.opacity = hasDx ? '1' : '0.55';
+        var blocked = document.getElementById('lab-order-blocked-banner');
+        if (blocked) blocked.classList.toggle('d-none', hasDx);
+        updateLabTestsForm();
+        if (typeof updateImagingStudiesList === 'function') {
+            updateImagingStudiesList();
+        }
+    };
+
+    window.appendDiagnosisListRow = function(existingList, problem, consultUrl, canDelete, csrfValue) {
+        if (!existingList || !problem) return;
+        var placeholder = existingList.querySelector('.text-muted');
+        if (placeholder) placeholder.remove();
+        var desc = (problem.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var code = (problem.icd10_code || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var dtype = (problem.diagnosis_type || 'preliminary').toLowerCase();
+        var isFinal = dtype === 'final';
+        var badge = isFinal
+            ? '<span class="badge bg-success me-1">Final</span>'
+            : '<span class="badge bg-warning text-dark me-1">Prelim</span>';
+        var deleteForm = '';
+        if (canDelete && csrfValue) {
+            deleteForm = '<form method="POST" action="' + consultUrl.replace(/"/g, '&quot;') + '" class="d-inline" onsubmit="return confirm(\'Delete this diagnosis?\');" onclick="event.stopPropagation();">' +
+                '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrfValue.replace(/"/g, '&quot;') + '">' +
+                '<input type="hidden" name="action" value="delete_diagnosis">' +
+                '<input type="hidden" name="problem_id" value="' + problem.id + '">' +
+                '<button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1"><i class="bi bi-trash"></i></button></form>';
+        }
+        var row = document.createElement('div');
+        row.className = 'd-flex justify-content-between align-items-start border-bottom pb-1 mb-1 lab-diagnosis-row';
+        row.style.fontSize = '13px';
+        if (problem.id) row.setAttribute('data-problem-id', problem.id);
+        row.setAttribute('data-diagnosis-type', isFinal ? 'final' : 'preliminary');
+        row.innerHTML = '<div>' + badge + '<strong>' + desc + '</strong>' + (code ? ' <span class="text-primary">(' + code + ')</span>' : '') + '</div>' + deleteForm;
+        existingList.appendChild(row);
+    }
+
+    window.appendStagedDiagnosisRow = function(problem) {
+        if (!problem) return;
+        var dtype = (problem.diagnosis_type || 'preliminary').toLowerCase();
+        var isFinal = dtype === 'final';
+        var list = document.getElementById(isFinal ? 'existing-final-list' : 'existing-preliminary-list');
+        if (!list) return;
+        var placeholder = list.querySelector('.text-muted');
+        if (placeholder) placeholder.remove();
+        var desc = (problem.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var code = (problem.icd10_code || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var badge = isFinal
+            ? '<span class="badge bg-success me-1">Final</span>'
+            : '<span class="badge bg-warning text-dark me-1">Prelim</span>';
+        var row = document.createElement('div');
+        row.className = 'border-bottom pb-1 mb-1';
+        row.style.fontSize = '13px';
+        if (problem.id) row.setAttribute('data-problem-id', problem.id);
+        row.innerHTML = badge + '<strong>' + desc + '</strong>' + (code ? ' <span class="text-primary">(' + code + ')</span>' : '');
+        list.appendChild(row);
+    }
 
     /**
      * One capture-phase listener on document so clicks still work if something
@@ -4346,12 +4926,14 @@ window.closeCompleteModal = function() {
         
         if (selectedLabTests.length === 0) {
             container.style.display = 'none';
+            updateInsuranceExtraLabPanel();
             return;
         }
         
         container.style.display = 'block';
         count.textContent = selectedLabTests.length;
         list.innerHTML = '';
+        updateInsuranceExtraLabPanel();
         
         let totalPrice = 0;
         selectedLabTests.forEach((test) => {
@@ -4440,9 +5022,39 @@ window.closeCompleteModal = function() {
         });
         
         const submitBtn = document.getElementById('submitLabOrderBtn');
+        const hasDiagnosis = window.consultationHasDiagnosisRecorded();
         if (submitBtn) {
-            submitBtn.disabled = selectedLabTests.length === 0;
+            submitBtn.disabled = selectedLabTests.length === 0 || !hasDiagnosis;
+            submitBtn.title = (!hasDiagnosis && selectedLabTests.length > 0)
+                ? 'Add a preliminary diagnosis before ordering labs'
+                : '';
         }
+    }
+
+    var labOrderFormEl = document.getElementById('labOrderForm');
+    if (labOrderFormEl) {
+        labOrderFormEl.addEventListener('submit', function(e) {
+            if (!window.consultationHasDiagnosisRecorded()) {
+                e.preventDefault();
+                var panel = document.getElementById('lab-diagnosis-panel');
+                if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                alert('Please add a preliminary diagnosis before ordering lab tests.');
+                return false;
+            }
+            if (insuranceLabExtrasRequired()) {
+                var reasonEl = document.getElementById('extra_lab_reason');
+                var dxEl = document.getElementById('extra_lab_diagnosis');
+                var reason = reasonEl ? reasonEl.value.trim() : '';
+                var dx = dxEl ? dxEl.value.trim() : '';
+                if (reason.length < 5 || dx.length < 2) {
+                    e.preventDefault();
+                    var extraPanel = document.getElementById('insurance-extra-lab-panel');
+                    if (extraPanel) extraPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    alert('Insurance visits allow 3 lab tests. Enter a reason and diagnosis for the additional test(s).');
+                    return false;
+                }
+            }
+        });
     }
 
     function updateImagingStudiesList() {
@@ -4548,9 +5160,26 @@ window.closeCompleteModal = function() {
         });
         
         const submitBtn = document.getElementById('submitImagingOrderBtn');
+        const hasDiagnosis = window.consultationHasDiagnosisRecorded();
         if (submitBtn) {
-            submitBtn.disabled = selectedImagingStudies.length === 0;
+            submitBtn.disabled = selectedImagingStudies.length === 0 || !hasDiagnosis;
+            submitBtn.title = (!hasDiagnosis && selectedImagingStudies.length > 0)
+                ? 'Add a preliminary diagnosis before ordering imaging'
+                : '';
         }
+    }
+
+    var imagingOrderFormEl = document.getElementById('imagingOrderForm');
+    if (imagingOrderFormEl) {
+        imagingOrderFormEl.addEventListener('submit', function(e) {
+            if (!window.consultationHasDiagnosisRecorded()) {
+                e.preventDefault();
+                var tab = document.getElementById('imaging-tab');
+                if (tab) tab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                alert('Please add a preliminary diagnosis before ordering imaging.');
+                return false;
+            }
+        });
     }
 
     // Inline onclick handlers (selected list rows, Clear All) resolve on window
@@ -4642,6 +5271,28 @@ window.closeCompleteModal = function() {
         }
         
         saveForm.addEventListener('submit', function(e) {
+            syncSaveForm();
+            var clinicalNote = document.getElementById('clinical_note');
+            var saveClinicalNote = document.getElementById('save_clinical_note');
+            var noteText = (clinicalNote && clinicalNote.value.trim()) || (saveClinicalNote && saveClinicalNote.value.trim()) || '';
+            var clinicalNotesForm = document.getElementById('clinicalNotesForm');
+            if (
+                noteText &&
+                clinicalNotesForm &&
+                clinicalNotesForm.getAttribute('data-require-diagnosis') === 'true' &&
+                clinicalNotesForm.getAttribute('data-has-diagnosis') !== 'true'
+            ) {
+                e.preventDefault();
+                if (typeof window.showDiagnosisRequiredWarning === 'function') {
+                    window.showDiagnosisRequiredWarning();
+                }
+                const btn = saveForm.querySelector('button[type="submit"]');
+                if (btn) {
+                    btn.disabled = false;
+                }
+                return false;
+            }
+
             console.log('✅ Save Progress form submitting...');
             console.log('✅ Form action URL:', saveForm.action);
             console.log('✅ Form method:', saveForm.method);
@@ -4781,6 +5432,7 @@ window.closeCompleteModal = function() {
     function init() {
         initTabs();
         initPrescriptionForm();
+        initPastPrescriptionRefill();
         initDiagnosisAutoFill();
         initTestCardSelection();
         // Initialize save progress handler
@@ -4926,19 +5578,28 @@ window.closeCompleteModal = function() {
             </div>
             
             <div class="form-group">
-                <label class="form-label" style="font-weight: 700;">Diagnosis</label>
-                {% if existing_diagnoses %}
+                <label class="form-label" style="font-weight: 700;">Final diagnosis <span class="text-danger">*</span></label>
+                {% if preliminary_diagnoses or final_diagnoses %}
                 <div style="margin-bottom: 8px; padding: 8px; background: var(--gray-50); border-radius: 6px; font-size: 13px;">
-                    <strong>Existing Diagnoses:</strong>
-                    {% for diag in existing_diagnoses %}
-                    <div style="margin-top: 4px;">
-                        • {{ diag.diagnosis_name }}{% if diag.display_code %} ({{ diag.display_code }}){% endif %}
-                    </div>
+                    {% if preliminary_diagnoses %}
+                    <strong>Preliminary:</strong>
+                    {% for diag in preliminary_diagnoses %}
+                    <div style="margin-top: 4px;">• {{ diag.diagnosis_name }}{% if diag.display_code %} ({{ diag.display_code }}){% endif %}</div>
                     {% endfor %}
+                    {% endif %}
+                    {% if final_diagnoses %}
+                    <strong class="d-block mt-2">Final already recorded:</strong>
+                    {% for diag in final_diagnoses %}
+                    <div style="margin-top: 4px;">• {{ diag.diagnosis_name }}{% if diag.display_code %} ({{ diag.display_code }}){% endif %}</div>
+                    {% endfor %}
+                    {% endif %}
                 </div>
                 {% endif %}
-                <input type="text" name="diagnosis" id="modal_diagnosis" class="form-control" value="{{ encounter.diagnosis|default:'' }}" placeholder="Enter final diagnosis (will be saved to medical record)">
-                <small class="text-muted">This diagnosis will be saved to the patient's medical record when you complete the consultation.</small>
+                <input type="text" name="diagnosis" id="modal_diagnosis" class="form-control"
+                       value="{% if final_diagnoses %}{{ final_diagnoses.0.diagnosis_name }}{% elif preliminary_diagnoses %}{{ preliminary_diagnoses.0.diagnosis_name }}{% else %}{{ encounter.diagnosis|default:'' }}{% endif %}"
+                       placeholder="Enter or confirm FINAL diagnosis after reviewing results"
+                       {% if not has_final_diagnosis %}required{% endif %}>
+                <small class="text-muted">Required to complete consultation. Confirm or update the final diagnosis after lab/imaging results.</small>
             </div>
             
             <div class="form-group">
@@ -4963,27 +5624,67 @@ window.closeCompleteModal = function() {
 <script>
 // Close modal on background click, Escape key, and handle form submission
 document.addEventListener('DOMContentLoaded', function() {
-    // Ensure doctors always start with a fresh Clinical Note typing area
     var mainClinicalNote = document.getElementById('clinical_note');
-    if (mainClinicalNote) {
-        mainClinicalNote.value = '';
+    var encounterId = '{{ encounter.id }}';
+    var draftKey = 'clinical_note_draft_' + encounterId;
+
+    function persistClinicalNoteDraft() {
+        if (!mainClinicalNote) return;
+        try {
+            if (mainClinicalNote.value.trim()) {
+                sessionStorage.setItem(draftKey, mainClinicalNote.value);
+            } else {
+                sessionStorage.removeItem(draftKey);
+            }
+        } catch (err) {}
     }
 
-    // Allow saving clinical note anytime; diagnosis is encouraged but not required
+    function restoreClinicalNoteDraft() {
+        if (!mainClinicalNote || mainClinicalNote.value.trim()) return;
+        try {
+            var stored = sessionStorage.getItem(draftKey);
+            if (stored) mainClinicalNote.value = stored;
+        } catch (err) {}
+    }
+
+    window.showDiagnosisRequiredWarning = function() {
+        var warn = document.getElementById('diagnosis-required-warning');
+        if (warn) warn.classList.remove('d-none');
+        var diagnosisBlock = document.getElementById('consultation-diagnosis-block');
+        if (diagnosisBlock) diagnosisBlock.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        persistClinicalNoteDraft();
+    };
+
+    if (mainClinicalNote) {
+        restoreClinicalNoteDraft();
+        if (mainClinicalNote.value.trim()) {
+            persistClinicalNoteDraft();
+        }
+        mainClinicalNote.addEventListener('input', persistClinicalNoteDraft);
+        mainClinicalNote.addEventListener('change', persistClinicalNoteDraft);
+    }
+
+    if (window.location.search.indexOf('note_saved=1') !== -1) {
+        try { sessionStorage.removeItem(draftKey); } catch (err) {}
+    }
+
     var clinicalNotesForm = document.getElementById('clinicalNotesForm');
     if (clinicalNotesForm) {
-        // Optional: show reminder when saving without diagnosis (no block)
-        clinicalNotesForm.addEventListener('submit', function() {
-            if (this.getAttribute('data-has-diagnosis') !== 'true') {
-                var diagnosisBlock = document.getElementById('consultation-diagnosis-block');
-                if (diagnosisBlock) diagnosisBlock.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        clinicalNotesForm.addEventListener('submit', function(e) {
+            if (
+                this.getAttribute('data-require-diagnosis') === 'true' &&
+                this.getAttribute('data-has-diagnosis') !== 'true'
+            ) {
+                e.preventDefault();
+                window.showDiagnosisRequiredWarning();
+                return false;
             }
         });
         // Save Clinical Note button in Diagnosis section – submit the main note form
         var saveFromDiagnosisBtn = document.getElementById('saveClinicalNoteFromDiagnosisBtn');
         if (saveFromDiagnosisBtn) {
             saveFromDiagnosisBtn.addEventListener('click', function() {
-                clinicalNotesForm.submit();
+                clinicalNotesForm.requestSubmit ? clinicalNotesForm.requestSubmit() : clinicalNotesForm.submit();
             });
         }
     }
@@ -5020,32 +5721,87 @@ document.addEventListener('DOMContentLoaded', function() {
                 var data = null;
                 try { data = JSON.parse(xhr.responseText); } catch (err) {}
                 if (ok && data && data.success && data.problem) {
-                    var placeholder = existingList.querySelector('.text-muted');
-                    if (placeholder) placeholder.remove();
-                    var desc = (data.problem.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    var code = (data.problem.icd10_code || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    var deleteForm = '';
-                    if (canDelete && csrfInput) {
-                        deleteForm = '<form method="POST" action="' + consultUrl.replace(/"/g, '&quot;') + '" class="d-inline" onsubmit="return confirm(\'Delete this diagnosis?\');" onclick="event.stopPropagation();">' +
-                            '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrfInput.value.replace(/"/g, '&quot;') + '">' +
-                            '<input type="hidden" name="action" value="delete_diagnosis">' +
-                            '<input type="hidden" name="problem_id" value="' + data.problem.id + '">' +
-                            '<button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1"><i class="bi bi-trash"></i></button></form>';
+                    var labList = document.getElementById('lab-existing-diagnoses-list');
+                    window.appendDiagnosisListRow(existingList, data.problem, consultUrl, canDelete, csrfInput ? csrfInput.value : '');
+                    window.appendDiagnosisListRow(labList, data.problem, consultUrl, false, '');
+                    if (typeof window.appendStagedDiagnosisRow === 'function') {
+                        window.appendStagedDiagnosisRow(data.problem);
                     }
-                    var row = document.createElement('div');
-                    row.className = 'd-flex justify-content-between align-items-start border-bottom pb-1 mb-1';
-                    row.style.fontSize = '13px';
-                    row.innerHTML = '<div><strong>' + desc + '</strong>' + (code ? ' <span class="text-primary">(' + code + ')</span>' : '') + '</div>' + deleteForm;
-                    existingList.appendChild(row);
                     addDiagnosisForm.reset();
-                    var clinicalNotesForm = document.getElementById('clinicalNotesForm');
-                    if (clinicalNotesForm) {
-                        clinicalNotesForm.setAttribute('data-has-diagnosis', 'true');
+                    var typeSelect = document.getElementById('diagnosisTypeSelect');
+                    if (typeSelect) typeSelect.value = 'preliminary';
+                    if (typeof window.setConsultationHasDiagnosis === 'function') {
+                        window.setConsultationHasDiagnosis(true);
                     }
-                    var reminder = document.getElementById('diagnosis-reminder-before-save');
-                    var okEl = document.getElementById('diagnosis-ok-before-save');
-                    if (reminder) reminder.classList.add('d-none');
-                    if (okEl) okEl.classList.remove('d-none');
+                    var dxWarn = document.getElementById('diagnosis-required-warning');
+                    if (dxWarn) dxWarn.classList.add('d-none');
+                    var toastEl = document.createElement('div');
+                    toastEl.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#10B981 0%,#059669 100%);color:white;padding:16px 24px;border-radius:12px;box-shadow:0 8px 24px rgba(16,185,129,0.4);z-index:10001;font-weight:600;';
+                    toastEl.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Diagnosis added.');
+                    document.body.appendChild(toastEl);
+                    setTimeout(function() { if (toastEl.parentNode) toastEl.remove(); }, 3000);
+                } else {
+                    var msg = (data && data.message) ? data.message : 'Could not add diagnosis. Please try again.';
+                    alert(msg);
+                }
+            };
+            xhr.onerror = function() {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = origText;
+                }
+                alert('Network error. Please try again.');
+            };
+            xhr.send(formData);
+        });
+    }
+
+    var labAddDiagnosisForm = document.getElementById('labAddDiagnosisForm');
+    var labDiagnosisPanel = document.getElementById('lab-diagnosis-panel');
+    if (labAddDiagnosisForm && labDiagnosisPanel) {
+        var labExistingList = document.getElementById('lab-existing-diagnoses-list');
+        var labConsultUrl = '{% url "hospital:consultation_view" encounter.id %}';
+        var labCsrfInput = labAddDiagnosisForm.querySelector('input[name=csrfmiddlewaretoken]');
+        labAddDiagnosisForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!labExistingList || !labConsultUrl) return;
+            var submitBtn = labAddDiagnosisForm.querySelector('button[type=submit]');
+            var origText = submitBtn ? submitBtn.innerHTML : '';
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Adding...';
+            }
+            var formData = new FormData(labAddDiagnosisForm);
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', labConsultUrl);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+            xhr.setRequestHeader('Accept', 'application/json');
+            if (labCsrfInput) xhr.setRequestHeader('X-CSRFToken', labCsrfInput.value);
+            xhr.onload = function() {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = origText;
+                }
+                var ok = xhr.status >= 200 && xhr.status < 300;
+                var data = null;
+                try { data = JSON.parse(xhr.responseText); } catch (err) {}
+                if (ok && data && data.success && data.problem) {
+                    var mainList = document.getElementById('existing-diagnoses-list');
+                    var diagnosisBlock = document.getElementById('consultation-diagnosis-block');
+                    var canDelete = diagnosisBlock && diagnosisBlock.getAttribute('data-can-delete') === 'true';
+                    // Lab panel always records preliminary
+                    data.problem.diagnosis_type = data.problem.diagnosis_type || 'preliminary';
+                    window.appendDiagnosisListRow(mainList, data.problem, labConsultUrl, canDelete, labCsrfInput ? labCsrfInput.value : '');
+                    window.appendDiagnosisListRow(labExistingList, data.problem, labConsultUrl, false, '');
+                    if (typeof window.appendStagedDiagnosisRow === 'function') {
+                        window.appendStagedDiagnosisRow(data.problem);
+                    }
+                    labAddDiagnosisForm.reset();
+                    if (typeof window.setConsultationHasDiagnosis === 'function') {
+                        window.setConsultationHasDiagnosis(true);
+                    }
+                    var dxWarn = document.getElementById('diagnosis-required-warning');
+                    if (dxWarn) dxWarn.classList.add('d-none');
                     var toastEl = document.createElement('div');
                     toastEl.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#10B981 0%,#059669 100%);color:white;padding:16px 24px;border-radius:12px;box-shadow:0 8px 24px rgba(16,185,129,0.4);z-index:10001;font-weight:600;';
                     toastEl.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Diagnosis added.');
@@ -5092,20 +5848,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 var data = null;
                 try { data = JSON.parse(xhr.responseText); } catch (err) {}
                 if (ok && data && data.success && row && row.parentNode) {
+                    var problemIdInput = form.querySelector('input[name="problem_id"]');
+                    var problemId = problemIdInput ? problemIdInput.value : '';
                     row.remove();
+                    var labList = document.getElementById('lab-existing-diagnoses-list');
+                    if (labList && problemId) {
+                        var labRow = labList.querySelector('[data-problem-id="' + problemId + '"]');
+                        if (labRow) labRow.remove();
+                    }
                     var remaining = existingDiagnosesList.querySelectorAll('.d-flex');
-                    if (remaining.length === 0) {
+                    var hasStaticDx = !!existingDiagnosesList.querySelector('.border-bottom strong');
+                    var hasDx = remaining.length > 0 || hasStaticDx;
+                    if (remaining.length === 0 && !hasStaticDx) {
                         var placeholder = document.createElement('p');
                         placeholder.className = 'text-muted small mb-0';
                         placeholder.textContent = 'None yet. Add above.';
                         existingDiagnosesList.appendChild(placeholder);
                     }
-                    var clinicalNotesForm = document.getElementById('clinicalNotesForm');
-                    if (clinicalNotesForm) clinicalNotesForm.setAttribute('data-has-diagnosis', remaining.length > 0 ? 'true' : 'false');
-                    var reminder = document.getElementById('diagnosis-reminder-before-save');
-                    var okEl = document.getElementById('diagnosis-ok-before-save');
-                    if (reminder) reminder.classList.toggle('d-none', remaining.length > 0);
-                    if (okEl) okEl.classList.toggle('d-none', remaining.length === 0);
+                    if (typeof window.setConsultationHasDiagnosis === 'function') {
+                        window.setConsultationHasDiagnosis(hasDx);
+                    }
                 } else {
                     var msg = (data && data.message) ? data.message : 'Could not delete. Please try again.';
                     alert(msg);
@@ -5316,6 +6078,512 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     fetchVitals();
     setInterval(fetchVitals, 5000);
+})();
+</script>
+
+<script>
+(function() {
+    var panel = document.getElementById('aiClinicalCopilotPanel');
+    if (!panel) return;
+
+    var startUrl = panel.getAttribute('data-start-url');
+    var statusTemplate = panel.getAttribute('data-status-url-template') || '';
+    var feedbackTemplate = panel.getAttribute('data-feedback-url-template') || '';
+    var chatTemplate = panel.getAttribute('data-chat-url-template') || '';
+    var generateBtn = document.getElementById('aiClinicalGenerateBtn');
+    var retryBtn = document.getElementById('aiClinicalRetryBtn');
+    var insertBtn = document.getElementById('aiClinicalInsertDraftBtn');
+    var feedbackBtn = document.getElementById('aiClinicalFeedbackBtn');
+    var feedbackSelect = document.getElementById('aiClinicalFeedbackSelect');
+    var statusEl = document.getElementById('aiClinicalStatus');
+    var progressEl = document.getElementById('aiClinicalProgress');
+    var errorEl = document.getElementById('aiClinicalError');
+    var resultsEl = document.getElementById('aiClinicalResults');
+    var sectionsEl = document.getElementById('aiClinicalSections');
+    var redFlagsEl = document.getElementById('aiClinicalRedFlags');
+    var provenanceEl = document.getElementById('aiClinicalProvenance');
+    var chatEl = document.getElementById('aiClinicalChat');
+    var chatMessagesEl = document.getElementById('aiClinicalChatMessages');
+    var chatSuggestionsEl = document.getElementById('aiClinicalChatSuggestions');
+    var chatInput = document.getElementById('aiClinicalChatInput');
+    var chatSendBtn = document.getElementById('aiClinicalChatSendBtn');
+    var chatStatusEl = document.getElementById('aiClinicalChatStatus');
+    var currentRunId = null;
+    var currentRunReady = false;
+    var pendingChatQuestion = '';
+    var pollTimer = null;
+    var chatPollTimer = null;
+    var copiedSections = [];
+
+    // Keep chat visible even before the initial assistance result is ready.
+    if (chatEl && chatEl.parentNode !== panel) {
+        panel.appendChild(chatEl);
+    }
+
+    function csrfToken() {
+        var el = document.querySelector('[name=csrfmiddlewaretoken]');
+        return el ? el.value : '';
+    }
+
+    function urlFor(template, runId) {
+        return (template || '').replace('00000000-0000-0000-0000-000000000000', runId);
+    }
+
+    function setBusy(busy, message) {
+        if (generateBtn) generateBtn.disabled = !!busy;
+        if (retryBtn) retryBtn.disabled = !!busy;
+        if (progressEl) {
+            progressEl.classList.toggle('d-none', !busy);
+            progressEl.setAttribute('aria-hidden', busy ? 'false' : 'true');
+        }
+        if (statusEl && message) statusEl.textContent = message;
+    }
+
+    function showError(msg) {
+        if (!errorEl) return;
+        errorEl.textContent = msg || 'Unable to generate clinical assistance.';
+        errorEl.classList.remove('d-none');
+    }
+
+    function clearError() {
+        if (!errorEl) return;
+        errorEl.textContent = '';
+        errorEl.classList.add('d-none');
+    }
+
+    function escapeHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function listHtml(items) {
+        if (!items || !items.length) return '<p class="small text-muted mb-0">None suggested.</p>';
+        var html = '<ul class="small mb-0 ps-3">';
+        for (var i = 0; i < items.length; i++) {
+            html += '<li>' + escapeHtml(items[i]) + '</li>';
+        }
+        html += '</ul>';
+        return html;
+    }
+
+    function sectionCard(title, bodyHtml, sectionKey, copyText) {
+        var html = '<div class="mb-3 p-2 rounded ai-copilot-section" style="background:#fff;border:1px solid #c7d2fe;">';
+        html += '<div class="d-flex justify-content-between align-items-center gap-2 mb-1">';
+        html += '<strong class="small" style="color:#312e81;">' + escapeHtml(title) + '</strong>';
+        if (sectionKey && copyText) {
+            html += '<button type="button" class="btn btn-link btn-sm p-0 ai-copy-section" data-section="' + escapeHtml(sectionKey) + '" data-copy="' + encodeURIComponent(copyText) + '">Copy</button>';
+        }
+        html += '</div>' + bodyHtml + '</div>';
+        return html;
+    }
+
+    function renderResult(run) {
+        var result = (run && run.result) || {};
+        if (!resultsEl || !sectionsEl || !redFlagsEl) return;
+        resultsEl.classList.remove('d-none');
+
+        var flags = result.red_flags || [];
+        if (flags.length) {
+            var fh = '<div class="alert alert-danger py-2 small mb-0"><strong><i class="bi bi-exclamation-triangle me-1"></i>Red flags</strong><ul class="mb-0 mt-1 ps-3">';
+            for (var i = 0; i < flags.length; i++) {
+                var f = flags[i] || {};
+                fh += '<li><strong>' + escapeHtml(f.urgency || 'review') + ':</strong> ' + escapeHtml(f.flag || '') +
+                    (f.rationale ? ' — ' + escapeHtml(f.rationale) : '') + '</li>';
+            }
+            fh += '</ul></div>';
+            redFlagsEl.innerHTML = fh;
+        } else {
+            redFlagsEl.innerHTML = '';
+        }
+
+        var html = '';
+        html += sectionCard('Summary', '<p class="small mb-0">' + escapeHtml(result.encounter_summary || '') + '</p>', 'encounter_summary', result.encounter_summary || '');
+        html += sectionCard('Missing information', listHtml(result.missing_information), 'missing_information', (result.missing_information || []).join('\n'));
+
+        var dxHtml = '';
+        var differentials = result.differentials || [];
+        if (!differentials.length) {
+            dxHtml = '<p class="small text-muted mb-0">None suggested.</p>';
+        } else {
+            dxHtml = '<ol class="small mb-0 ps-3">';
+            for (var d = 0; d < differentials.length; d++) {
+                var dx = differentials[d] || {};
+                dxHtml += '<li class="mb-1"><strong>' + escapeHtml(dx.condition || '') + '</strong>';
+                if (dx.likelihood) dxHtml += ' <span class="text-muted">(' + escapeHtml(dx.likelihood) + ')</span>';
+                if (dx.supporting_evidence && dx.supporting_evidence.length) {
+                    dxHtml += '<div class="text-muted">For: ' + escapeHtml(dx.supporting_evidence.join('; ')) + '</div>';
+                }
+                dxHtml += '</li>';
+            }
+            dxHtml += '</ol>';
+        }
+        var dxCopy = differentials.map(function(x) {
+            return (x.condition || '') + (x.likelihood ? ' (' + x.likelihood + ')' : '');
+        }).join('\n');
+        html += sectionCard('Differentials', dxHtml, 'differentials', dxCopy);
+        html += sectionCard('Suggested questions', listHtml(result.suggested_questions), 'suggested_questions', (result.suggested_questions || []).join('\n'));
+        html += sectionCard('Examination', listHtml(result.suggested_examination), 'suggested_examination', (result.suggested_examination || []).join('\n'));
+
+        var tests = result.suggested_tests || [];
+        var testHtml = '';
+        if (!tests.length) {
+            testHtml = '<p class="small text-muted mb-0">None suggested.</p>';
+        } else {
+            testHtml = '<ul class="small mb-0 ps-3">';
+            for (var t = 0; t < tests.length; t++) {
+                var test = tests[t] || {};
+                testHtml += '<li><strong>' + escapeHtml(test.test || '') + '</strong>';
+                if (test.priority) testHtml += ' <span class="badge bg-secondary">' + escapeHtml(test.priority) + '</span>';
+                if (test.rationale) testHtml += '<div class="text-muted">' + escapeHtml(test.rationale) + '</div>';
+                testHtml += '</li>';
+            }
+            testHtml += '</ul>';
+        }
+        html += sectionCard('Suggested tests', testHtml, 'suggested_tests', tests.map(function(x) { return x.test || ''; }).join('\n'));
+        html += sectionCard('Treatment considerations', listHtml(result.treatment_considerations), 'treatment_considerations', (result.treatment_considerations || []).join('\n'));
+        html += sectionCard('Medication safety', listHtml(result.medication_safety), 'medication_safety', (result.medication_safety || []).join('\n'));
+        html += sectionCard('Disposition / follow-up', listHtml(result.disposition_follow_up), 'disposition_follow_up', (result.disposition_follow_up || []).join('\n'));
+        html += sectionCard('Limitations', listHtml(result.limitations), 'limitations', (result.limitations || []).join('\n'));
+        html += sectionCard('Draft clinical note', '<pre class="small mb-0" style="white-space:pre-wrap;font-family:inherit;">' + escapeHtml(result.draft_clinical_note || '') + '</pre>', 'draft_clinical_note', result.draft_clinical_note || '');
+        sectionsEl.innerHTML = html;
+
+        if (provenanceEl) {
+            var bits = [];
+            if (run.model_name) bits.push('Model: ' + run.model_name);
+            if (run.prompt_version) bits.push('Prompt ' + run.prompt_version);
+            if (run.schema_version) bits.push('Schema ' + run.schema_version);
+            if (run.completed_at) bits.push('Completed ' + run.completed_at);
+            if (run.latency_ms) bits.push(run.latency_ms + ' ms');
+            provenanceEl.textContent = bits.join(' · ');
+        }
+
+        if (insertBtn) {
+            insertBtn.dataset.draft = result.draft_clinical_note || '';
+        }
+        renderChatSuggestions((result.suggested_questions || []).slice(0, 3));
+        fetchChat();
+    }
+
+    function setChatBusy(busy, message) {
+        if (chatSendBtn) chatSendBtn.disabled = !!busy;
+        if (chatStatusEl) chatStatusEl.textContent = message || '';
+    }
+
+    function renderChatSuggestions(items) {
+        if (!chatSuggestionsEl) return;
+        var html = '';
+        (items || []).slice(0, 4).forEach(function(item) {
+            if (!item) return;
+            html += '<button type="button" class="btn btn-outline-secondary btn-sm ai-chat-suggestion" style="font-size:11px;" data-question="' +
+                encodeURIComponent(item) + '">' + escapeHtml(item) + '</button>';
+        });
+        chatSuggestionsEl.innerHTML = html;
+    }
+
+    function renderChat(messages) {
+        if (!chatMessagesEl) return;
+        if (!messages || !messages.length) {
+            chatMessagesEl.innerHTML = '<p class="small text-muted mb-0">Ask a follow-up about this encounter.</p>';
+            return;
+        }
+        var html = '';
+        var latestFollowUps = [];
+        var hasPending = false;
+        messages.forEach(function(message) {
+            var isDoctor = message.role === 'doctor';
+            var align = isDoctor ? 'margin-left:18%;background:#e0e7ff;border-color:#a5b4fc;' : 'margin-right:10%;background:#f8fafc;border-color:#e2e8f0;';
+            var label = isDoctor ? 'You' : 'Ayisi';
+            html += '<div class="mb-2 p-2 rounded small" style="border:1px solid;' + align + '">';
+            html += '<div class="d-flex justify-content-between gap-2 mb-1"><strong>' + label + '</strong>';
+            if (message.model_name && !isDoctor) html += '<span class="text-muted" style="font-size:10px;">' + escapeHtml(message.model_name) + '</span>';
+            html += '</div>';
+            if (message.status === 'pending') {
+                hasPending = true;
+                html += '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Thinking…</span>';
+            } else if (message.status === 'failed') {
+                html += '<span class="text-danger">' + escapeHtml(message.error_message || 'Unable to answer. Please retry.') + '</span>';
+            } else {
+                html += '<div style="white-space:pre-wrap;">' + escapeHtml(message.content || '') + '</div>';
+                if (message.safety_flags && message.safety_flags.length) {
+                    html += '<div class="alert alert-danger py-1 px-2 mt-2 mb-0"><strong>Safety:</strong> ' + escapeHtml(message.safety_flags.join(' · ')) + '</div>';
+                }
+                if (!isDoctor && message.suggested_follow_ups) latestFollowUps = message.suggested_follow_ups;
+            }
+            html += '</div>';
+        });
+        chatMessagesEl.innerHTML = html;
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        if (latestFollowUps.length) renderChatSuggestions(latestFollowUps);
+        setChatBusy(hasPending, hasPending ? 'Ayisi is thinking…' : '');
+        if (hasPending && !chatPollTimer) {
+            chatPollTimer = setInterval(fetchChat, 2000);
+        } else if (!hasPending && chatPollTimer) {
+            clearInterval(chatPollTimer);
+            chatPollTimer = null;
+        }
+    }
+
+    function fetchChat() {
+        if (!currentRunId || !chatTemplate) return;
+        fetch(urlFor(chatTemplate, currentRunId), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}
+        })
+        .then(function(r) { return r.json().then(function(data) { return {ok:r.ok, data:data}; }); })
+        .then(function(res) {
+            if (!res.ok) {
+                setChatBusy(false, (res.data && res.data.error) || 'Unable to load chat.');
+                return;
+            }
+            renderChat(res.data.messages || []);
+        })
+        .catch(function() { setChatBusy(false, 'Unable to load chat.'); });
+    }
+
+    function sendChat(question) {
+        question = String(question || '').trim();
+        if (!question) {
+            setChatBusy(false, 'Enter a question.');
+            return;
+        }
+        if (!currentRunId || !currentRunReady) {
+            pendingChatQuestion = question;
+            setChatBusy(true, currentRunId ? 'Preparing the encounter context…' : 'Starting clinical context…');
+            if (!currentRunId) startRun(true);
+            return;
+        }
+        setChatBusy(true, 'Sending…');
+        fetch(urlFor(chatTemplate, currentRunId), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify({question: question})
+        })
+        .then(function(r) { return r.json().then(function(data) { return {ok:r.ok, data:data}; }); })
+        .then(function(res) {
+            if (!res.ok) {
+                setChatBusy(false, (res.data && res.data.error) || 'Unable to send question.');
+                return;
+            }
+            if (chatInput) chatInput.value = '';
+            renderChat(res.data.messages || []);
+        })
+        .catch(function() { setChatBusy(false, 'Network error while sending question.'); });
+    }
+
+    function postFeedback(payload) {
+        if (!currentRunId) return Promise.resolve();
+        return fetch(urlFor(feedbackTemplate, currentRunId), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify(payload || {})
+        }).catch(function() {});
+    }
+
+    function stopPoll() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    function handleRun(run) {
+        currentRunId = run.id;
+        if (run.status === 'queued' || run.status === 'running') {
+            currentRunReady = false;
+            setBusy(true, run.status === 'queued' ? 'Queued… preparing de-identified context.' : 'Generating clinical assistance…');
+            if (pendingChatQuestion) setChatBusy(true, 'Preparing the encounter context…');
+            return;
+        }
+        stopPoll();
+        currentRunReady = run.status === 'succeeded';
+        setBusy(false, run.status === 'succeeded' ? 'Assistance ready for clinician review.' : 'Generation finished.');
+        if (run.status === 'succeeded') {
+            clearError();
+            renderResult(run);
+            if (pendingChatQuestion) {
+                var queuedQuestion = pendingChatQuestion;
+                pendingChatQuestion = '';
+                sendChat(queuedQuestion);
+            }
+        } else {
+            pendingChatQuestion = '';
+            setChatBusy(false, 'Unable to prepare the encounter context.');
+            showError(run.error_message || 'Unable to generate clinical assistance.');
+            if (resultsEl) resultsEl.classList.add('d-none');
+        }
+    }
+
+    function pollStatus() {
+        if (!currentRunId) return;
+        fetch(urlFor(statusTemplate, currentRunId), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(res) {
+            if (!res.ok || !res.data || !res.data.run) {
+                stopPoll();
+                setBusy(false, 'Unable to check status.');
+                showError((res.data && res.data.error) || 'Unable to check AI status.');
+                return;
+            }
+            handleRun(res.data.run);
+        })
+        .catch(function() {
+            stopPoll();
+            setBusy(false, 'Network error while checking status.');
+            showError('Network error while checking AI status.');
+        });
+    }
+
+    function startRun(preserveChat) {
+        clearError();
+        stopPoll();
+        if (chatPollTimer) {
+            clearInterval(chatPollTimer);
+            chatPollTimer = null;
+        }
+        currentRunId = null;
+        currentRunReady = false;
+        if (!preserveChat) {
+            pendingChatQuestion = '';
+            if (chatMessagesEl) chatMessagesEl.innerHTML = '<p class="small text-muted mb-0">Type a question below. Ayisi will prepare the encounter context automatically.</p>';
+            setChatBusy(false, '');
+        }
+        if (resultsEl) resultsEl.classList.add('d-none');
+        setBusy(true, 'Starting AI clinical assistance…');
+        var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random();
+        fetch(startUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfToken()
+            },
+            body: JSON.stringify({ idempotency_key: idem })
+        })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, status: r.status, data: data }; }); })
+        .then(function(res) {
+            if (!res.ok || !res.data || !res.data.run) {
+                setBusy(false, 'Ready when you are.');
+                showError((res.data && res.data.error) || 'Unable to start AI assistance.');
+                return;
+            }
+            handleRun(res.data.run);
+            if (res.data.run.status === 'queued' || res.data.run.status === 'running') {
+                pollTimer = setInterval(pollStatus, 2000);
+            }
+        })
+        .catch(function() {
+            setBusy(false, 'Ready when you are.');
+            showError('Network error while starting AI assistance.');
+        });
+    }
+
+    if (generateBtn) generateBtn.addEventListener('click', function() { startRun(false); });
+    if (retryBtn) retryBtn.addEventListener('click', function() { startRun(false); });
+    if (chatSendBtn) {
+        chatSendBtn.addEventListener('click', function() {
+            sendChat(chatInput ? chatInput.value : '');
+        });
+    }
+    if (chatInput) {
+        chatInput.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                ev.preventDefault();
+                sendChat(chatInput.value);
+            }
+        });
+    }
+    if (chatSuggestionsEl) {
+        chatSuggestionsEl.addEventListener('click', function(ev) {
+            var btn = ev.target.closest('.ai-chat-suggestion');
+            if (!btn) return;
+            var question = '';
+            try { question = decodeURIComponent(btn.getAttribute('data-question') || ''); } catch (e) { question = ''; }
+            if (chatInput) chatInput.value = question;
+            sendChat(question);
+        });
+    }
+
+    if (sectionsEl) {
+        sectionsEl.addEventListener('click', function(ev) {
+            var btn = ev.target.closest('.ai-copy-section');
+            if (!btn) return;
+            var section = btn.getAttribute('data-section') || '';
+            var text = '';
+            try { text = decodeURIComponent(btn.getAttribute('data-copy') || ''); } catch (e) { text = ''; }
+            if (!text) return;
+            var done = function() {
+                if (copiedSections.indexOf(section) === -1) copiedSections.push(section);
+                btn.textContent = 'Copied';
+                setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
+                postFeedback({ copied_sections: copiedSections });
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done).catch(done);
+            } else {
+                done();
+            }
+        });
+    }
+
+    if (insertBtn) {
+        insertBtn.addEventListener('click', function() {
+            var draft = insertBtn.dataset.draft || '';
+            var noteEl = document.getElementById('clinical_note');
+            if (!noteEl || !draft) return;
+            var existing = noteEl.value || '';
+            if (existing.trim()) {
+                if (!window.confirm('Append the AI draft below your current note? Your typed text will be kept.')) {
+                    return;
+                }
+                noteEl.value = existing.replace(/\s*$/, '') + '\n\n' + draft;
+            } else {
+                noteEl.value = draft;
+            }
+            noteEl.focus();
+            postFeedback({ inserted_draft: true, copied_sections: copiedSections.concat(['draft_clinical_note']) });
+            if (statusEl) statusEl.textContent = 'Draft inserted into the note editor. Save still requires your diagnosis and review.';
+        });
+    }
+
+    if (feedbackBtn) {
+        feedbackBtn.addEventListener('click', function() {
+            var value = feedbackSelect ? feedbackSelect.value : '';
+            if (!value) {
+                showError('Select feedback before sending.');
+                return;
+            }
+            clearError();
+            postFeedback({ feedback: value, copied_sections: copiedSections }).then(function() {
+                if (statusEl) statusEl.textContent = 'Thanks — feedback recorded.';
+            });
+        });
+    }
 })();
 </script>
 

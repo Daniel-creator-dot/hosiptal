@@ -47,10 +47,11 @@ class EquipmentMaintenanceLogAdmin(admin.ModelAdmin):
 
 @admin.register(LabReagent)
 class LabReagentAdmin(admin.ModelAdmin):
-    list_display = ['item_code', 'name', 'category', 'quantity_on_hand', 'unit', 'is_low_stock', 'is_expired', 'is_expiring_soon', 'expiry_date']
-    list_filter = ['category', 'supplier', 'expiry_date']
+    list_display = ['item_code', 'name', 'category', 'stock_tracking', 'quantity_on_hand', 'unit', 'deduct_per_lab_visit', 'is_low_stock', 'is_expired', 'expiry_date']
+    list_filter = ['category', 'stock_tracking', 'deduct_per_lab_visit', 'supplier', 'expiry_date']
     search_fields = ['item_code', 'name', 'manufacturer', 'catalog_number', 'batch_number']
     readonly_fields = ['total_used', 'last_used_at', 'stock_value']
+    filter_horizontal = ['tests']
     fieldsets = (
         ('Basic Information', {
             'fields': ('item_code', 'name', 'category', 'manufacturer', 'catalog_number')
@@ -66,6 +67,21 @@ class LabReagentAdmin(admin.ModelAdmin):
         }),
         ('Usage', {
             'fields': ('total_used', 'last_used_at')
+        }),
+        ('Per completed lab', {
+            'fields': ('deduct_per_lab_visit', 'qty_per_lab_visit'),
+            'description': 'EDTA tubes and similar items: deduct for every completed lab test.',
+        }),
+        ('Kit / chemistry tracking', {
+            'fields': (
+                'stock_tracking',
+                'qty_per_box',
+                'tests_per_kit',
+                'qty_consumed_per_test',
+                'reagent_volume_note',
+                'tests',
+            ),
+            'description': 'Measurable kits: receive boxes of pieces. Chemistry: receive kits as remaining tests. Linked tests auto-deduct when completed.',
         }),
         ('Notes', {
             'fields': ('notes',)

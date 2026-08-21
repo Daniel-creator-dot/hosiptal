@@ -95,7 +95,10 @@
                 <h5 class="mb-0"><i class="bi bi-flask me-2"></i>All Reagents</h5>
                 <div>
                     <a href="{% url 'hospital:record_reagent_transaction' %}" class="btn btn-sm btn-success me-2">
-                        <i class="bi bi-plus-circle"></i> Record Transaction
+                        <i class="bi bi-plus-circle"></i> Record usage
+                    </a>
+                    <a href="{% url 'hospital:inventory:issue_consumables' %}" class="btn btn-sm btn-warning me-2">
+                        <i class="bi bi-box-arrow-right"></i> Issue from procurement
                     </a>
                     <a href="{% url 'hospital:add_reagent_via_procurement' %}" class="btn btn-sm btn-info me-2">
                         <i class="bi bi-box-seam"></i> Add via Procurement
@@ -115,6 +118,14 @@
                                     {{ reagent.name }}
                                 </a>
                                 <span class="badge bg-secondary ms-2">{{ reagent.get_category_display }}</span>
+                                {% if reagent.deduct_per_lab_visit %}
+                                <span class="badge bg-primary ms-1">Per completed lab</span>
+                                {% endif %}
+                                {% if reagent.stock_tracking == 'measurable' %}
+                                <span class="badge bg-info text-dark ms-1">Kit</span>
+                                {% elif reagent.stock_tracking == 'immeasurable' %}
+                                <span class="badge bg-warning text-dark ms-1">Chemistry</span>
+                                {% endif %}
                                 {% if reagent.is_low_stock %}
                                 <span class="badge bg-warning ms-1">Low Stock</span>
                                 {% endif %}
@@ -160,6 +171,32 @@
     
     <!-- Sidebar -->
     <div class="col-lg-4">
+        {% if measurable_items or immeasurable_items %}
+        <div class="card mb-4">
+            <div class="card-header bg-white">
+                <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Measurable vs chemistry</h6>
+            </div>
+            <div class="card-body small">
+                <p class="text-muted">From the lab letter: kits count pieces; chemistry counts remaining tests. Procurement issues boxes to the laboratory. Completing a linked test deducts lab stock.</p>
+                {% if measurable_items %}
+                <strong>Measurable kits ({{ measurable_items|length }})</strong>
+                <ul class="mb-3">
+                    {% for item in measurable_items|slice:':8' %}
+                    <li>{{ item.name }} — {{ item.quantity_on_hand }} {{ item.unit }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if immeasurable_items %}
+                <strong>Chemistry ({{ immeasurable_items|length }})</strong>
+                <ul class="mb-0">
+                    {% for item in immeasurable_items|slice:':8' %}
+                    <li>{{ item.name }} — {{ item.quantity_on_hand }} {{ item.unit }}{% if item.tests_per_kit %} ({{ item.tests_per_kit }}/kit){% endif %}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
         <!-- Low Stock Items -->
         {% if low_stock_items %}
         <div class="card mb-4">

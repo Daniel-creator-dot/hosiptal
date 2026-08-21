@@ -12,6 +12,8 @@ from hospital.auth_session_utils import create_user_session
 from hospital.consultation_status import (
     encounter_consultation_complete,
     encounter_has_diagnosis,
+    encounter_has_preliminary_diagnosis,
+    encounter_has_final_diagnosis,
 )
 from hospital.models import Department, Encounter, LabResult, LabTest, Order, Patient, Prescription, Staff
 from hospital.models_advanced import Diagnosis, ProblemList
@@ -74,6 +76,23 @@ class EncounterHasDiagnosisTests(TestCase):
             status='active',
         )
         self.assertTrue(encounter_has_diagnosis(self.encounter))
+
+    def test_preliminary_vs_final_types(self):
+        Diagnosis.objects.create(
+            patient=self.patient,
+            encounter=self.encounter,
+            diagnosis='Suspected malaria',
+            diagnosis_type='preliminary',
+        )
+        self.assertTrue(encounter_has_preliminary_diagnosis(self.encounter))
+        self.assertFalse(encounter_has_final_diagnosis(self.encounter))
+        Diagnosis.objects.create(
+            patient=self.patient,
+            encounter=self.encounter,
+            diagnosis='Confirmed malaria',
+            diagnosis_type='final',
+        )
+        self.assertTrue(encounter_has_final_diagnosis(self.encounter))
 
     def test_prior_visit_problem_without_encounter_link_does_not_count(self):
         ProblemList.objects.create(
@@ -160,6 +179,35 @@ class ConsultationViewDiagnosisGateTests(TestCase):
             self.encounter.clinical_notes.filter(is_deleted=False).exists()
         )
 
+    def test_save_note_blocked_preserves_draft_in_session(self):
+        self.client.post(
+            self.url,
+            {
+                'action': 'save_note',
+                'note_type': 'consultation',
+                'clinical_note': 'Patient presents with headache.',
+                'auto_save': 'false',
+            },
+        )
+        draft_key = f'consultation_note_draft_{self.encounter.id}'
+        self.assertEqual(
+            self.client.session.get(draft_key),
+            'Patient presents with headache.',
+        )
+
+    def test_save_note_blocked_draft_shown_on_page(self):
+        self.client.post(
+            self.url,
+            {
+                'action': 'save_note',
+                'note_type': 'consultation',
+                'clinical_note': 'Patient presents with headache.',
+                'auto_save': 'false',
+            },
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Patient presents with headache.')
+
     def test_save_note_allowed_with_diagnosis(self):
         Diagnosis.objects.create(
             patient=self.patient,
@@ -180,6 +228,8 @@ class ConsultationViewDiagnosisGateTests(TestCase):
         self.assertTrue(
             self.encounter.clinical_notes.filter(is_deleted=False).exists()
         )
+        draft_key = f'consultation_note_draft_{self.encounter.id}'
+        self.assertIsNone(self.client.session.get(draft_key))
 
     def test_complete_consultation_blocked_without_diagnosis(self):
         response = self.client.post(
@@ -193,9 +243,31 @@ class ConsultationViewDiagnosisGateTests(TestCase):
         self.assertEqual(self.encounter.status, 'active')
         self.assertIsNone(self.encounter.ended_at)
 
-    def test_complete_consultation_allowed_with_diagnosis(self):
-        self.encounter.diagnosis = 'Tension headache'
-        self.encounter.save(update_fields=['diagnosis'])
+    def test_complete_consultation_blocked_with_preliminary_only(self):
+        Diagnosis.objects.create(
+            patient=self.patient,
+            encounter=self.encounter,
+            diagnosis='Tension headache',
+            diagnosis_type='preliminary',
+        )
+        response = self.client.post(
+            self.url,
+            {
+                'action': 'complete_consultation',
+                'chief_complaint': 'Headache',
+            },
+        )
+        self.encounter.refresh_from_db()
+        self.assertEqual(self.encounter.status, 'active')
+        self.assertIsNone(self.encounter.ended_at)
+
+    def test_complete_consultation_allowed_with_final_diagnosis(self):
+        Diagnosis.objects.create(
+            patient=self.patient,
+            encounter=self.encounter,
+            diagnosis='Tension headache',
+            diagnosis_type='final',
+        )
         response = self.client.post(
             self.url,
             {
@@ -206,6 +278,31 @@ class ConsultationViewDiagnosisGateTests(TestCase):
         self.encounter.refresh_from_db()
         self.assertEqual(self.encounter.status, 'completed')
         self.assertIsNotNone(self.encounter.ended_at)
+
+    def test_complete_consultation_promotes_modal_diagnosis_to_final(self):
+        Diagnosis.objects.create(
+            patient=self.patient,
+            encounter=self.encounter,
+            diagnosis='Tension headache',
+            diagnosis_type='preliminary',
+        )
+        response = self.client.post(
+            self.url,
+            {
+                'action': 'complete_consultation',
+                'chief_complaint': 'Headache',
+                'diagnosis': 'Tension headache',
+            },
+        )
+        self.encounter.refresh_from_db()
+        self.assertEqual(self.encounter.status, 'completed')
+        self.assertTrue(
+            Diagnosis.objects.filter(
+                encounter=self.encounter,
+                diagnosis_type='final',
+                is_deleted=False,
+            ).exists()
+        )
 
 
 class EnrichPendingMedicationOrdersTests(TestCase):
@@ -231,7 +328,28 @@ class EnrichPendingMedicationOrdersTests(TestCase):
             requested_by=self.staff,
         )
 
-    def test_consultation_pending_for_active_opd(self):
+    def test_consultation_pending_false_for_cash_active_opd(self):
+        """Cash patients are not held for Complete Consultation."""
+        enc = Encounter.objects.create(
+            patient=self.patient,
+            encounter_type='outpatient',
+            status='active',
+            chief_complaint='test',
+        )
+        order = self._make_order(enc)
+        enrich_pending_medication_orders([order])
+        self.assertFalse(order.consultation_pending)
+
+    def test_consultation_pending_for_insurance_active_opd(self):
+        from hospital.models import Payer
+
+        payer = Payer.objects.create(
+            name=f'NHIS-{uuid.uuid4().hex[:6]}',
+            payer_type='nhis',
+            is_active=True,
+        )
+        self.patient.primary_insurance = payer
+        self.patient.save(update_fields=['primary_insurance'])
         enc = Encounter.objects.create(
             patient=self.patient,
             encounter_type='outpatient',

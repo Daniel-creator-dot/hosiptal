@@ -325,17 +325,46 @@ def doctor_order_lab_tests(request):
             from django.contrib import messages
             messages.error(request, 'Please select at least one lab test.')
             return redirect('hospital:doctor_order_lab_tests')
+
+        from hospital.consultation_status import (
+            LAB_DIAGNOSIS_REQUIRED_MSG,
+            require_diagnosis_for_lab_order,
+        )
+        ok_dx, dx_msg = require_diagnosis_for_lab_order(
+            encounter,
+            doctor=staff,
+            diagnosis_name=(request.POST.get('diagnosis_name') or request.POST.get('lab_diagnosis') or '').strip(),
+            icd10_code=(request.POST.get('icd10_code') or '').strip(),
+        )
+        if not ok_dx:
+            from django.contrib import messages
+            messages.error(request, dx_msg or LAB_DIAGNOSIS_REQUIRED_MSG)
+            return redirect('hospital:doctor_order_lab_tests')
+
+        from hospital.insurance_lab_limit import (
+            annotate_insurance_extra_labs,
+            extra_reason_and_diagnosis_from_request,
+            require_insurance_lab_limit_from_request,
+        )
+        ok_lim, lim_msg = require_insurance_lab_limit_from_request(request, encounter, len(test_ids))
+        if not ok_lim:
+            from django.contrib import messages
+            messages.error(request, lim_msg)
+            return redirect('hospital:doctor_order_lab_tests')
+        extra_reason, extra_diagnosis = extra_reason_and_diagnosis_from_request(request)
         
         try:
             tests = LabTest.objects.filter(pk__in=test_ids, is_active=True, is_deleted=False)
             if tests.exists():
                 # Create LAB order
+                from hospital.lab_order_diagnosis import encounter_diagnosis_summary
                 lab_order = Order.objects.create(
                     encounter=encounter,
                     order_type='lab',
                     status='pending',
                     priority=priority,
                     notes=notes,
+                    clinical_indication=encounter_diagnosis_summary(encounter),
                     requested_by=staff
                 )
                 
@@ -366,13 +395,7 @@ def doctor_order_lab_tests(request):
                         if reagent.is_expired:
                             reagent_warnings.append(f'{reagent.name} (expired)')
 
-                from hospital.lab_order_diagnosis import encounter_diagnosis_summary
                 from hospital.services.auto_billing_service import AutoBillingService
-
-                diagnosis_text = encounter_diagnosis_summary(encounter)
-                if diagnosis_text:
-                    lab_order.clinical_indication = diagnosis_text
-                    lab_order.save(update_fields=['clinical_indication', 'modified'])
 
                 for lr in created_results:
                     try:
@@ -383,6 +406,8 @@ def doctor_order_lab_tests(request):
                             getattr(lr, 'id', '?'),
                             bill_exc,
                         )
+
+                annotate_insurance_extra_labs(lab_order, encounter, extra_reason, extra_diagnosis)
                 
                 from django.contrib import messages
                 if reagent_warnings:

@@ -255,6 +255,8 @@ class InsuranceExclusionRuleAdmin(admin.ModelAdmin):
         'service_category',
         'drug_generic_name',
         'drug__name',
+        'lab_test__name',
+        'lab_test__code',
     ]
     readonly_fields = ['created', 'modified']
     fieldsets = (
@@ -275,6 +277,7 @@ class InsuranceExclusionRuleAdmin(admin.ModelAdmin):
                 'drug',
                 'drug_generic_name',
                 'drug_category',
+                'lab_test',
             )
         }),
         ('Messaging', {

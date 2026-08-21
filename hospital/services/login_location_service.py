@@ -47,11 +47,14 @@ class LoginLocationService:
         else:
             ip = request.META.get('REMOTE_ADDR')
         
+        if not ip:
+            return getattr(settings, 'TEST_IP_ADDRESS', '127.0.0.1')
+
         # Handle localhost
         if ip in ['127.0.0.1', 'localhost', '::1']:
             # For testing, use configured Ghanaian IP to keep maps realistic
             return getattr(settings, 'TEST_IP_ADDRESS', '102.176.95.4')
-        
+
         return ip
     
     def get_location_from_ip(self, ip_address):
@@ -59,6 +62,9 @@ class LoginLocationService:
         Get geolocation data from IP address
         Uses ip-api.com (free, no API key needed, 45 requests/min)
         """
+        if not ip_address:
+            return self.default_location
+
         # Allow explicit default location usage
         if ip_address == getattr(settings, 'TEST_IP_ADDRESS', '102.176.95.4'):
             return self.default_location

@@ -36,6 +36,23 @@ def strip_billing_amounts_from_clinical_display(text: str | None) -> str:
     return out
 
 
+def clinical_note_combined_text(note: Any) -> str:
+    """
+    One free-text body for display/edit: prefer ``notes`` (single-note workflow);
+    otherwise join legacy SOAP fields.
+    """
+    notes = (getattr(note, 'notes', None) or '').strip()
+    if notes:
+        return notes
+    parts = [
+        (getattr(note, 'subjective', None) or '').strip(),
+        (getattr(note, 'objective', None) or '').strip(),
+        (getattr(note, 'assessment', None) or '').strip(),
+        (getattr(note, 'plan', None) or '').strip(),
+    ]
+    return '\n\n'.join(p for p in parts if p)
+
+
 def clinical_note_content_fingerprint(note: Any) -> str:
     """Stable hash of SOAP/body fields for duplicate detection."""
     parts = [

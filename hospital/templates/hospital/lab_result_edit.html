@@ -7,15 +7,17 @@
 
 {% block content %}
 {% lab_order_diagnosis result.order as ordering_diagnosis %}
-{% if ordering_diagnosis %}
-<div class="alert alert-warning border-2 mb-3" role="alert">
+<div class="alert {% if ordering_diagnosis %}alert-warning{% else %}alert-secondary{% endif %} border-2 mb-3" role="alert">
   <div class="fw-semibold"><i class="bi bi-clipboard-pulse me-2"></i>Ordering diagnosis</div>
-  <div class="mt-1">{{ ordering_diagnosis }}</div>
+  {% if ordering_diagnosis %}
+  <div class="mt-1 fs-5">{{ ordering_diagnosis }}</div>
+  {% else %}
+  <div class="mt-1 text-muted">No diagnosis was recorded with this lab order. Ask the ordering clinician if clinical context is needed.</div>
+  {% endif %}
   {% if result.order.notes %}
   <div class="small text-muted mt-2 mb-0">Clinical note: {{ result.order.notes }}</div>
   {% endif %}
 </div>
-{% endif %}
 <div class="modern-card">
   <form method="post" class="row g-3" enctype="multipart/form-data">
     {% csrf_token %}
@@ -310,8 +312,20 @@
       </div>
     </div>
 
+    <div class="col-12 d-flex gap-2 flex-wrap">
+      <div class="col-md-4">
+        <label class="form-label fw-semibold" for="lab_result_status">Status</label>
+        <select id="lab_result_status" name="status" class="form-select">
+          <option value="in_progress" {% if result.status == 'in_progress' %}selected{% endif %}>In Progress</option>
+          <option value="completed" {% if result.status == 'completed' or result.status == 'pending' %}selected{% endif %}>Completed</option>
+        </select>
+        <small class="text-muted">Saving with a result value marks the test complete — turnaround time does not keep it in progress.</small>
+      </div>
+    </div>
+
     <div class="col-12 d-flex gap-2">
       <button type="submit" class="btn btn-primary-modern">Save</button>
+      <button type="submit" class="btn btn-success" onclick="document.getElementById('lab_result_status').value='completed';">Save &amp; Mark Complete</button>
       <a href="{% url 'hospital:laboratory_dashboard' %}" class="btn btn-outline-secondary">Cancel</a>
     </div>
   </form>

@@ -466,15 +466,21 @@ def handle_lab_result_activity(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=LabResult)
 def handle_lab_result_reagent_consumption(sender, instance, created, **kwargs):
-    """Auto-consume required reagents when a lab result is completed."""
-    if instance.status != 'completed':
+    """Auto-consume EDTA (and similar) plus test-linked reagents when a lab result is completed."""
+    if getattr(instance, "status", None) != "completed":
         return
     try:
-        from .services.lab_reagent_usage_service import consume_reagents_for_completed_lab_result
-
+        from .services.lab_reagent_usage_service import (
+            consume_reagents_for_completed_lab_result,
+            consume_visit_consumables_for_lab_result,
+        )
+        consume_visit_consumables_for_lab_result(
+            instance,
+            performed_by=getattr(instance, "verified_by", None),
+        )
         consume_reagents_for_completed_lab_result(
             instance,
-            performed_by=getattr(instance, 'verified_by', None),
+            performed_by=getattr(instance, "verified_by", None),
         )
     except Exception as e:
         logger.warning(f"Auto reagent consumption failed for lab result {instance.id}: {e}")
@@ -649,6 +655,31 @@ def sync_pharmacy_stock_to_inventory(sender, instance, created, **kwargs):
     except Exception as e:
         # Don't fail if syncing fails - log the error
         logger.error(f"Failed to sync PharmacyStock to InventoryItem: {e}")
+
+
+@receiver(post_save, sender=PharmacyStock)
+def post_pharmacy_stock_accounting_on_create(sender, instance, created, **kwargs):
+    """Dr 1400 / Cr 2100 (and supplier payable when supplier set) on new pharmacy batches."""
+    if kwargs.get('raw') or not created or instance.is_deleted:
+        return
+    qty = int(instance.quantity_on_hand or 0)
+    if qty <= 0:
+        return
+    unit_cost = getattr(instance, 'unit_cost', None)
+    if not unit_cost or Decimal(str(unit_cost)) <= 0:
+        return
+    try:
+        from .models_supplier_payables import post_pharmacy_stock_accounting
+
+        post_pharmacy_stock_accounting(
+            stock=instance,
+            quantity_added=qty,
+            unit_cost=unit_cost,
+            supplier=getattr(instance, 'supplier', None),
+            user=getattr(instance, 'created_by', None),
+        )
+    except Exception as exc:
+        logger.warning('Pharmacy stock accounting on create failed: %s', exc, exc_info=True)
 
 
 def sync_item_to_drug_store(pharmacy_item):
@@ -827,26 +858,25 @@ def create_lab_reagent_on_procurement_received(sender, instance, **kwargs):
     try:
         from .models_procurement import InventoryItem
         from .models_lab_management import LabReagent
+        from hospital.services.inventory_account_mapping import (
+            find_procurement_inventory_item,
+            procurement_item_is_lab_reagent,
+        )
+        from hospital.services.inventory_gl_service import receipt_gl_already_posted_for_inventory_item
+        
+        staff = instance.requested_by
         
         # Process each item in the request
         for item in instance.items.filter(is_deleted=False):
-            # Check if this is a lab reagent request (stored in specifications)
+            if not procurement_item_is_lab_reagent(item):
+                continue
+
             try:
-                if item.specifications:
-                    metadata = json.loads(item.specifications)
-                    if not metadata.get('is_lab_reagent', False):
-                        continue
-                else:
-                    continue
+                metadata = json.loads(item.specifications) if item.specifications else {}
             except (json.JSONDecodeError, KeyError):
                 continue
             
-            # Find the inventory item that was created for this procurement item
-            inventory_item = InventoryItem.objects.filter(
-                store=instance.requested_by_store,
-                item_name=item.item_name,
-                is_deleted=False
-            ).first()
+            inventory_item = find_procurement_inventory_item(instance, item, staff=staff)
             
             if not inventory_item:
                 continue
@@ -916,7 +946,8 @@ def create_lab_reagent_on_procurement_received(sender, instance, **kwargs):
                     )
             try:
                 from .models_supplier_payables import post_lab_reagent_receipt_gl
-                post_lab_reagent_receipt_gl(reagent, user=gl_user)
+                if not receipt_gl_already_posted_for_inventory_item(inventory_item):
+                    post_lab_reagent_receipt_gl(reagent, user=gl_user)
             except Exception:
                 logger.exception(
                     'Lab reagent receipt GL failed for reagent pk=%s',

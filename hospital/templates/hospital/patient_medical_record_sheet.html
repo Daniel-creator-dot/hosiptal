@@ -812,7 +812,7 @@
             <div style="background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%); padding: 16px; border-radius: 12px; border-left: 4px solid #DC2626;">
                 <div style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase;">Amount due</div>
                 <div style="font-size: 24px; font-weight: 700; color: #991B1B;">GHS {{ amount_due_after_deposit|default:0|floatformat:2 }}</div>
-                <div style="font-size: 11px; color: #6B7280;">Outstanding − Deposit on account</div>
+                <div style="font-size: 11px; color: #6B7280;">Outstanding (deposit applied only when posted to invoices)</div>
             </div>
         </div>
     </div>
@@ -1444,6 +1444,36 @@
             <p>No imaging or scan records available</p>
         </div>
         {% endif %}
+
+        <div class="mt-4 p-3 border rounded" style="background: #f0fdfa; border-color: #99f6e4 !important;">
+            <h5 class="mb-2" style="color: #0f766e;"><i class="bi bi-cloud-upload me-2"></i>External reports &amp; scans</h5>
+            <p class="small text-muted mb-3">PDFs or images from other facilities (reception / nursing upload). Visible in consultation after upload.</p>
+            {% if can_upload_patient_documents %}
+            <a href="{% url 'hospital:comprehensive_medical_record' patient.pk %}#upload-documents" class="btn btn-sm btn-success mb-3">
+                <i class="bi bi-upload me-1"></i>Upload external report / image
+            </a>
+            {% endif %}
+            {% if external_documents %}
+            <ul class="list-unstyled mb-0">
+                {% for doc in external_documents %}
+                <li class="d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 border-bottom">
+                    <div>
+                        <strong>{{ doc.title }}</strong>
+                        {% if doc.description %}<br><small class="text-muted">{{ doc.description }}</small>{% endif %}
+                        <br><small class="text-muted">{{ doc.created|date:"M d, Y" }}{% if doc.uploaded_by %} · {{ doc.uploaded_by.user.get_full_name|default:doc.uploaded_by.user.username }}{% endif %}</small>
+                    </div>
+                    {% if doc.file %}
+                    <a href="{% url 'hospital:patient_document_file' doc.pk %}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i> View
+                    </a>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted small mb-0">No external reports uploaded yet.</p>
+            {% endif %}
+        </div>
     </div>
 
     <!-- Medications Section -->
@@ -1871,9 +1901,19 @@
             <a href="{% url 'hospital:patient_edit' patient.pk %}" class="btn btn-modern" style="background: #6B7280; color: white;">
                 <i class="bi bi-pencil me-2"></i>Edit Patient
             </a>
+            {% if can_delete_patient_record %}
+            <a href="{% url 'hospital:it_delete_patient' patient.pk %}" class="btn btn-modern ms-2" style="background: #dc2626; color: white;">
+                <i class="bi bi-trash me-2"></i>Remove duplicate
+            </a>
+            {% endif %}
             {% if can_upload_patient_documents %}
             <a href="{% url 'hospital:comprehensive_medical_record' patient.pk %}#upload-documents" class="btn btn-modern ms-2" style="background: #14b8a6; color: white;">
                 <i class="bi bi-cloud-upload me-2"></i>Upload Document
+            </a>
+            {% endif %}
+            {% if can_add_manual_charges %}
+            <a href="{% url 'hospital:cashier_add_manual_payment' %}?patient_id={{ patient.pk }}&focus=medical_report" class="btn btn-modern ms-2" style="background: #0f766e; color: white;">
+                <i class="bi bi-file-earmark-medical me-2"></i>Request Medical Report
             </a>
             {% endif %}
         </div>

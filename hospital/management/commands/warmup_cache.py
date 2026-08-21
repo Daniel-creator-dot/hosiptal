@@ -10,37 +10,48 @@ from django.utils import timezone
 class Command(BaseCommand):
     help = 'Warm up cache with frequently accessed data for better performance'
 
+    @staticmethod
+    def _catalog_size(items):
+        if isinstance(items, (list, tuple)):
+            return len(items)
+        if hasattr(items, 'count'):
+            return items.count()
+        return len(items)
+
     def handle(self, *args, **options):
         self.stdout.write('Warming up cache...')
 
         try:
             # Catalog data (utils_cache)
             from hospital.utils_cache import (
+                clear_all_caches,
                 get_cached_drugs,
                 get_cached_lab_tests,
                 get_cached_imaging_studies,
                 get_cached_procedures,
                 get_cached_diagnosis_codes
             )
+            # Drop stale pickled querysets from Redis (they can read as empty after restart).
+            clear_all_caches()
             drugs = get_cached_drugs()
             self.stdout.write(self.style.SUCCESS(
-                f'[OK] Cached {drugs.count() if hasattr(drugs, "count") else len(drugs)} drugs'
+                f'[OK] Cached {self._catalog_size(drugs)} drugs'
             ))
             lab_tests = get_cached_lab_tests()
             self.stdout.write(self.style.SUCCESS(
-                f'[OK] Cached {lab_tests.count() if hasattr(lab_tests, "count") else len(lab_tests)} lab tests'
+                f'[OK] Cached {self._catalog_size(lab_tests)} lab tests'
             ))
             imaging_studies = get_cached_imaging_studies()
             self.stdout.write(self.style.SUCCESS(
-                f'[OK] Cached {imaging_studies.count() if hasattr(imaging_studies, "count") else len(imaging_studies)} imaging studies'
+                f'[OK] Cached {self._catalog_size(imaging_studies)} imaging studies'
             ))
             procedures = get_cached_procedures()
             self.stdout.write(self.style.SUCCESS(
-                f'[OK] Cached {procedures.count() if hasattr(procedures, "count") else len(procedures)} procedures'
+                f'[OK] Cached {self._catalog_size(procedures)} procedures'
             ))
             diagnosis_codes = get_cached_diagnosis_codes()
             self.stdout.write(self.style.SUCCESS(
-                f'[OK] Cached {diagnosis_codes.count() if hasattr(diagnosis_codes, "count") else len(diagnosis_codes)} diagnosis codes'
+                f'[OK] Cached {self._catalog_size(diagnosis_codes)} diagnosis codes'
             ))
 
             # Dashboard stats (utils) – avoids heavy queries on first page load after deploy

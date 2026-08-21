@@ -1,8 +1,10 @@
 """
 Inventory GL integration — operational stock valuation, receipt/COGS posting,
 and closing stock adjustment.
-Posts Dr 1400 Inventories / Cr 5120 Closing Inventory (or reverse) to align GL with physical stock.
-Perpetual inventory: receipt Dr 1400 / Cr AP; dispense Dr 511x / Cr 1400.
+Posts perpetual inventory for pharmacy (Dr 1400 / Cr AP; issue Dr 511x / Cr 1400).
+Medical consumables and lab reagents use closing inventory:
+  receipt Dr 5120 Closing Inventory / Cr 2100 Trade Payables
+  issue/transfer Dr 5600 Purchases - Medical Supplies / Cr 5120 Closing Inventory
 """
 import logging
 from decimal import Decimal
@@ -35,6 +37,7 @@ CLOSING_STOCK_REF_PREFIX = 'CLOSE-STOCK-'
 RECEIPT_REF_PREFIX = 'STOCK-RCV-'
 COGS_REF_PREFIX = 'COGS-'
 ADJUST_REF_PREFIX = 'STOCK-ADJ-'
+CORR_REF_PREFIX = 'STOCK-CORR-'
 
 
 def _gl_reference_lock(reference: str) -> bool:
@@ -77,6 +80,23 @@ def _existing_posted_entry(reference):
         status='posted',
         is_deleted=False,
     ).first()
+
+
+def receipt_gl_already_posted_for_inventory_item(inventory_item):
+    """True when a STOCK-RCV-ITEM journal already exists for this inventory item."""
+    if not inventory_item:
+        return False
+    from hospital.models_inventory_advanced import InventoryTransaction
+
+    txn_ids = InventoryTransaction.objects.filter(
+        inventory_item=inventory_item,
+        transaction_type='receipt',
+        is_deleted=False,
+    ).order_by('-transaction_date').values_list('pk', flat=True)[:20]
+    for txn_id in txn_ids:
+        if _existing_posted_entry(f'STOCK-RCV-ITEM-{txn_id}'):
+            return True
+    return False
 
 
 def _post_balanced_journal(
@@ -142,7 +162,9 @@ def post_inventory_receipt_gl(
     entry_date=None,
 ):
     """
-    Post stock receipt: Dr 1400 Inventories / Cr 2100 Accounts Payable.
+    Post stock receipt.
+    Pharmacy etc.: Dr 1400 Inventories / Cr 2100 Trade Payables.
+    Consumables/lab: Dr 5120 Closing Inventory / Cr 2100 Trade Payables.
     Idempotent by reference.
     """
     if not inventory_gl_enabled():
@@ -153,8 +175,10 @@ def post_inventory_receipt_gl(
         return {'success': True, 'posted': False, 'message': 'Zero amount — skipped'}
 
     accounts = get_inventory_accounts(category_key)
-    asset = _ensure_account(accounts['asset'])
-    ap = _ensure_account(accounts['ap'])
+    debit_code = accounts.get('receipt_debit', accounts['asset'])
+    credit_code = accounts.get('receipt_credit', accounts['ap'])
+    debit_account = _ensure_account(debit_code)
+    credit_account = _ensure_account(credit_code)
 
     existing = _existing_posted_entry(reference)
     if existing:
@@ -195,11 +219,11 @@ def post_inventory_receipt_gl(
             je = _post_balanced_journal(
                 reference=reference,
                 description=description,
-                debit_account=asset,
-                credit_account=ap,
+                debit_account=debit_account,
+                credit_account=credit_account,
                 amount=amount,
                 debit_desc=f'Inventory receipt — {accounts["label"]}',
-                credit_desc=f'AP — inventory receipt ({accounts["label"]})',
+                credit_desc=f'Trade payables — inventory receipt ({accounts["label"]})',
                 user=user,
                 entry_date=entry_date,
             )
@@ -226,7 +250,9 @@ def post_inventory_cogs_gl(
     reagent_transaction=None,
 ):
     """
-    Post cost of goods issued: Dr 511x / Cr 1400 Inventories.
+    Post cost of goods issued / transferred / dispensed.
+    Pharmacy etc.: Dr 511x / Cr 1400 Inventories.
+    Consumables/lab: Dr 5600 Purchases - Medical Supplies / Cr 5120 Closing Inventory.
     Idempotent by reference.
     """
     if not inventory_gl_enabled():
@@ -238,7 +264,8 @@ def post_inventory_cogs_gl(
 
     accounts = get_inventory_accounts(category_key)
     cogs = _ensure_account(accounts['cogs'])
-    asset = _ensure_account(accounts['asset'])
+    credit_code = accounts.get('cogs_credit', accounts['asset'])
+    credit_account = _ensure_account(credit_code)
 
     existing = _existing_posted_entry(reference)
     if existing:
@@ -280,10 +307,14 @@ def post_inventory_cogs_gl(
                 reference=reference,
                 description=description,
                 debit_account=cogs,
-                credit_account=asset,
+                credit_account=credit_account,
                 amount=amount,
-                debit_desc=f'COGS — {accounts["label"]}',
-                credit_desc=f'Inventory issued — {accounts["label"]}',
+                debit_desc=f'Purchases — {accounts["label"]}',
+                credit_desc=(
+                    f'Closing inventory — {accounts["label"]}'
+                    if credit_code == CLOSING_INVENTORY_CODE
+                    else f'Inventories — {accounts["label"]}'
+                ),
                 user=user,
                 entry_date=entry_date,
             )
@@ -364,6 +395,163 @@ def post_pharmacy_stock_adjustment_gl(stock, old_qty, old_unit_cost, new_qty, ne
         'posted': True,
         'journal_entry': je,
         'message': f'Posted inventory decrease adjustment GHS {amount:.2f}',
+    }
+
+
+def post_pharmacy_stock_receipt_correction_gl(
+    stock,
+    old_amount,
+    new_amount,
+    *,
+    user=None,
+    category_key='pharmacy',
+    description=None,
+):
+    """
+    Correct a procurement receipt already posted to inventory / trade payables.
+
+    delta > 0: Dr inventory (or closing stock) / Cr AP  — understated receipt
+    delta < 0: Dr AP / Cr inventory                     — overstated receipt
+
+    Unique reference per correction so trial balance stays aligned with supplier ledger.
+
+    Prefer post_supplier_payable_amount_correction_gl for account edits that must not
+    change inventory valuation (stock already sold / pharmacy qty untouched).
+    """
+    from decimal import Decimal as D
+
+    if not inventory_gl_enabled():
+        return {'success': True, 'posted': False, 'message': 'Inventory GL disabled'}
+
+    old_val = D(str(old_amount or 0)).quantize(D('0.01'))
+    new_val = D(str(new_amount or 0)).quantize(D('0.01'))
+    delta = (new_val - old_val).quantize(D('0.01'))
+    if abs(delta) < D('0.01'):
+        return {'success': True, 'posted': False, 'message': 'No inventory/AP value change'}
+
+    drug_name = getattr(getattr(stock, 'drug', None), 'name', None) or getattr(stock, 'name', '') or 'Item'
+    batch = getattr(stock, 'batch_number', '') or ''
+    ts = timezone.now().strftime('%Y%m%d%H%M%S%f')
+    reference = f'{CORR_REF_PREFIX}{getattr(stock, "pk", "X")}-{ts}'
+    desc = description or (
+        f'Stock receipt correction: {drug_name} batch {batch} '
+        f'GHS {old_val:.2f} → {new_val:.2f}'
+    )
+
+    accounts = get_inventory_accounts(category_key)
+    asset = _ensure_account(accounts.get('receipt_debit', accounts['asset']))
+    ap = _ensure_account(accounts.get('receipt_credit', accounts['ap']))
+
+    if delta > 0:
+        return post_inventory_receipt_gl(
+            category_key=category_key,
+            amount=delta,
+            reference=reference,
+            description=desc,
+            user=user,
+        )
+
+    amount = abs(delta)
+    if not _gl_reference_lock(reference):
+        return {'success': False, 'posted': False, 'message': f'GL posting busy ({reference})'}
+    try:
+        with transaction.atomic():
+            je = _post_balanced_journal(
+                reference=reference,
+                description=desc,
+                debit_account=ap,
+                credit_account=asset,
+                amount=amount,
+                debit_desc='Reduce trade payables — receipt correction',
+                credit_desc=f'Reduce inventory — receipt correction ({accounts["label"]})',
+                user=user,
+            )
+    finally:
+        _gl_reference_unlock(reference)
+    return {
+        'success': True,
+        'posted': True,
+        'journal_entry': je,
+        'message': f'Posted receipt correction decrease GHS {amount:.2f}',
+    }
+
+
+def post_supplier_payable_amount_correction_gl(
+    stock,
+    old_amount,
+    new_amount,
+    *,
+    user=None,
+    category_key='pharmacy',
+    description=None,
+):
+    """
+    Account-side supplier amount correction: Trade Payables ↔ Purchases.
+
+    Does not touch inventory asset / closing inventory — pharmacy stock stays as-is.
+    Used when procurement already posted stock, and accounts only fix the supplier bill.
+
+    delta > 0 (owe more): Dr Purchases / Cr AP
+    delta < 0 (owe less): Dr AP / Cr Purchases
+    """
+    from decimal import Decimal as D
+
+    if not inventory_gl_enabled():
+        return {'success': True, 'posted': False, 'message': 'Inventory GL disabled'}
+
+    old_val = D(str(old_amount or 0)).quantize(D('0.01'))
+    new_val = D(str(new_amount or 0)).quantize(D('0.01'))
+    delta = (new_val - old_val).quantize(D('0.01'))
+    if abs(delta) < D('0.01'):
+        return {'success': True, 'posted': False, 'message': 'No AP value change'}
+
+    drug_name = getattr(getattr(stock, 'drug', None), 'name', None) or getattr(stock, 'name', '') or 'Item'
+    batch = getattr(stock, 'batch_number', '') or ''
+    ts = timezone.now().strftime('%Y%m%d%H%M%S%f')
+    reference = f'{CORR_REF_PREFIX}AP-{getattr(stock, "pk", "X")}-{ts}'
+    desc = description or (
+        f'Supplier account correction (stock unchanged): {drug_name} batch {batch} '
+        f'GHS {old_val:.2f} → {new_val:.2f}'
+    )
+
+    accounts = get_inventory_accounts(category_key)
+    purchases = _ensure_account(accounts['cogs'])
+    ap = _ensure_account(accounts.get('receipt_credit', accounts['ap']))
+    amount = abs(delta)
+
+    if not _gl_reference_lock(reference):
+        return {'success': False, 'posted': False, 'message': f'GL posting busy ({reference})'}
+    try:
+        with transaction.atomic():
+            if delta > 0:
+                je = _post_balanced_journal(
+                    reference=reference,
+                    description=desc,
+                    debit_account=purchases,
+                    credit_account=ap,
+                    amount=amount,
+                    debit_desc=f'Purchases increase — supplier amount correction ({accounts["label"]})',
+                    credit_desc='Increase trade payables — supplier amount correction',
+                    user=user,
+                )
+            else:
+                je = _post_balanced_journal(
+                    reference=reference,
+                    description=desc,
+                    debit_account=ap,
+                    credit_account=purchases,
+                    amount=amount,
+                    debit_desc='Reduce trade payables — supplier amount correction',
+                    credit_desc=f'Purchases decrease — supplier amount correction ({accounts["label"]})',
+                    user=user,
+                )
+    finally:
+        _gl_reference_unlock(reference)
+    return {
+        'success': True,
+        'posted': True,
+        'journal_entry': je,
+        'message': f'Posted supplier AP correction GHS {amount:.2f} (stock unchanged)',
     }
 
 

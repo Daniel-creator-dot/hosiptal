@@ -152,6 +152,8 @@ def build_claim_encounter_groups(claim_items, *, plan_by_patient=None):
     Group claim items by visit (invoice / encounter) for claims-officer UI.
     plan_by_patient: optional dict patient_id -> plan name.
     """
+    from .utils_billing import claim_item_insurance_id_display
+
     plan_by_patient = plan_by_patient or {}
     buckets = defaultdict(list)
     for item in claim_items:
@@ -173,6 +175,7 @@ def build_claim_encounter_groups(claim_items, *, plan_by_patient=None):
         visit_label = first.service_date
         if enc and getattr(enc, 'started_at', None):
             visit_label = enc.started_at.date()
+        insurance_id = claim_item_insurance_id_display(first)
         groups.append(
             {
                 'patient': patient,
@@ -181,7 +184,7 @@ def build_claim_encounter_groups(claim_items, *, plan_by_patient=None):
                 'invoice': first.invoice,
                 'service_date': first.service_date,
                 'visit_date': visit_label,
-                'insurance_id': (first.patient_insurance_id or '').strip(),
+                'insurance_id': insurance_id,
                 'plan_name': plan_by_patient.get(pid, '') if pid else '',
                 'items': items,
                 'item_count': len(items),
@@ -233,10 +236,16 @@ def build_claim_patient_groups(encounter_groups):
             (g['visit_date'] or g['service_date'] or date.min for g in visits),
             default=date.min,
         )
+        insurance_id = ''
+        for v in visits:
+            iid = (v.get('insurance_id') or '').strip()
+            if iid:
+                insurance_id = iid
+                break
         patient_groups.append(
             {
                 'patient': patient,
-                'insurance_id': (first_visit.get('insurance_id') or '').strip(),
+                'insurance_id': insurance_id,
                 'plan_name': first_visit.get('plan_name') or '',
                 'payer': payer,
                 'payer_label': payer_label,

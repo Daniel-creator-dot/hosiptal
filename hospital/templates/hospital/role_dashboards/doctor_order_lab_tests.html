@@ -61,7 +61,7 @@
                         <i class="bi bi-flask me-2"></i>
                         Order Lab Tests
                     </h2>
-                    <p class="text-muted mb-0">Select patient and tests to create lab order</p>
+                    <p class="text-muted mb-0">Select patient and tests — a diagnosis is required before ordering</p>
                 </div>
                 <a href="{% url 'hospital:doctor_dashboard' %}" class="btn btn-light">
                     <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
@@ -177,14 +177,62 @@
             </div>
         </div>
 
-        <!-- Step 3: Order Details -->
+        <!-- Step 3: Diagnosis (required) -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card border-danger">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0">
+                            <i class="bi bi-clipboard-pulse me-2"></i>
+                            Step 3: Diagnosis (required)
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-warning mb-3">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Lab cannot process requests without a diagnosis. Enter the diagnosis for this visit below.
+                        </div>
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">Diagnosis name <span class="text-danger">*</span></label>
+                                <input type="text" name="diagnosis_name" id="labDiagnosisName" class="form-control" required
+                                       placeholder="e.g. Hypertension, Malaria, Acute febrile illness" autocomplete="off">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">ICD-10 code (optional)</label>
+                                <input type="text" name="icd10_code" id="labIcd10Code" class="form-control" placeholder="e.g. I10">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-4" id="extraLabPanel" style="display:none;">
+            <div class="col-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <h5 class="mb-0">Additional tests (insurance: 3 allowed)</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="small text-muted">Selecting more than 3 tests on an insurance visit requires a reason and diagnosis.</p>
+                        <label class="form-label">Reason for extra tests</label>
+                        <textarea name="extra_lab_reason" id="extraLabReason" class="form-control mb-2" rows="2"></textarea>
+                        <label class="form-label">Diagnosis for extra tests</label>
+                        <input type="text" name="extra_lab_diagnosis" id="extraLabDiagnosis" class="form-control" placeholder="Same as visit diagnosis if already entered">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Order Details -->
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
                         <h5 class="mb-0">
                             <i class="bi bi-info-circle me-2"></i>
-                            Step 3: Order Details
+                            Step 4: Order Details
                         </h5>
                     </div>
                     <div class="card-body">
@@ -199,7 +247,7 @@
                             </div>
                             <div class="col-md-8 mb-3">
                                 <label class="form-label">Clinical Notes</label>
-                                <textarea name="notes" class="form-control" rows="3" placeholder="Add clinical indication or special instructions..."></textarea>
+                                <textarea name="notes" class="form-control" rows="3" placeholder="Add special instructions for the laboratory..."></textarea>
                             </div>
                         </div>
                     </div>
@@ -265,13 +313,22 @@ function updateTestCard(testId) {
 
 function checkFormReady() {
     const patientSelected = selectedPatientId !== null;
-    const testsSelected = document.querySelectorAll('input[name="test_ids"]:checked').length > 0;
+    const testsSelectedCount = document.querySelectorAll('input[name="test_ids"]:checked').length;
+    const testsSelected = testsSelectedCount > 0;
+    const dxEl = document.getElementById('labDiagnosisName');
+    const diagnosisEntered = !!(dxEl && dxEl.value.trim());
     const submitBtn = document.getElementById('submitBtn');
+    const extraPanel = document.getElementById('extraLabPanel');
+    if (extraPanel) extraPanel.style.display = testsSelectedCount > 3 ? 'block' : 'none';
     
-    if (patientSelected && testsSelected) {
+    if (patientSelected && testsSelected && diagnosisEntered) {
         submitBtn.disabled = false;
+        submitBtn.title = '';
     } else {
         submitBtn.disabled = true;
+        if (!diagnosisEntered && patientSelected && testsSelected) {
+            submitBtn.title = 'Enter a diagnosis before creating the lab order';
+        }
     }
 }
 
@@ -303,6 +360,24 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('input[name="test_ids"]').forEach(checkbox => {
         checkbox.addEventListener('change', checkFormReady);
     });
+    var dxEl = document.getElementById('labDiagnosisName');
+    if (dxEl) {
+        dxEl.addEventListener('input', checkFormReady);
+        dxEl.addEventListener('change', checkFormReady);
+    }
+    var form = document.getElementById('labOrderForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            var name = (document.getElementById('labDiagnosisName') || {}).value || '';
+            if (!name.trim()) {
+                e.preventDefault();
+                alert('Please add a diagnosis before ordering lab tests.');
+                var panel = document.getElementById('labDiagnosisName');
+                if (panel) panel.focus();
+                return false;
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

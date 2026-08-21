@@ -6,6 +6,7 @@ so cashier workflows stay consistent with prescriptions/lab/imaging.
 from decimal import Decimal
 from datetime import timedelta
 from typing import Optional
+import logging
 
 from django.db import transaction
 from django.utils import timezone
@@ -13,6 +14,8 @@ from django.utils import timezone
 from ..models import Patient
 from ..models_pharmacy_walkin import WalkInPharmacySale
 from .unified_receipt_service import UnifiedReceiptService
+
+logger = logging.getLogger(__name__)
 
 
 class WalkInPharmacyService:
@@ -156,11 +159,15 @@ class WalkInPharmacyService:
             if paid > Decimal('0.00'):
                 continue
             billable = inv.lines.filter(is_deleted=False, waived_at__isnull=True)
-            if not billable.exists():
-                inv.status = 'cancelled'
-                inv.save(update_fields=['status', 'modified'])
-                continue
-            if all(sn in (line.description or '') for line in billable):
+            if not billable.exists() or all(sn in (line.description or '') for line in billable):
+                try:
+                    from hospital.services.deposit_payment_service import reverse_deposit_payments_for_invoice
+                    reverse_deposit_payments_for_invoice(inv)
+                except Exception:
+                    logger.exception(
+                        'reverse deposit before cancel duplicate prescribe invoice %s',
+                        getattr(inv, 'invoice_number', inv.pk),
+                    )
                 inv.status = 'cancelled'
                 inv.save(update_fields=['status', 'modified'])
 
@@ -168,6 +175,11 @@ class WalkInPharmacyService:
     def ensure_sale_invoice(sale: WalkInPharmacySale, patient: Patient):
         """Create or update an Invoice with line items for this walk-in sale."""
         from hospital.models import Invoice, InvoiceLine, ServiceCode, Payer
+        from hospital.utils_invoice_line import drug_label_for_bill
+
+        # Removed / waived sales must not reappear on Total Bill after Remove from bill.
+        if getattr(sale, 'waived_at', None) or getattr(sale, 'payment_status', None) == 'cancelled':
+            return None
 
         # Use sale's payer if set (Cash/Corporate/Insurance), else patient's primary_insurance, else cash
         payer = sale.payer
@@ -194,6 +206,21 @@ class WalkInPharmacyService:
                 .first()
             )
 
+            # If cashier already removed this sale's invoice, do not silently recreate it.
+            if not invoice:
+                removed = (
+                    Invoice.all_objects.filter(
+                        patient=patient,
+                        is_deleted=False,
+                        status='cancelled',
+                        lines__description__icontains=sale.sale_number,
+                    )
+                    .order_by('-modified')
+                    .first()
+                )
+                if removed:
+                    return None
+
             if not invoice:
                 invoice = Invoice.all_objects.create(
                     patient=patient,
@@ -204,30 +231,54 @@ class WalkInPharmacyService:
                     due_at=sale.sale_date + timedelta(days=7),
                 )
 
-            for item in sale.items.filter(is_deleted=False).select_related('drug'):
+            # Only active (non-waived) sale items belong on the bill.
+            active_items = sale.items.filter(is_deleted=False, waived_at__isnull=True).select_related('drug')
+
+            for item in active_items:
                 # Generate a code that fits within the 20-character limit
                 # "WALKIN-" is 7 chars, so we use first 13 chars of UUID (without hyphens)
                 drug_uuid_str = str(item.drug.pk).replace('-', '')[:13]
                 service_code, _ = ServiceCode.objects.get_or_create(
                     code=f"WALKIN-{drug_uuid_str}",
                     defaults={
-                        'description': f"{item.drug.name} {item.drug.strength}",
+                        'description': drug_label_for_bill(item.drug.name, item.drug.strength),
                         'category': 'Pharmacy Services',
                         'is_active': True,
                     },
                 )
 
-                description = f"{item.drug.name} {item.drug.strength} (Sale {sale.sale_number})"
-                InvoiceLine.objects.update_or_create(
-                    invoice=invoice,
-                    service_code=service_code,
-                    description=description,
-                    defaults={
-                        'quantity': Decimal(str(item.quantity)),
-                        'unit_price': item.unit_price,
-                        'line_total': item.line_total,
-                    },
+                description = drug_label_for_bill(item.drug.name, item.drug.strength)
+                description = f"{description} (Sale {sale.sale_number})"
+
+                # Prefer existing open line for this sale+drug (any description variant).
+                existing = (
+                    InvoiceLine.objects.filter(
+                        invoice=invoice,
+                        service_code=service_code,
+                        is_deleted=False,
+                        description__icontains=sale.sale_number,
+                    )
+                    .order_by('waived_at', '-created')
+                    .first()
                 )
+                if existing and existing.waived_at:
+                    # Keep waived — do not recreate a charge for a removed line.
+                    continue
+                if existing:
+                    existing.description = description
+                    existing.quantity = Decimal(str(item.quantity))
+                    existing.unit_price = item.unit_price
+                    existing.line_total = item.line_total
+                    existing.save()
+                else:
+                    InvoiceLine.objects.create(
+                        invoice=invoice,
+                        service_code=service_code,
+                        description=description,
+                        quantity=Decimal(str(item.quantity)),
+                        unit_price=item.unit_price,
+                        line_total=item.line_total,
+                    )
 
             # Do not downgrade partially_paid or reopen cancelled (cancelled cannot reach here).
             if invoice.status == 'draft':

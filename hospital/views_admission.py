@@ -77,14 +77,16 @@ def ensure_default_bed_structure():
         {'name': 'Female Ward', 'code': 'FEM', 'ward_type': 'female', 'capacity': 16, 'bed_prefix': 'FEM', 'bed_count': 12},
         {'name': 'Male Ward', 'code': 'MAL', 'ward_type': 'male', 'capacity': 16, 'bed_prefix': 'MAL', 'bed_count': 8},
         {'name': "Children's Ward", 'code': 'PED', 'ward_type': 'paediatric', 'capacity': 14, 'bed_prefix': 'PED', 'bed_count': 10},
-        {'name': 'VIP Ward', 'code': 'VIP', 'ward_type': 'general', 'capacity': 20, 'bed_prefix': 'VIP', 'bed_count': 20},
+        {'name': 'VIP LX', 'code': 'VIP', 'ward_type': 'general', 'capacity': 20, 'bed_prefix': 'VIP', 'bed_count': 20},
     ]
     
     for spec in default_wards:
-        ward = Ward.objects.filter(
-            ward_type=spec['ward_type'],
-            is_deleted=False
-        ).first()
+        ward = Ward.objects.filter(code=spec['code'], is_deleted=False).first()
+        if not ward:
+            ward = Ward.objects.filter(
+                ward_type=spec['ward_type'],
+                is_deleted=False
+            ).first()
         
         if not ward:
             code = spec['code']
@@ -101,6 +103,10 @@ def ensure_default_bed_structure():
                 capacity=spec['capacity'],
                 is_active=True
             )
+        elif ward.name != spec['name'] and spec['code'] == 'VIP':
+            # Keep VIP LX label in sync (was historically "VIP Ward")
+            ward.name = spec['name']
+            ward.save(update_fields=['name', 'modified'])
         ensure_beds_for_ward(ward, spec['bed_count'], spec['bed_prefix'])
 
 logger = logging.getLogger(__name__)

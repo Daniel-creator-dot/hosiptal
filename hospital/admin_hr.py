@@ -203,7 +203,7 @@ class StaffDocumentAdmin(admin.ModelAdmin):
     staff_link.short_description = 'Staff'
     
     def file_link(self, obj):
-        if obj.file:
+        if obj.file and getattr(obj.file, 'name', None):
             return format_html('<a href="{}" target="_blank">View</a>', obj.file.url)
         return "-"
     file_link.short_description = 'File'

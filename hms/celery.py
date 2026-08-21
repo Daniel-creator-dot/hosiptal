@@ -56,6 +56,10 @@ app.conf.beat_schedule = {
         'task': 'hospital.tasks_primecare.auto_match_credit_revenue',
         'schedule': 86400.0,  # Daily
     },
+    'purge-expired-ai-clinical-results-hourly': {
+        'task': 'hospital.tasks_ai_clinical.purge_expired_ai_clinical_results',
+        'schedule': 3600.0,  # Hourly
+    },
 }
 
 app.conf.timezone = 'UTC'

@@ -258,8 +258,21 @@ def apply_deposit_manually(request, deposit_id):
                 invoice.update_totals()
             except Exception:
                 invoice.refresh_from_db()
-            
-            if invoice.balance <= 0:
+
+            from .services.deposit_payment_service import (
+                heal_patient_deposits_for_billing,
+                invoice_is_eligible_for_deposit_apply,
+            )
+            heal_patient_deposits_for_billing(deposit.patient, apply_restored=False)
+            deposit.refresh_from_db()
+
+            if not invoice_is_eligible_for_deposit_apply(invoice):
+                messages.warning(
+                    request,
+                    f'Invoice {invoice.invoice_number} cannot receive deposit '
+                    f'(cancelled, paid, or no balance). Select another invoice.',
+                )
+            elif invoice.balance <= 0:
                 messages.warning(
                     request,
                     f'Invoice {invoice.invoice_number} has no outstanding balance (GHS 0.00). '

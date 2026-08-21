@@ -292,6 +292,7 @@ def primecare_profit_loss(request):
     # INTERNALLY GENERATED REVENUE
     registration = get_revenue_balance('4100', start_date, end_date)
     consultation = get_revenue_balance('4110', start_date, end_date)
+    sustainability = get_revenue_balance('4115', start_date, end_date)
     laboratory = get_revenue_balance('4120', start_date, end_date)
     pharmacy = get_revenue_balance('4130', start_date, end_date)
     surgeries = get_revenue_balance('4140', start_date, end_date)
@@ -302,7 +303,7 @@ def primecare_profit_loss(request):
     consumables_revenue = get_revenue_balance('4190', start_date, end_date)
     
     total_internal_revenue = (
-        registration + consultation + laboratory + pharmacy + surgeries +
+        registration + consultation + sustainability + laboratory + pharmacy + surgeries +
         admissions + radiology + dental + physiotherapy + consumables_revenue
     )
     
@@ -312,7 +313,10 @@ def primecare_profit_loss(request):
     purchases_lab_reagents = get_expense_balance('5111', start_date, end_date)
     purchases_dental = get_expense_balance('5112', start_date, end_date)
     purchases_radiology = get_expense_balance('5113', start_date, end_date)
-    purchases_consumables = get_expense_balance('5114', start_date, end_date)
+    purchases_consumables = (
+        get_expense_balance('5114', start_date, end_date)
+        + get_expense_balance('5600', start_date, end_date)
+    )
     purchases_physiotherapy = get_expense_balance('5115', start_date, end_date)
     purchases_others = get_expense_balance('5116', start_date, end_date)
     closing_inventory = get_expense_balance('5120', start_date, end_date)  # This is negative
@@ -382,6 +386,7 @@ def primecare_profit_loss(request):
         # Revenue
         'registration': registration,
         'consultation': consultation,
+        'sustainability': sustainability,
         'laboratory': laboratory,
         'pharmacy': pharmacy,
         'surgeries': surgeries,

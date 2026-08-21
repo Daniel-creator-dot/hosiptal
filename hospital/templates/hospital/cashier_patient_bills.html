@@ -1,5 +1,6 @@
 {% extends 'hospital/base.html' %}
 {% load static %}
+{% load hospital_extras %}
 
 {% block extra_css %}
 <style>
@@ -65,9 +66,9 @@
     <!-- Reception prices reference -->
     <div class="alert alert-success mb-4 d-flex flex-wrap align-items-center gap-3" role="alert">
         <strong><i class="bi bi-receipt-cutoff me-1"></i>Reception prices:</strong>
-        <span><strong>Antenatal</strong> = 235 GHS</span>
+        <span><strong>Antenatal</strong> = 243 GHS</span>
         <span class="text-muted">|</span>
-        <span><strong>Gynae / Special</strong> = 260 GHS</span>
+        <span><strong>Gynae / Special</strong> = 268 GHS</span>
         <span class="text-muted small">— set at front desk; custom overrides show on each patient’s bill.</span>
     </div>
     
@@ -123,8 +124,8 @@
                     <input type="text" 
                            name="search" 
                            class="form-control form-control-lg" 
-                           placeholder="Search by patient name or MRN..."
-                           value="{{ search }}" title="Enter text">
+                           placeholder="Search by name, MRN, phone, or national ID..."
+                           value="{{ search }}" title="Flexible name search: first, middle, last, or full name">
                     <button class="btn btn-primary" type="submit">
                         <i class="bi bi-search"></i> Search
                     </button>
@@ -154,13 +155,16 @@
                 </a>
                 {% endif %}
             </form>
+            {% if search %}
+            <p class="text-muted mt-2 mb-0 small"><i class="bi bi-search"></i> Searching all pending bills for: <strong>{{ search }}</strong> (date filter cleared for name/MRN search)</p>
+            {% endif %}
             {% if today_pending %}
             <p class="text-muted mt-2 mb-0 small"><i class="bi bi-info-circle"></i> Showing only clients with pending services from today</p>
             {% endif %}
             {% if service_filter %}
             <p class="text-muted mt-2 mb-0 small"><i class="bi bi-funnel"></i> Filtering by: <strong>{{ service_filter|title }}</strong></p>
             {% endif %}
-            {% if filter_date %}
+            {% if filter_date and not search %}
             <p class="text-muted mt-2 mb-0 small"><i class="bi bi-calendar-date"></i> Showing pending services from: <strong>{{ filter_date|date:"M d, Y" }}</strong></p>
             {% endif %}
         </div>
@@ -177,9 +181,14 @@
 <a href="{% url 'hospital:cashier_patient_total_bill' patient_bill.patient.id %}{% if today_pending %}?today_pending=1{% endif %}{% if filter_date_str and not today_pending %}?filter_date={{ filter_date_str }}{% endif %}{% if service_filter %}{% if today_pending or filter_date_str %}&{% else %}?{% endif %}service_filter={{ service_filter }}{% endif %}" style="text-decoration: none; color: inherit;">
                                                             {{ patient_bill.patient.full_name }}
                                                         </a>
+                                                        {% patient_payer_badges patient_bill.patient %}
                                                     </h5>
                                                     <small class="text-muted">MRN: {{ patient_bill.patient.mrn }} | 
                                                         Phone: {{ patient_bill.patient.phone_number|default:"N/A" }}
+                                                        {% if patient_bill.payer_details and patient_bill.payer_details.is_insurance_or_corporate and patient_bill.payer_details.member_or_policy_number %}
+                                                        | {% if patient_bill.payer_details.is_corporate %}Emp/Corp ID{% else %}Policy/Member #{% endif %}:
+                                                        <strong>{{ patient_bill.payer_details.member_or_policy_number }}</strong>
+                                                        {% endif %}
                                                         <a href="{% url 'hospital:cashier_patient_total_bill' patient_bill.patient.id %}{% if today_pending %}?today_pending=1{% endif %}{% if filter_date_str and not today_pending %}?filter_date={{ filter_date_str }}{% endif %}{% if service_filter %}{% if today_pending or filter_date_str %}&{% else %}?{% endif %}service_filter={{ service_filter }}{% endif %}" class="text-primary ms-2">
                                                             <i class="bi bi-eye"></i> View Total Bill
                                                         </a>
@@ -290,15 +299,21 @@
                                         <th colspan="2" class="text-end">Total (sum of amounts above):</th>
                                         <th class="text-end">GHS {{ patient_bill.total|floatformat:2 }}</th>
                                     </tr>
+                                    {% if patient_bill.deposit_applied_to_bill and patient_bill.deposit_applied_to_bill > 0 %}
+                                    <tr class="table-light">
+                                        <th colspan="2" class="text-end">Less: Deposit applied to this bill:</th>
+                                        <th class="text-end">−GHS {{ patient_bill.deposit_applied_to_bill|floatformat:2 }}</th>
+                                    </tr>
+                                    {% endif %}
                                     {% if patient_bill.patient_deposits_recorded_sum and patient_bill.patient_deposits_recorded_sum > 0 %}
                                     <tr class="table-light">
-                                        <th colspan="2" class="text-end">Total deposit made (slips on file):</th>
-                                        <th class="text-end">GHS {{ patient_bill.patient_deposits_recorded_sum|floatformat:2 }}</th>
+                                        <th colspan="2" class="text-end text-muted small">Deposit slips on file (info only):</th>
+                                        <th class="text-end text-muted small">GHS {{ patient_bill.patient_deposits_recorded_sum|floatformat:2 }}</th>
                                     </tr>
                                     {% endif %}
                                     {% if patient_bill.deposit_balance > 0 %}
                                     <tr class="table-info">
-                                        <th colspan="2" class="text-end">Deposit available (not applied until Total Bill):</th>
+                                        <th colspan="2" class="text-end">Deposit available (click Total Bill → Apply deposit):</th>
                                         <th class="text-end">GHS {{ patient_bill.deposit_balance|floatformat:2 }}</th>
                                     </tr>
                                     {% endif %}

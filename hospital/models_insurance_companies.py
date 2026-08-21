@@ -7,7 +7,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
-from .models import BaseModel, Patient, ServiceCode, Drug
+from .models import BaseModel, Patient, ServiceCode, Drug, LabTest
 
 
 class InsuranceCompany(BaseModel):
@@ -269,6 +269,7 @@ class InsuranceExclusionRule(BaseModel):
         ('drug', 'Specific Drug'),
         ('drug_generic', 'Drug Generic Name'),
         ('drug_category', 'Drug Category'),
+        ('lab_test', 'Specific Lab Test'),
     ]
     
     ENFORCEMENT_CHOICES = [
@@ -326,6 +327,13 @@ class InsuranceExclusionRule(BaseModel):
         blank=True,
         help_text="Custom grouping for drugs (e.g., antibiotics, antimalarials)"
     )
+    lab_test = models.ForeignKey(
+        LabTest,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='insurance_exclusion_rules',
+    )
     
     enforcement_action = models.CharField(
         max_length=20,
@@ -369,6 +377,8 @@ class InsuranceExclusionRule(BaseModel):
             return f"Generic {self.drug_generic_name}"
         if self.rule_type == 'drug_category' and self.drug_category:
             return f"Drug Category {self.drug_category}"
+        if self.rule_type == 'lab_test' and self.lab_test:
+            return f"Lab {self.lab_test.name}"
         return "Unspecified target"
     
     def is_effective(self, reference_date=None):
@@ -382,7 +392,7 @@ class InsuranceExclusionRule(BaseModel):
             return False
         return True
     
-    def matches_target(self, service_code=None, drug=None):
+    def matches_target(self, service_code=None, drug=None, lab_test=None):
         if self.rule_type == 'service_code' and service_code:
             return self.service_code_id == service_code.id
         if self.rule_type == 'service_category' and service_code:
@@ -399,6 +409,8 @@ class InsuranceExclusionRule(BaseModel):
             if not self.drug_category:
                 return False
             return (drug.form or '').lower() == self.drug_category.lower()
+        if self.rule_type == 'lab_test' and lab_test:
+            return self.lab_test_id == lab_test.id
         return False
     
     def formatted_reason(self, service_code=None, drug=None):

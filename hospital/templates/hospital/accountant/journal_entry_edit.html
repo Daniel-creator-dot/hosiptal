@@ -4,6 +4,20 @@
 {% block title %}Edit Journal Entry - HMS{% endblock %}
 {% block page_title %}Edit Journal Entry{% endblock %}
 
+{% block extra_css %}
+<style>
+    .account-picker .account-search {
+        border-right: 0;
+    }
+    .account-picker .account-search-btn {
+        border-left: 0;
+    }
+    .account-picker .account-select {
+        margin-top: 0.35rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="row">
@@ -55,12 +69,17 @@
                                         <div class="row g-3">
                                             <div class="col-md-4">
                                                 <label class="form-label">Account <span class="text-danger">*</span></label>
-                                                <select name="line_{{ line.line_number }}_account" class="form-select account-select" required>
-                                                    <option value="">Select Account</option>
-                                                    {% for account in accounts %}
-                                                    <option value="{{ account.id }}" {% if account.id == line.account.id %}selected{% endif %}>{{ account.account_code }} - {{ account.account_name }}</option>
-                                                    {% endfor %}
-                                                </select>
+                                                <div class="account-picker">
+                                                    <div class="input-group input-group-sm">
+                                                        <input type="text" class="form-control account-search" placeholder="Search code or name..." autocomplete="off">
+                                                        <button type="button" class="btn btn-outline-secondary account-search-btn" title="Search accounts">
+                                                            <i class="bi bi-search"></i>
+                                                        </button>
+                                                    </div>
+                                                    <select name="line_{{ line.line_number }}_account" class="form-select account-select" required data-selected="{{ line.account.id }}">
+                                                        <option value="">Select Account</option>
+                                                    </select>
+                                                </div>
                                             </div>
                                             <div class="col-md-3">
                                                 <label class="form-label">Debit</label>
@@ -130,6 +149,86 @@
 
 <script>
 let lineCounter = {{ lines|length }};
+const ACCOUNT_OPTIONS = [
+{% for account in accounts %}
+    {id: '{{ account.id }}', text: '{{ account.account_code|escapejs }} - {{ account.account_name|escapejs }}'}{% if not forloop.last %},{% endif %}
+{% endfor %}
+];
+
+function fillAccountSelect(selectEl, selectedId, filterText) {
+    if (!selectEl) return;
+    const q = (filterText || '').toLowerCase().trim();
+    const current = selectedId != null && selectedId !== '' ? String(selectedId) : String(selectEl.value || '');
+    selectEl.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = q ? 'No matching accounts — clear search' : 'Select Account';
+    selectEl.appendChild(placeholder);
+
+    let matchCount = 0;
+    let currentStillVisible = false;
+    ACCOUNT_OPTIONS.forEach(function(opt) {
+        if (q && opt.text.toLowerCase().indexOf(q) === -1) return;
+        matchCount += 1;
+        const o = document.createElement('option');
+        o.value = opt.id;
+        o.textContent = opt.text;
+        if (String(opt.id) === current) {
+            o.selected = true;
+            currentStillVisible = true;
+        }
+        selectEl.appendChild(o);
+    });
+
+    if (current && !currentStillVisible) {
+        const keep = ACCOUNT_OPTIONS.find(function(o) { return String(o.id) === current; });
+        if (keep) {
+            const o = document.createElement('option');
+            o.value = keep.id;
+            o.textContent = keep.text + ' (selected)';
+            o.selected = true;
+            selectEl.insertBefore(o, selectEl.children[1] || null);
+        }
+    }
+
+    if (matchCount > 0) {
+        placeholder.textContent = 'Select Account' + (q ? ' (' + matchCount + ' found)' : '');
+    }
+}
+
+function wireAccountSearch(lineEl) {
+    const searchInput = lineEl.querySelector('.account-search');
+    const searchBtn = lineEl.querySelector('.account-search-btn');
+    const selectEl = lineEl.querySelector('.account-select');
+    if (!searchInput || !selectEl) return;
+
+    const applyFilter = function() {
+        fillAccountSelect(selectEl, selectEl.value, searchInput.value);
+        if (searchInput.value.trim()) {
+            selectEl.size = Math.min(8, Math.max(2, selectEl.options.length));
+            selectEl.focus();
+        } else {
+            selectEl.size = 1;
+        }
+    };
+
+    searchInput.addEventListener('input', applyFilter);
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            applyFilter();
+        }
+    });
+    if (searchBtn) {
+        searchBtn.addEventListener('click', function() {
+            searchInput.focus();
+            applyFilter();
+        });
+    }
+    selectEl.addEventListener('change', function() {
+        selectEl.size = 1;
+    });
+}
 
 function addJournalLine() {
     lineCounter++;
@@ -139,12 +238,17 @@ function addJournalLine() {
                 <div class="row g-3">
                     <div class="col-md-4">
                         <label class="form-label">Account <span class="text-danger">*</span></label>
-                        <select name="line_${lineCounter}_account" class="form-select account-select" required>
-                            <option value="">Select Account</option>
-                            {% for account in accounts %}
-                            <option value="{{ account.id }}">{{ account.account_code }} - {{ account.account_name }}</option>
-                            {% endfor %}
-                        </select>
+                        <div class="account-picker">
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control account-search" placeholder="Search code or name..." autocomplete="off">
+                                <button type="button" class="btn btn-outline-secondary account-search-btn" title="Search accounts">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                            <select name="line_${lineCounter}_account" class="form-select account-select" required>
+                                <option value="">Select Account</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Debit</label>
@@ -171,6 +275,9 @@ function addJournalLine() {
     `;
     document.getElementById('journalLines').insertAdjacentHTML('beforeend', lineHtml);
     document.getElementById('line_count').value = lineCounter;
+    const lineEl = document.querySelector(`.journal-line[data-line="${lineCounter}"]`);
+    fillAccountSelect(lineEl.querySelector('.account-select'), '', '');
+    wireAccountSearch(lineEl);
     updateTotals();
 }
 
@@ -210,8 +317,13 @@ function updateTotals() {
     }
 }
 
-// Initialize totals on load
 document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.journal-line').forEach(function(lineEl) {
+        const selectEl = lineEl.querySelector('.account-select');
+        const selected = selectEl ? (selectEl.getAttribute('data-selected') || '') : '';
+        fillAccountSelect(selectEl, selected, '');
+        wireAccountSearch(lineEl);
+    });
     updateTotals();
 });
 </script>

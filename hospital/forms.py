@@ -132,6 +132,9 @@ class PatientForm(forms.ModelForm):
         if self.data is not None:
             payer_type = (self.data.get('payer_type') or '').strip()
         if instance.pk and payer_type == 'cash':
+            # Hidden insurance fields still POST their old values; cash must not keep
+            # the snapshot name that get_patient_payer_info treats as current payer.
+            instance.insurance_company = ''
             for f in BILLING_REF_FIELD_NAMES:
                 new_v = (getattr(instance, f, None) or '').strip()
                 old_v = (self._billing_ref_backup.get(f) or '').strip()

@@ -9,9 +9,10 @@
 <div class="container-fluid">
     <div class="alert alert-info mb-4">
         <i class="bi bi-info-circle me-2"></i>
-        <strong>Account view:</strong> View stock across all locations and stores. Use the <strong>Location / Store</strong> filter to see a specific store (e.g. Main Pharmacy, Lab Store). You cannot edit stock; use this for oversight and reporting only.
-        <strong class="d-block mt-2">Newest stock appears at the top</strong> — when store managers add stock, it will show up at the top of both tables.
+        <strong>Account / stores view:</strong> Pharmacy batches and store consumables (toilet rolls, tissues, gloves, lab kits). Use <strong>Location / Store</strong> and <strong>Store category</strong> / <strong>Stock view</strong> to find Main Store facility supplies. You cannot edit stock here.
+        <strong class="d-block mt-2">Newest stock appears at the top</strong> — when store managers add stock, it shows at the top of both tables.
         <a href="{% url 'hospital:supplier_accounts_list' %}" class="btn btn-sm btn-outline-primary mt-2"><i class="bi bi-people"></i> Supplier accounts &amp; balances</a>
+        <a href="{% url 'hospital:inventory:issue_consumables' %}" class="btn btn-sm btn-success mt-2"><i class="bi bi-person-check"></i> Issue toilet rolls / tissues to staff</a>
     </div>
 
     <!-- Summary cards -->
@@ -20,7 +21,8 @@
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-body">
                     <h6 class="text-muted mb-2 small">Total stock value</h6>
-                    <h4 class="mb-0">GHS {{ total_value|floatformat:2|intcomma }}</h4>
+                    <h4 class="mb-0">GHS {{ combined_total_value|floatformat:2|intcomma }}</h4>
+                    <small class="text-muted">Drugs GHS {{ total_value|floatformat:2|intcomma }} + lab/consumables GHS {{ store_total_value|floatformat:2|intcomma }}</small>
                     {% if location_filter %}<small class="text-muted">{{ location_filter }}</small>{% endif %}
                 </div>
             </div>
@@ -47,6 +49,15 @@
                 <div class="card-body">
                     <h6 class="text-muted mb-2 small">Batches</h6>
                     <h4 class="mb-0">{{ total_batch_count|intcomma }}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-2">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2 small">Lab &amp; consumables</h6>
+                    <h4 class="mb-0">{{ store_item_count|intcomma }}</h4>
+                    <small class="text-muted">{{ store_low_stock_count }} low stock</small>
                 </div>
             </div>
         </div>
@@ -119,6 +130,23 @@
                         {% for s in supplier_choices %}
                         <option value="{{ s.id }}" {% if supplier_filter == s.id|stringformat:"s" or supplier_filter == s.id %}selected{% endif %}>{{ s.name }}</option>
                         {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Store category</label>
+                    <select name="inv_category" class="form-select">
+                        <option value="">All store categories</option>
+                        {% for code, name in inventory_categories %}
+                        <option value="{{ code }}" {% if inv_category_filter == code %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Stock view</label>
+                    <select name="stock_view" class="form-select">
+                        <option value="all" {% if stock_view == 'all' %}selected{% endif %}>All store stock</option>
+                        <option value="facility" {% if stock_view == 'facility' %}selected{% endif %}>Facility (toilet rolls, tissues, GEN/SUPPLY)</option>
+                        <option value="stores" {% if stock_view == 'stores' %}selected{% endif %}>Main / lab / ward stores only</option>
                     </select>
                 </div>
                 <div class="col-md-1 d-flex align-items-end">
@@ -241,6 +269,120 @@
             {% endif %}
             {% else %}
             <p class="text-center text-muted py-4">No pharmacy stock found matching your filters.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Stores & facility consumables -->
+    <div class="card mb-4" id="store-consumables">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h5 class="mb-0"><i class="bi bi-box-seam"></i> Stores &amp; facility consumables</h5>
+            <small class="text-muted">Main Store, lab, GEN/SUPPLY — toilet rolls, tissues, gauze, cleaning supplies. Tip: set Stock view → Facility.</small>
+        </div>
+        <div class="card-body">
+            {% if store_stock_list %}
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Code</th>
+                            <th>Store</th>
+                            <th>Category</th>
+                            <th>Supplier</th>
+                            <th>Qty</th>
+                            <th>Reorder</th>
+                            <th>Unit cost</th>
+                            <th>Line value</th>
+                            <th>Added on</th>
+                            <th>Last modified</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in store_stock_list %}
+                        <tr>
+                            <td><strong>{{ item.item_name }}</strong>{% if item.description %}<br><small class="text-muted">{{ item.description|truncatewords:8 }}</small>{% endif %}</td>
+                            <td><code>{{ item.item_code|default:"—" }}</code></td>
+                            <td>{{ item.store.name }}</td>
+                            <td>{% if item.category %}{{ item.category.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td class="small">{% if item.preferred_supplier %}{{ item.preferred_supplier.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td>
+                                {% if item.reorder_level and item.quantity_on_hand <= item.reorder_level %}
+                                <span class="badge bg-warning">{{ item.quantity_on_hand }}</span>
+                                {% else %}
+                                {{ item.quantity_on_hand }}
+                                {% endif %}
+                            </td>
+                            <td>{{ item.reorder_level }}</td>
+                            <td>GHS {{ item.unit_cost|floatformat:2 }}</td>
+                            <td>GHS {{ item.line_value|floatformat:2|intcomma }}</td>
+                            <td>{{ item.created|date:"d/m/Y H:i" }}</td>
+                            <td>{{ item.modified|date:"d/m/Y H:i" }}</td>
+                            <td>
+                                {% if item.quantity_on_hand == 0 %}
+                                <span class="badge bg-danger">Out</span>
+                                {% elif item.reorder_level and item.quantity_on_hand <= item.reorder_level %}
+                                <span class="badge bg-warning">Low</span>
+                                {% else %}
+                                <span class="badge bg-success">OK</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if store_stock_list.has_other_pages %}
+            <nav class="mt-3">
+                <ul class="pagination justify-content-center">
+                    {% if store_stock_list.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?store_page={{ store_stock_list.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filter_type != 'all' %}&filter={{ filter_type }}{% endif %}{% if location_filter %}&location={{ location_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if supplier_filter %}&supplier={{ supplier_filter }}{% endif %}{% if inv_category_filter %}&inv_category={{ inv_category_filter }}{% endif %}{% if stock_view and stock_view != 'all' %}&stock_view={{ stock_view }}{% endif %}&page={{ stock_list.number }}">Previous</a></li>
+                    {% endif %}
+                    <li class="page-item disabled"><span class="page-link">Store page {{ store_stock_list.number }} of {{ store_stock_list.paginator.num_pages }}</span></li>
+                    {% if store_stock_list.has_next %}
+                    <li class="page-item"><a class="page-link" href="?store_page={{ store_stock_list.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filter_type != 'all' %}&filter={{ filter_type }}{% endif %}{% if location_filter %}&location={{ location_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if supplier_filter %}&supplier={{ supplier_filter }}{% endif %}{% if inv_category_filter %}&inv_category={{ inv_category_filter }}{% endif %}{% if stock_view and stock_view != 'all' %}&stock_view={{ stock_view }}{% endif %}&page={{ stock_list.number }}">Next</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <p class="text-center text-muted py-4">No store / facility consumables match your filters. Try Stock view → Facility, or search “toilet” / “tissue”.</p>
+            {% endif %}
+
+            {% if lab_reagents %}
+            <hr>
+            <h6 class="mb-3"><i class="bi bi-droplet"></i> Lab reagent register</h6>
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead>
+                        <tr>
+                            <th>Reagent</th>
+                            <th>Code</th>
+                            <th>Category</th>
+                            <th>Batch</th>
+                            <th>Qty</th>
+                            <th>Unit cost</th>
+                            <th>Supplier</th>
+                            <th>Added on</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in lab_reagents %}
+                        <tr>
+                            <td><strong>{{ r.name }}</strong></td>
+                            <td><code>{{ r.item_code }}</code></td>
+                            <td>{{ r.get_category_display }}</td>
+                            <td>{{ r.batch_number|default:"—" }}</td>
+                            <td>{{ r.quantity_on_hand }} {{ r.unit }}</td>
+                            <td>{% if r.unit_cost %}GHS {{ r.unit_cost|floatformat:2 }}{% else %}—{% endif %}</td>
+                            <td>{{ r.supplier|default:"—" }}</td>
+                            <td>{{ r.created|date:"d/m/Y H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
             {% endif %}
         </div>
     </div>

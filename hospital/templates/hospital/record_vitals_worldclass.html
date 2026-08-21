@@ -537,6 +537,19 @@
 
     <form method="post" id="vitalsForm">
         {% csrf_token %}
+        {% if editing_vital %}
+        <input type="hidden" name="vital_id" value="{{ editing_vital.pk }}">
+        <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <span>
+                <i class="bi bi-pencil-square me-1"></i>
+                Editing vitals from {{ editing_vital.recorded_at|date:"M d, Y H:i" }}.
+                Correct values and save — this updates the existing record.
+            </span>
+            <a href="{% url 'hospital:record_vitals' encounter.pk %}" class="btn btn-sm btn-outline-secondary">
+                Record new instead
+            </a>
+        </div>
+        {% endif %}
         
         <!-- Core Vital Signs Grid -->
         <div class="vitals-grid">
@@ -551,11 +564,13 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="systolic_bp" id="systolic_bp" class="vital-input" 
                            placeholder="120" min="60" max="250" 
-                           onchange="validateVital('bp')" style="font-size: 24px;" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.systolic_bp %}{{ editing_vital.systolic_bp }}{% endif %}"
+                           onchange="validateVital('bp')" style="font-size: 24px;" title="Enter number">
                     <span class="vital-unit" style="right: 60px;">/</span>
                     <input type="number" name="diastolic_bp" id="diastolic_bp" class="vital-input" 
                            placeholder="80" min="40" max="150" 
-                           onchange="validateVital('bp')" style="font-size: 24px; margin-top: 8px;" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.diastolic_bp %}{{ editing_vital.diastolic_bp }}{% endif %}"
+                           onchange="validateVital('bp')" style="font-size: 24px; margin-top: 8px;" title="Enter number">
                     <span class="vital-unit">mmHg</span>
                 </div>
                 <div class="vital-range">Normal: 90-140 / 60-90 mmHg</div>
@@ -573,7 +588,8 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="pulse" id="pulse" class="vital-input" 
                            placeholder="72" min="30" max="220" 
-                           onchange="validateVital('pulse')" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.pulse %}{{ editing_vital.pulse }}{% endif %}"
+                           onchange="validateVital('pulse')" title="Enter number">
                     <span class="vital-unit">bpm</span>
                 </div>
                 <div class="vital-range">Normal: 60-100 bpm</div>
@@ -591,7 +607,8 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="temperature" id="temperature" class="vital-input" 
                            placeholder="36.8" min="30" max="45" step="0.1" 
-                           onchange="validateVital('temperature')" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.temperature %}{{ editing_vital.temperature }}{% endif %}"
+                           onchange="validateVital('temperature')" title="Enter number">
                     <span class="vital-unit">°C</span>
                 </div>
                 <div class="vital-range">Normal: 36.1-37.2°C</div>
@@ -609,7 +626,8 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="spo2" id="spo2" class="vital-input" 
                            placeholder="98" min="70" max="100" 
-                           onchange="validateVital('spo2')" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.spo2 %}{{ editing_vital.spo2 }}{% endif %}"
+                           onchange="validateVital('spo2')" title="Enter number">
                     <span class="vital-unit">%</span>
                 </div>
                 <div class="vital-range">Normal: ≥ 95%</div>
@@ -627,7 +645,8 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="respiratory_rate" id="respiratory_rate" class="vital-input" 
                            placeholder="16" min="8" max="40" 
-                           onchange="validateVital('rr')" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.respiratory_rate %}{{ editing_vital.respiratory_rate }}{% endif %}"
+                           onchange="validateVital('rr')" title="Enter number">
                     <span class="vital-unit">/min</span>
                 </div>
                 <div class="vital-range">Normal: 12-20 /min</div>
@@ -645,7 +664,8 @@
                 <div class="vital-input-wrapper">
                     <input type="number" name="blood_glucose" id="blood_glucose" class="vital-input" 
                            placeholder="5.5" min="2" max="30" step="0.1" 
-                           onchange="validateVital('glucose')" title="Enter number" placeholder="Enter number">
+                           value="{% if editing_vital.blood_glucose %}{{ editing_vital.blood_glucose }}{% endif %}"
+                           onchange="validateVital('glucose')" title="Enter number">
                     <span class="vital-unit">mmol/L</span>
                 </div>
                 <div class="vital-range">Normal: 4.0-6.0 mmol/L</div>
@@ -656,6 +676,14 @@
         <!-- POC glucose strip billing (RBS / FBS) -->
         <div class="assessment-section mt-3" style="border: 2px solid #8B5CF6; border-radius: 16px; padding: 16px 20px; background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);">
             <h3 class="mb-2" style="font-size: 1.1rem;"><i class="bi bi-cash-coin me-2"></i>Glucose strip (RBS / FBS)</h3>
+            {% if strip_already_billed %}
+            <p class="small text-muted mb-3 mb-md-2">
+                Strip charge already billed for this vitals record
+                (<strong>{{ editing_vital.poc_glucose_strip_type|upper }}</strong>).
+                You can still correct the glucose reading; the bill will not be charged again.
+            </p>
+            <input type="hidden" name="poc_glucose_strip_type" value="{{ editing_vital.poc_glucose_strip_type }}">
+            {% else %}
             <p class="small text-muted mb-3 mb-md-2">
                 When a test strip is used, select <strong>RBS</strong> or <strong>FBS</strong>.
                 <strong>GHS {{ poc_glucose_strip_ghs|floatformat:2 }}</strong> is added to the patient bill for cashier.
@@ -663,18 +691,19 @@
             </p>
             <div class="d-flex flex-wrap gap-3">
                 <label class="d-inline-flex align-items-center gap-2 small mb-0 fw-semibold">
-                    <input type="radio" name="poc_glucose_strip_type" value="" checked>
+                    <input type="radio" name="poc_glucose_strip_type" value="" {% if not editing_vital or not editing_vital.poc_glucose_strip_type %}checked{% endif %}>
                     <span>No strip charge</span>
                 </label>
                 <label class="d-inline-flex align-items-center gap-2 small mb-0 fw-semibold">
-                    <input type="radio" name="poc_glucose_strip_type" value="rbs" id="poc_strip_rbs">
+                    <input type="radio" name="poc_glucose_strip_type" value="rbs" id="poc_strip_rbs" {% if editing_vital.poc_glucose_strip_type == 'rbs' %}checked{% endif %}>
                     <span>RBS strip — GHS {{ poc_glucose_strip_ghs|floatformat:2 }}</span>
                 </label>
                 <label class="d-inline-flex align-items-center gap-2 small mb-0 fw-semibold">
-                    <input type="radio" name="poc_glucose_strip_type" value="fbs" id="poc_strip_fbs">
+                    <input type="radio" name="poc_glucose_strip_type" value="fbs" id="poc_strip_fbs" {% if editing_vital.poc_glucose_strip_type == 'fbs' %}checked{% endif %}>
                     <span>FBS strip — GHS {{ poc_glucose_strip_ghs|floatformat:2 }}</span>
                 </label>
             </div>
+            {% endif %}
         </div>
 
         <!-- Additional Assessment Section -->
@@ -687,11 +716,11 @@
                         <i class="bi bi-eye me-2"></i>Level of Consciousness
                     </label>
                     <select name="consciousness_level" id="consciousness_level" class="form-control-modern form-select-modern" onchange="validateVital('consciousness')" title="Select option" aria-label="Select option">
-                        <option value="alert">Alert</option>
-                        <option value="cvpu">Confused/Disoriented</option>
-                        <option value="voice">Responds to Voice</option>
-                        <option value="pain">Responds to Pain</option>
-                        <option value="unresponsive">Unresponsive</option>
+                        <option value="alert" {% if editing_vital.consciousness_level == 'alert' or not editing_vital %}selected{% endif %}>Alert</option>
+                        <option value="cvpu" {% if editing_vital.consciousness_level == 'cvpu' %}selected{% endif %}>Confused/Disoriented</option>
+                        <option value="voice" {% if editing_vital.consciousness_level == 'voice' %}selected{% endif %}>Responds to Voice</option>
+                        <option value="pain" {% if editing_vital.consciousness_level == 'pain' %}selected{% endif %}>Responds to Pain</option>
+                        <option value="unresponsive" {% if editing_vital.consciousness_level == 'unresponsive' %}selected{% endif %}>Unresponsive</option>
                     </select>
                 </div>
 
@@ -702,17 +731,17 @@
                     </label>
                     <select name="pain_score" id="pain_score" class="form-control-modern form-select-modern" title="Select option" aria-label="Select option">
                         <option value="">Select...</option>
-                        <option value="0">0 - No Pain</option>
-                        <option value="1">1 - Minimal</option>
-                        <option value="2">2 - Mild</option>
-                        <option value="3">3 - Uncomfortable</option>
-                        <option value="4">4 - Moderate</option>
-                        <option value="5">5 - Distressing</option>
-                        <option value="6">6 - Severe</option>
-                        <option value="7">7 - Very Severe</option>
-                        <option value="8">8 - Intense</option>
-                        <option value="9">9 - Excruciating</option>
-                        <option value="10">10 - Unbearable</option>
+                        <option value="0" {% if editing_vital.pain_score == 0 %}selected{% endif %}>0 - No Pain</option>
+                        <option value="1" {% if editing_vital.pain_score == 1 %}selected{% endif %}>1 - Minimal</option>
+                        <option value="2" {% if editing_vital.pain_score == 2 %}selected{% endif %}>2 - Mild</option>
+                        <option value="3" {% if editing_vital.pain_score == 3 %}selected{% endif %}>3 - Uncomfortable</option>
+                        <option value="4" {% if editing_vital.pain_score == 4 %}selected{% endif %}>4 - Moderate</option>
+                        <option value="5" {% if editing_vital.pain_score == 5 %}selected{% endif %}>5 - Distressing</option>
+                        <option value="6" {% if editing_vital.pain_score == 6 %}selected{% endif %}>6 - Severe</option>
+                        <option value="7" {% if editing_vital.pain_score == 7 %}selected{% endif %}>7 - Very Severe</option>
+                        <option value="8" {% if editing_vital.pain_score == 8 %}selected{% endif %}>8 - Intense</option>
+                        <option value="9" {% if editing_vital.pain_score == 9 %}selected{% endif %}>9 - Excruciating</option>
+                        <option value="10" {% if editing_vital.pain_score == 10 %}selected{% endif %}>10 - Unbearable</option>
                     </select>
                 </div>
 
@@ -722,8 +751,8 @@
                         <i class="bi bi-circle me-2"></i>Supplemental Oxygen
                     </label>
                     <select name="supplemental_oxygen" id="supplemental_oxygen" class="form-control-modern form-select-modern" onchange="toggleOxygenFlow()" title="Select option" aria-label="Select option">
-                        <option value="false">No</option>
-                        <option value="true">Yes</option>
+                        <option value="false" {% if not editing_vital or not editing_vital.supplemental_oxygen %}selected{% endif %}>No</option>
+                        <option value="true" {% if editing_vital.supplemental_oxygen %}selected{% endif %}>Yes</option>
                     </select>
                 </div>
 
@@ -733,7 +762,8 @@
                         <i class="bi bi-tornado me-2"></i>Oxygen Flow Rate
                     </label>
                     <input type="number" name="oxygen_flow_rate" id="oxygen_flow_rate" 
-                           class="form-control-modern" placeholder="2.0" min="0.5" max="15" step="0.5" title="Enter number" placeholder="Enter number">
+                           class="form-control-modern" placeholder="2.0" min="0.5" max="15" step="0.5" title="Enter number"
+                           value="{% if editing_vital.oxygen_flow_rate %}{{ editing_vital.oxygen_flow_rate }}{% endif %}">
                     <small style="color: #64748B;">L/min</small>
                 </div>
 
@@ -743,7 +773,8 @@
                         <i class="bi bi-person-bounding-box me-2"></i>Weight
                     </label>
                     <input type="number" name="weight" id="weight" class="form-control-modern" 
-                           placeholder="70.5" min="0.5" max="300" step="0.1" title="Enter number" placeholder="Enter number">
+                           placeholder="70.5" min="0.5" max="300" step="0.1" title="Enter number"
+                           value="{% if editing_vital.weight %}{{ editing_vital.weight }}{% endif %}">
                     <small style="color: #64748B;">kg</small>
                 </div>
 
@@ -753,7 +784,8 @@
                         <i class="bi bi-arrows-vertical me-2"></i>Height
                     </label>
                     <input type="number" name="height" id="height" class="form-control-modern" 
-                           placeholder="170" min="50" max="250" step="0.1" title="Enter number" placeholder="Enter number">
+                           placeholder="170" min="50" max="250" step="0.1" title="Enter number"
+                           value="{% if editing_vital.height %}{{ editing_vital.height }}{% endif %}">
                     <small style="color: #64748B;">cm</small>
                 </div>
 
@@ -763,11 +795,11 @@
                         <i class="bi bi-person-standing me-2"></i>Patient Position
                     </label>
                     <select name="position" class="form-control-modern form-select-modern" title="Select option" aria-label="Select option">
-                        <option value="">Not specified</option>
-                        <option value="sitting">Sitting</option>
-                        <option value="standing">Standing</option>
-                        <option value="lying">Lying</option>
-                        <option value="supine">Supine</option>
+                        <option value="" {% if not editing_vital.position %}selected{% endif %}>Not specified</option>
+                        <option value="sitting" {% if editing_vital.position == 'sitting' %}selected{% endif %}>Sitting</option>
+                        <option value="standing" {% if editing_vital.position == 'standing' %}selected{% endif %}>Standing</option>
+                        <option value="lying" {% if editing_vital.position == 'lying' %}selected{% endif %}>Lying</option>
+                        <option value="supine" {% if editing_vital.position == 'supine' %}selected{% endif %}>Supine</option>
                     </select>
                 </div>
 
@@ -777,7 +809,8 @@
                         <i class="bi bi-stopwatch me-2"></i>Capillary Refill
                     </label>
                     <input type="number" name="capillary_refill" class="form-control-modern" 
-                           placeholder="2" min="1" max="10" title="Enter number" placeholder="Enter number">
+                           placeholder="2" min="1" max="10" title="Enter number"
+                           value="{% if editing_vital.capillary_refill %}{{ editing_vital.capillary_refill }}{% endif %}">
                     <small style="color: #64748B;">seconds</small>
                 </div>
             </div>
@@ -788,7 +821,7 @@
                     <i class="bi bi-journal-text me-2"></i>Clinical Notes
                 </label>
                 <textarea name="notes" class="form-control-modern" rows="3" 
-                          placeholder="Enter any additional observations or notes..."></textarea>
+                          placeholder="Enter any additional observations or notes...">{% if editing_vital %}{{ editing_vital.notes }}{% endif %}</textarea>
             </div>
         </div>
 
@@ -815,7 +848,7 @@
         <div class="action-bar">
             <button type="submit" class="btn-vital btn-vital-primary">
                 <i class="bi bi-check-circle-fill"></i>
-                Save Vital Signs
+                {% if editing_vital %}Update Vital Signs{% else %}Save Vital Signs{% endif %}
             </button>
             <a href="{% url 'hospital:encounter_detail' encounter.pk %}" class="btn-vital btn-vital-secondary">
                 <i class="bi bi-x-circle"></i>
@@ -824,13 +857,47 @@
         </div>
     </form>
 
-    <!-- Previous Vitals Chart -->
-    {% if encounter.vitals.exists %}
+    <!-- Previous Vitals -->
+    {% if previous_vitals %}
     <div class="chart-container">
-        <h3><i class="bi bi-graph-up me-2"></i>Vital Signs Trends</h3>
-        <div class="chart-wrapper">
+        <h3><i class="bi bi-clock-history me-2"></i>Recorded Vital Signs</h3>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>BP</th>
+                        <th>HR</th>
+                        <th>Temp</th>
+                        <th>SpO2</th>
+                        <th>RR</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vital in previous_vitals %}
+                    <tr {% if editing_vital and editing_vital.pk == vital.pk %}class="table-info"{% endif %}>
+                        <td class="text-nowrap">{{ vital.recorded_at|date:"M d, H:i" }}</td>
+                        <td>{% if vital.systolic_bp or vital.diastolic_bp %}{{ vital.systolic_bp|default:"--" }}/{{ vital.diastolic_bp|default:"--" }}{% else %}—{% endif %}</td>
+                        <td>{{ vital.pulse|default:"—" }}</td>
+                        <td>{% if vital.temperature %}{{ vital.temperature }}°C{% else %}—{% endif %}</td>
+                        <td>{% if vital.spo2 %}{{ vital.spo2 }}%{% else %}—{% endif %}</td>
+                        <td>{{ vital.respiratory_rate|default:"—" }}</td>
+                        <td class="text-end">
+                            <a href="{% url 'hospital:record_vitals' encounter.pk %}?vital_id={{ vital.pk }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-pencil"></i> Edit
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if encounter.vitals.exists %}
+        <div class="chart-wrapper mt-4">
             <canvas id="vitalsChart"></canvas>
         </div>
+        {% endif %}
     </div>
     {% endif %}
 </div>
@@ -1145,6 +1212,9 @@ document.querySelectorAll('input[type="number"], select').forEach(input => {
 
 // Initialize scores on load
 calculateScores();
+if (typeof toggleOxygenFlow === 'function') {
+    toggleOxygenFlow();
+}
 
 {% if encounter.vitals.exists %}
 // Create trends chart

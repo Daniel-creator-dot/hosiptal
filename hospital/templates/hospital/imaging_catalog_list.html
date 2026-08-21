@@ -27,9 +27,20 @@
             </div>
             <div class="card-body">
                 <form method="get" class="mb-4">
-                    <div class="input-group">
-                        <input type="text" name="q" class="form-control" placeholder="Search by name, code, modality, body part..." value="{{ search_query }}">
-                        <button type="submit" class="btn btn-primary">Search</button>
+                    <div class="row g-2">
+                        <div class="col-md-8">
+                            <div class="input-group">
+                                <input type="text" name="q" class="form-control" placeholder="Search by name, code, modality, body part..." value="{{ search_query }}">
+                                <button type="submit" class="btn btn-primary">Search</button>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <select name="nhis" class="form-select" onchange="this.form.submit()" aria-label="Filter by NHIS coverage">
+                                <option value="">All scans</option>
+                                <option value="yes" {% if nhis_filter == 'yes' %}selected{% endif %}>NHIS panel</option>
+                                <option value="no" {% if nhis_filter == 'no' %}selected{% endif %}>Not on NHIS</option>
+                            </select>
+                        </div>
                     </div>
                 </form>
 
@@ -44,6 +55,7 @@
                                 <th class="text-end">Cash (GHS)</th>
                                 <th class="text-end">Corporate (GHS)</th>
                                 <th class="text-end">Insurance (GHS)</th>
+                                <th class="text-center">NHIS</th>
                                 <th class="text-center">Edit</th>
                             </tr>
                         </thead>
@@ -58,13 +70,21 @@
                                 <td class="text-end">{% if item.corporate_price is not None %}GHS {{ item.corporate_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
                                 <td class="text-end">{% if item.insurance_price is not None %}GHS {{ item.insurance_price|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
                                 <td class="text-center">
+                                    {% if item.nhis_covered %}
+                                    <span class="badge bg-primary">NHIS</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Cash</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
                                     {% if can_rename or can_edit_prices or is_admin %}
                                         <div class="btn-group" role="group">
                                             <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editPriceModal" 
                                                     data-id="{{ item.id }}" data-name="{{ item.name }}" 
                                                     data-price="{{ item.price|default:0|floatformat:2 }}"
                                                     data-corporate="{% if item.corporate_price is not None %}{{ item.corporate_price|floatformat:2 }}{% endif %}"
-                                                    data-insurance="{% if item.insurance_price is not None %}{{ item.insurance_price|floatformat:2 }}{% endif %}">
+                                                    data-insurance="{% if item.insurance_price is not None %}{{ item.insurance_price|floatformat:2 }}{% endif %}"
+                                                    data-nhis="{% if item.nhis_covered %}1{% endif %}">
                                                 <i class="bi bi-pencil"></i>
                                             </button>
                                             {% if is_admin %}
@@ -81,7 +101,7 @@
                             </tr>
                             {% empty %}
                             <tr>
-                                <td colspan="8" class="text-center text-muted py-4">No imaging studies in catalog.</td>
+                                <td colspan="9" class="text-center text-muted py-4">No imaging studies in catalog.</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -92,11 +112,11 @@
                 <nav class="mt-3">
                     <ul class="pagination justify-content-center mb-0">
                         {% if items_page.has_previous %}
-                        <li class="page-item"><a class="page-link" href="?page={{ items_page.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">Previous</a></li>
+                        <li class="page-item"><a class="page-link" href="?page={{ items_page.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if nhis_filter %}&nhis={{ nhis_filter }}{% endif %}">Previous</a></li>
                         {% endif %}
                         <li class="page-item disabled"><span class="page-link">Page {{ items_page.number }} of {{ items_page.paginator.num_pages }}</span></li>
                         {% if items_page.has_next %}
-                        <li class="page-item"><a class="page-link" href="?page={{ items_page.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">Next</a></li>
+                        <li class="page-item"><a class="page-link" href="?page={{ items_page.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if nhis_filter %}&nhis={{ nhis_filter }}{% endif %}">Next</a></li>
                         {% endif %}
                     </ul>
                 </nav>
@@ -145,6 +165,11 @@
                         <label class="form-label fw-bold">Insurance (GHS)</label>
                         <input type="number" name="insurance_price" id="modalInsurance" class="form-control" step="0.01" min="0" placeholder="Leave blank if N/A"
                                {% if not can_edit_prices %}readonly{% endif %}>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" name="nhis_covered" id="modalNhis" value="on">
+                        <label class="form-check-label" for="modalNhis"><strong>NHIS-covered scan</strong></label>
+                        <div class="form-text">Doctors can order this for NHIS patients without cash pay.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -216,6 +241,10 @@
                             <input type="number" name="insurance_price" class="form-control" step="0.01" min="0" placeholder="Optional">
                         </div>
                     </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" name="nhis_covered" id="addNhisCovered" value="on">
+                        <label class="form-check-label" for="addNhisCovered"><strong>NHIS-covered scan</strong></label>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -266,6 +295,8 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('modalPrice').value = btn.dataset.price || '';
             document.getElementById('modalCorporate').value = btn.dataset.corporate || '';
             document.getElementById('modalInsurance').value = btn.dataset.insurance || '';
+            var nhisBox = document.getElementById('modalNhis');
+            if (nhisBox) nhisBox.checked = btn.dataset.nhis === '1';
         });
     }
     

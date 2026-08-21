@@ -1,9 +1,11 @@
 @echo off
-REM HMS Auto-Start Script
-REM Waits for Docker Desktop and starts HMS services
-
-REM Change to project directory
-cd /d "%~dp0"
+REM HMS Auto-Start Script — always C:\chm (SSD)
+cd /d C:\chm
+if not exist C:\chm\docker-compose.yml (
+    echo ERROR: C:\chm\docker-compose.yml not found.
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\chm\scripts\ensure_c_chm.ps1" -Fix -Quiet
 
 REM Wait for Docker Desktop to be ready (up to 2 minutes)
 echo Waiting for Docker Desktop to start...
