@@ -4507,9 +4507,13 @@ def send_pharmacy_order_to_cashier(request, order_id):
                             pass
 
                 drug_to_use = substitute_drug if substitute_drug else prescription.drug
-                # Use same price as billing (get_drug_price_for_prescription includes insurance markup) so total matches bill
+                # Match billing. Excess drugs an insurance patient pays in cash use the cash tariff.
                 from .utils_billing import get_drug_price_for_prescription
-                unit_price = get_drug_price_for_prescription(drug_to_use, payer=payer)
+                from .services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                price_payer = payer_for_patient_cash_excess(
+                    patient=patient, payer=payer, drug=drug_to_use,
+                )
+                unit_price = get_drug_price_for_prescription(drug_to_use, payer=price_payer)
 
                 # Use edited quantity if provided, otherwise use prescribed quantity
                 if prescription_id_str in quantities_data:

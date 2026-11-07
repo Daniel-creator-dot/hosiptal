@@ -133,7 +133,16 @@ class AutoBillingService:
                         'message': f'Bill already exists for {test.name}',
                     }
 
-                unit_price = AutoBillingService._resolve_price(price_patient, payer, service_code, test.price)
+                from hospital.services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                price_payer = payer_for_patient_cash_excess(
+                    patient=price_patient,
+                    payer=payer,
+                    lab_test=test,
+                    service_code=service_code,
+                )
+                unit_price = AutoBillingService._resolve_price(
+                    price_patient, price_payer, service_code, test.price,
+                )
 
                 if release_record and not existing_line:
                     invoice_line = InvoiceLine.objects.create(
@@ -604,10 +613,15 @@ class AutoBillingService:
                     old_line.waiver_reason = 'Replaced by pharmacy verification'
                     old_line.save()
 
-                # Base unit price: Drug.unit_price or inventory fallback + payer markup (utils_billing)
+                # Base unit price: Drug.unit_price or inventory fallback + payer markup (utils_billing).
+                # Excess drugs the insurance patient pays in cash use the cash tariff (no 30% markup).
                 if payer is None:
                     payer = AutoBillingService._ensure_payer(patient, encounter)
-                drug_price = get_drug_price_for_prescription(drug, payer=payer)
+                from hospital.services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                price_payer = payer_for_patient_cash_excess(
+                    patient=patient, payer=payer, drug=drug,
+                )
+                drug_price = get_drug_price_for_prescription(drug, payer=price_payer)
                 if invoice is None:
                     invoice, _ = AutoBillingService._get_or_create_invoice(patient, encounter, payer)
 
@@ -665,9 +679,11 @@ class AutoBillingService:
                     update_disp.append('patient')
                 dispensing_record.save(update_fields=update_disp)
 
-                # Insurance/corporate: go straight to ready_to_dispense (no pending); reduce stock
+                # Insurance/corporate covered drugs go straight to ready_to_dispense.
+                # Excess (patient-pay cash) stays at the cashier on the cash tariff.
                 payer_type = getattr(payer, 'payer_type', None) or ''
-                if payer_type in ('insurance', 'private', 'nhis', 'corporate'):
+                patient_pays_cash = bool(getattr(invoice_line, 'patient_pay_cash', False))
+                if payer_type in ('insurance', 'private', 'nhis', 'corporate') and not patient_pays_cash:
                     dispensing_record.dispensing_status = 'ready_to_dispense'
                     dispensing_record.payment_verified_at = timezone.now()
                     update_fields = ['dispensing_status', 'payment_verified_at', 'modified']

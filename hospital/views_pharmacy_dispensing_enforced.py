@@ -805,7 +805,8 @@ def pharmacy_dispense_enforced(request, prescription_id):
         else:
             unit_price = Decimal(str(invoice_line.unit_price or 0))
     else:
-        unit_price = get_drug_price_for_prescription(drug, payer=payer)
+        quote_payer = None if requires_cash_payment else payer
+        unit_price = get_drug_price_for_prescription(drug, payer=quote_payer)
         total_cost = unit_price * Decimal(str(qty_for_price or 0))
     
     # Check payment status

@@ -3209,7 +3209,17 @@ class InvoiceLine(BaseModel):
         
         self.__dict__.pop('_display_pricing_tuple', None)
         self._evaluate_insurance_exclusions()
-        
+        # Insurance excess labs and drugs the patient pays at the cashier use the cash tariff.
+        try:
+            from hospital.services.patient_pay_cash_pricing import apply_cash_tariff_to_line_in_memory
+            apply_cash_tariff_to_line_in_memory(self)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                'cash tariff for patient-pay line failed (invoice %s)',
+                getattr(self, 'invoice_id', None),
+            )
+
         subtotal = Decimal(str(self.quantity)) * Decimal(str(self.unit_price))
         tax = Decimal(str(self.tax_amount or 0))
         discount = Decimal(str(self.discount_amount or 0))

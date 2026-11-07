@@ -4287,6 +4287,11 @@ def cashier_process_pharmacy_encounter(request, encounter_id):
     from hospital import models as _hospital_models
     enc = get_object_or_404(Encounter, id=encounter_id, is_deleted=False)
     patient = enc.patient
+    try:
+        from hospital.services.patient_pay_cash_pricing import reprice_patient_pay_lines_for_patient
+        reprice_patient_pay_lines_for_patient(patient)
+    except Exception:
+        logger.exception('patient-pay cash reprice failed for pharmacy encounter %s', encounter_id)
     # Pending prescriptions: sent to cashier, not paid, not cancelled
     rx_list = list(
         Prescription.objects.filter(
@@ -4495,8 +4500,21 @@ def cashier_process_service_payment(request, service_type, service_id):
     if service_type == 'lab':
         service_obj = get_object_or_404(LabResult, id=service_id, is_deleted=False)
         patient = service_obj.order.encounter.patient
+        try:
+            from hospital.services.patient_pay_cash_pricing import (
+                payer_for_patient_cash_excess,
+                reprice_patient_pay_lines_for_patient,
+            )
+            reprice_patient_pay_lines_for_patient(patient)
+        except Exception:
+            logger.exception('patient-pay cash reprice failed for lab %s', service_id)
+            payer_for_patient_cash_excess = None
         service_name = service_obj.test.name
         payer = getattr(patient, 'primary_insurance', None)
+        if payer_for_patient_cash_excess:
+            payer = payer_for_patient_cash_excess(
+                patient=patient, payer=payer, lab_test=service_obj.test,
+            )
         unit_price = billed_lab_or_scan_catalog_price(
             getattr(service_obj.test, 'price', None), payer, kind='lab'
         )
@@ -4531,6 +4549,11 @@ def cashier_process_service_payment(request, service_type, service_id):
     elif service_type == 'pharmacy':
         service_obj = get_object_or_404(Prescription, id=service_id, is_deleted=False)
         patient = service_obj.order.encounter.patient
+        try:
+            from hospital.services.patient_pay_cash_pricing import reprice_patient_pay_lines_for_patient
+            reprice_patient_pay_lines_for_patient(patient)
+        except Exception:
+            logger.exception('patient-pay cash reprice failed for pharmacy %s', service_id)
         service_name = f"{service_obj.drug.name} x {service_obj.quantity}"
         # Use invoice line amount when available so Pay page matches list/billed amount
         inv_line = _hospital_models.InvoiceLine.objects.filter(
@@ -4540,6 +4563,13 @@ def cashier_process_service_payment(request, service_type, service_id):
             service_price = inv_line.line_total or (inv_line.unit_price * inv_line.quantity)
         else:
             payer = getattr(patient, 'primary_insurance', None)
+            try:
+                from hospital.services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                payer = payer_for_patient_cash_excess(
+                    patient=patient, payer=payer, drug=service_obj.drug,
+                )
+            except Exception:
+                logger.exception('patient-pay cash drug price failed for %s', service_id)
             drug_price = get_drug_price_for_prescription(service_obj.drug, payer=payer)
             service_price = drug_price * service_obj.quantity
         
@@ -4667,6 +4697,15 @@ def cashier_process_service_payment(request, service_type, service_id):
             try:
                 _inv = get_invoice_for_lab(service_obj)
                 payer = _resolve_invoice_payer(_inv, patient)
+                try:
+                    from hospital.services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                    payer = payer_for_patient_cash_excess(
+                        patient=patient,
+                        payer=payer,
+                        lab_test=getattr(service_obj, 'test', None),
+                    )
+                except Exception:
+                    logger.exception('patient-pay cash price failed for lab payment %s', service_id)
                 test_code = getattr(service_obj.test, 'code', None) or str(service_obj.test_id)
                 svc = ServiceCode.objects.filter(code=f'LAB-{test_code}', is_deleted=False).first()
                 if svc:
@@ -4898,6 +4937,15 @@ def cashier_process_service_payment(request, service_type, service_id):
         try:
             _inv = get_invoice_for_lab(service_obj)
             payer = _resolve_invoice_payer(_inv, patient)
+            try:
+                from hospital.services.patient_pay_cash_pricing import payer_for_patient_cash_excess
+                payer = payer_for_patient_cash_excess(
+                    patient=patient,
+                    payer=payer,
+                    lab_test=getattr(service_obj, 'test', None),
+                )
+            except Exception:
+                logger.exception('patient-pay cash price failed for lab %s', service_id)
             test_code = getattr(service_obj.test, 'code', None) or str(service_obj.test_id)
             svc = ServiceCode.objects.filter(code=f'LAB-{test_code}', is_deleted=False).first()
             if svc:
@@ -4950,6 +4998,11 @@ def _get_patient_pending_services_for_payment(patient):
     Get pending services - SAME logic as cashier_patient_total_bill.
     Returns (services_list, total) so process-combined matches total-bill exactly.
     """
+    try:
+        from hospital.services.patient_pay_cash_pricing import reprice_patient_pay_lines_for_patient
+        reprice_patient_pay_lines_for_patient(patient)
+    except Exception:
+        logger.exception('patient-pay cash reprice failed for patient %s', getattr(patient, 'pk', None))
     from .models_advanced import ImagingStudy
     from .models_accounting import PaymentReceipt
     from .models_payment_verification import LabResultRelease, PharmacyDispensing, ImagingRelease
